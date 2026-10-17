@@ -106,12 +106,6 @@ class TranslationPreferences(
      */
     fun autoTranslate() = preferenceStore.getBoolean("auto_translate", false)
 
-    /**
-     * Number of upcoming pages (n+1 .. n+N) to pre-process ahead of the
-     * current page when auto-translation is on. Clamped to 1..5 at call sites.
-     */
-    fun autoTranslatePrefetchCount() = preferenceStore.getInt("auto_translate_prefetch_count", 2)
-
     fun translateFromLanguage() = preferenceStore.getString("translate_language_from", "CHINESE")
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)

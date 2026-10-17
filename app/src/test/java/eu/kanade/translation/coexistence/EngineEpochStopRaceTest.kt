@@ -1,5 +1,6 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.artifact.ArtifactSeed
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -11,24 +12,14 @@ import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
-import eu.kanade.translation.scheduling.RollingAutoCoordinator
+import eu.kanade.translation.scheduling.OperationPaidCallLifecycle
+import eu.kanade.translation.scheduling.ReaderSessionToken
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
@@ -74,10 +65,12 @@ import tachiyomi.domain.translation.pools.BitmapPool
  * Gradle never started. It is excluded from the 16 executions; the stale XML
  * copied by that wrapper attempt was removed.
  *
- * The fixture drives the production prepared-page and translation path against
- * an artifact-authority store, then follows the same shutdown path used by the
- * reader. Coordinator cancellation and drain behavior are covered separately by
- * `AutoProviderCallDrainsNotCancelsTest`.
+ * The fixture drives the production single-page runner path (queue automatic
+ * demand → TranslationExecutor.translateSinglePage) against an
+ * artifact-authority store, then follows the same shutdown path used by the
+ * reader. Queue cancellation and paid-drain behavior are covered separately by
+ * `AutoProviderCallDrainsNotCancelsTest`. Re-seamed in Phase 4 S4 from the
+ * retired prepared-page boundary onto the queue's automatic-demand path.
  */
 class EngineEpochStopRaceTest {
 
@@ -92,12 +85,9 @@ class EngineEpochStopRaceTest {
 
     private val io = FakeChapterDocumentIo()
     private var harness: TranslationCoexistenceHarness? = null
-    private var autoScope: CoroutineScope? = null
 
     @AfterEach
     fun tearDown() {
-        autoScope?.cancel()
-        autoScope = null
         harness?.let { h ->
             runCatching { h.removeGraphicsShims() }
             runCatching { h.close() }
@@ -150,47 +140,30 @@ class EngineEpochStopRaceTest {
         return store
     }
 
-    private class AutoRun(val outcome: CompletableDeferred<TranslationCompletionOutcome?>) {
-        /** Set when the boundary died before the paid call (fixture diagnosis). */
-        @Volatile var earlyFailure: Throwable? = null
-
-        @Volatile var job: Job? = null
-
+    private class AutoRun(
+        private val owner: TranslationCoexistenceHarness,
+        val token: ReaderSessionToken,
+        val pageKey: String,
+    ) {
+        /**
+         * Force-cancels the queue demand so a test failing before the gate
+         * release cannot hang teardown on the queue's paid-work retention.
+         */
         fun cancelJob() {
-            job?.cancel()
+            runCatching { owner.scheduler.cancelPageTranslation(owner.CHAPTER_ID, pageKey) }
         }
     }
 
     /**
-     * Drives the REAL AUTO boundary pair the rolling coordinator issues:
-     * prepareSinglePage (native, under the permit) then translatePreparedPage
-     * (HTTP outside the permit; render reacquires it after provider work settles). The outcome
-     * deferred converts every failure into a named assertion, never a timeout.
+     * Drives the REAL automatic execution path the reader queue owns: a bound
+     * queue session submits the page as viewport demand, and the queue worker
+     * runs the production single-page runner (native under the permit, provider
+     * outside, render reacquisition). The token yields the typed outcome flow
+     * for event-driven terminal assertions.
      */
     private fun launchAutoPage(pageKey: String): AutoRun {
         val h = checkNotNull(harness)
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("d7-auto"))
-        autoScope = scope
-        val outcome = CompletableDeferred<TranslationCompletionOutcome?>()
-        val run = AutoRun(outcome)
-        run.job = scope.launch {
-            try {
-                val chapter = h.chapterFor(h.CHAPTER_ID)
-                val prepared = h.pipeline.prepareSinglePage(h.manga, chapter, h.source, pageKey)
-                if (prepared == null) {
-                    run.earlyFailure = IllegalStateException("prepareSinglePage returned null")
-                    outcome.complete(null)
-                    return@launch
-                }
-                outcome.complete(h.pipeline.translatePreparedPage(h.manga, chapter, h.source, prepared))
-            } catch (e: CancellationException) {
-                outcome.cancel()
-            } catch (t: Throwable) {
-                run.earlyFailure = t
-                outcome.completeExceptionally(t)
-            }
-        }.also(h::trackJobForTeardown)
-        return run
+        return AutoRun(h, h.submitViewport(listOf(pageKey)), pageKey)
     }
 
     private suspend fun awaitProviderStart(auto: AutoRun, pageKey: String) {
@@ -198,15 +171,19 @@ class EngineEpochStopRaceTest {
         try {
             h.barrier.awaitArrivalWithin(CoexistenceBarrier.BarrierPoint.PROVIDER_START, pageKey, AWAIT_TIMEOUT_MS)
         } catch (e: TimeoutCancellationException) {
-            val early = runCatching {
-                withTimeoutOrNull(250) { auto.outcome.await() }
-            }.getOrNull()
             throw AssertionError(
-                "D7 fixture: the AUTO page never reached PROVIDER_START — the prepared-page " +
-                    "boundary did not reach the paid call (paidCalls=${h.transportCallsFor(pageKey)}, " +
-                    "earlyOutcome=$early, earlyFailure=${auto.earlyFailure})",
+                "D7 fixture: the AUTO page never reached PROVIDER_START — the queue runner " +
+                    "did not reach the paid call (paidCalls=${h.transportCallsFor(pageKey)})",
                 e,
             )
+        }
+    }
+
+    /** Event-driven typed terminal for the automatic demand (queue publication). */
+    private suspend fun awaitQueueOutcome(auto: AutoRun, pageKey: String): SinglePageOutcome? {
+        val h = checkNotNull(harness)
+        return withTimeout(AWAIT_TIMEOUT_MS) {
+            h.scheduler.readerOutcomes(auto.token).first { it.containsKey(pageKey) }[pageKey]
         }
     }
 
@@ -241,14 +218,7 @@ class EngineEpochStopRaceTest {
 
     @Test
     fun `provider drain grace budget is at least the attach chain budget`() {
-        val grace = runCatching {
-            RollingAutoCoordinator::class.java.getField("PROVIDER_DRAIN_GRACE_MS").get(null) as Long
-        }.getOrElse {
-            throw AssertionError(
-                "T917 D7 RED defect: PROVIDER_DRAIN_GRACE_MS is missing — the §1.6 alignment target does not exist",
-                it,
-            )
-        }
+        val grace = OperationPaidCallLifecycle.PROVIDER_DRAIN_GRACE_MS
         val chainBudget = TranslationPipeline.ONNX_PHASE_TIMEOUT_MS + TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
         if (grace < chainBudget) {
             throw AssertionError(
@@ -281,14 +251,14 @@ class EngineEpochStopRaceTest {
             h.manager.clearQueue()
 
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-            val outcome = withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
+            val outcome = awaitQueueOutcome(auto, "p0")
 
             withClue(
                 "T917 D7 §1.4.1a defect: the stopped-over AUTO call must complete (drain wins, or the " +
                     "epoch retry wins) — RED fails it mid-call because closeEngines closed the " +
                     "translator under the parked call",
             ) {
-                if (outcome !is TranslationCompletionOutcome.Completed) {
+                if (outcome !is SinglePageOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1a defect: the parked AUTO call FAILED across the stop — " +
                             "outcome was $outcome",
@@ -369,11 +339,11 @@ class EngineEpochStopRaceTest {
             }
 
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-            val outcome = withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
+            val outcome = awaitQueueOutcome(auto, "p0")
             withClue(
                 "T917 D7 §1.4.1b: with the grace large enough the call itself completes untouched",
             ) {
-                if (outcome !is TranslationCompletionOutcome.Completed) {
+                if (outcome !is SinglePageOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1b defect: the call failed even though the grace had not expired — " +
                             "outcome was $outcome",
@@ -428,12 +398,12 @@ class EngineEpochStopRaceTest {
             }
 
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-            val outcome = withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
+            val outcome = awaitQueueOutcome(auto, "p0")
             withClue(
                 "T917 D7 §1.4.1c defect: the epoch guard must transparently retry the racing page ONCE " +
                     "against the REBUILT translator — RED fails the page outright",
             ) {
-                if (outcome !is TranslationCompletionOutcome.Completed) {
+                if (outcome !is SinglePageOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the grace-expired call was not recovered by the epoch " +
                             "retry — outcome was $outcome",
@@ -501,17 +471,15 @@ class EngineEpochStopRaceTest {
             h.manager.clearQueue()
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
 
-            // The honest failure surfaces in TWO shapes: a typed non-Completed
-            // outcome, or the boundary's rethrow (markPageFailed + throw — the
-            // launchAutoPage wrapper completes the deferred exceptionally).
-            val outcome = runCatching {
-                withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
-            }.getOrNull()
+            // The honest failure surfaces as a typed non-Completed queue
+            // outcome (the single-page runner maps failures to typed results
+            // instead of rethrowing past the queue boundary).
+            val outcome = awaitQueueOutcome(auto, "p0")
             withClue(
                 "T917 D7 §1.4.1c defect: a SECOND epoch mismatch must fail the page honestly (typed " +
                     "failure) — never complete it and never loop",
             ) {
-                if (outcome is TranslationCompletionOutcome.Completed) {
+                if (outcome is SinglePageOutcome.Completed) {
                     throw AssertionError(
                         "T917 D7 §1.4.1c defect: the twice-closed page completed instead of failing " +
                             "honestly — outcome was $outcome",

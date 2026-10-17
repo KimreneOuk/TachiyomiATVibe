@@ -44,7 +44,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
@@ -799,7 +798,7 @@ class TranslationManager private constructor(
         // The queue defers prefetch on the live memory gate; a pressure event
         // (including recovery) rearms deferred demand through reconcile. The
         // same-chapter batch-active guard keeps a suppressed window dormant.
-        scheduler.reconcileAutoWindow(admissionGuard = { chapterId ->
+        scheduler.reconcileReaderQueues(admissionGuard = { chapterId ->
             !isChapterBatchActive(chapterId, includePaused = true)
         })
     }
@@ -1973,71 +1972,6 @@ class TranslationManager private constructor(
         return TranslationSession(key, manga, chapter, source, store)
     }
 
-    fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
-        scheduler.cancelAutoTranslations(chapterId)
-
-    /**
-     * Live auto-translation snapshot from the rolling coordinator.
-     * Null when no coordinator is active. The reader observes this to render
-     * the compact ready-ahead status without polling the durable store.
-     */
-    val autoSnapshot: kotlinx.coroutines.flow.StateFlow<eu.kanade.translation.scheduling.AutoTranslationSnapshot?> =
-        scheduler.autoSnapshot
-
-    /** Updates the rolling coordinator window owned by the scheduler. */
-    fun updateAutoWindow(
-        identity: eu.kanade.translation.scheduling.AutoChapterIdentity,
-        visiblePageIndex: Int,
-        configuredAheadTarget: Int,
-        pageCount: Int,
-        session: TranslationSession,
-        pageResolver: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
-        computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
-    ) {
-        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(identity.chapterId))) {
-            is SessionAdmission.Admitted,
-            is SessionAdmission.Switched,
-            -> Unit
-
-            is SessionAdmission.Rejected -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader auto admission rejected: reason=${admission.reason} " +
-                        "chapterId=${identity.chapterId}"
-                }
-                return
-            }
-        }
-        //   same-chapter auto is suppressed for the WHOLE chapter-batch
-        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
-        // Reader-window updates must not re-arm the queue session while
-        // the chapter's batch is queued; the next update after the queue drains
-        // arms normally. `translateChapter`'s one-shot invalidateQueueSession
-        // remains what retires an already-live window at admission.
-        if (isChapterBatchActive(identity.chapterId, includePaused = true)) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=${identity.chapterId}"
-            }
-            return
-        }
-        scheduler.updateAutoWindow(
-            identity,
-            visiblePageIndex,
-            configuredAheadTarget,
-            pageCount,
-            session,
-            pageResolver,
-            computeClass,
-        )
-    }
-
-    /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
-    fun reconcileAutoWindow() {
-        //   a stale window cannot be re-admitted mid-batch — the
-        // scheduler's admission hook rejects same-chapter reconcile while the
-        // chapter's batch queue entry is retained.
-        scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isChapterBatchActive(chapterId, includePaused = true) })
-    }
-
     /**
      * Typed reader queue facade (Phase 4 S3). Binds or reuses the queue session
      * admitted for [session]'s chapter and returns its token, applying the same
@@ -2097,8 +2031,11 @@ class TranslationManager private constructor(
     }
 
     /** Queue-native auto toggle for the captured reader session. */
-    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean) =
+    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean): Boolean =
         scheduler.setReaderAutoEnabled(token, enabled)
+
+    /** Typed queue outcomes for the reader's per-page UI projection. */
+    fun readerOutcomes(token: ReaderSessionToken) = scheduler.readerOutcomes(token)
 
     /**
      * Re-drives queued demands for the captured session after a source-ready,

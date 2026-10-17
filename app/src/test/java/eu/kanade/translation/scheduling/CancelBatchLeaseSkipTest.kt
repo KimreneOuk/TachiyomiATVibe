@@ -10,8 +10,6 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageStageLease
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
@@ -38,6 +36,11 @@ import java.io.InputStream
  * `translationJob.cancel`), whose teardown releases every BATCH lease — so
  * skipping the scheduler's per-page cancel write for batch-leased pages never
  * strands state.
+ *
+ * Re-seamed in Phase 4 S4: the chapter-level sync/async flip writers were
+ * retired with the rolling coordinator; the durable per-page cancel write
+ * ([TranslationScheduler.cancelPageTranslation]'s legacy-batch branch) is the
+ * retained public path through the same lease-fenced writer.
  */
 class CancelBatchLeaseSkipTest {
 
@@ -59,23 +62,6 @@ class CancelBatchLeaseSkipTest {
                 readerStreamFn: (() -> InputStream)?,
                 readerPriority: (() -> AdmissionPriority)?,
             ): SinglePageOutcome = SinglePageOutcome.Completed
-
-            override suspend fun prepareSinglePage(
-                manga: Manga,
-                chapter: Chapter,
-                source: HttpSource,
-                pageKey: String,
-                streamFn: (() -> InputStream)?,
-                force: Boolean,
-                stageListener: TranslationStageListener?,
-            ): PreparedPage? = null
-            override suspend fun translatePreparedPage(
-                manga: Manga,
-                chapter: Chapter,
-                source: HttpSource,
-                prepared: PreparedPage,
-                stageListener: TranslationStageListener?,
-            ): TranslationCompletionOutcome? = null
         }
         val resolver = TranslationStoreResolver { id -> if (id == chapterId) store else null }
         val immediate = { id: Long -> if (id == chapterId) store else null }
@@ -93,7 +79,7 @@ class CancelBatchLeaseSkipTest {
     // ------------------------------------------------------------------
 
     @Test
-    fun `markChapterCancelledSync leaves a BATCH-leased page untouched and cancels the lease-free page`() = runTest {
+    fun `per-page cancel leaves a BATCH-leased page untouched and cancels the lease-free page`() = runTest {
         val store = newStore()
         store.updatePage("leased") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
         store.updatePage("free") {
@@ -105,25 +91,15 @@ class CancelBatchLeaseSkipTest {
         store.holdBatchLease("leased")
         val s = scheduler(store)
 
-        s.markChapterCancelledSync(chapterId = 1L)
+        s.cancelPageTranslation(chapterId = 1L, pageKey = "leased")
 
         // The batch-owned page is UNCHANGED — no in-memory cancel, no durable
         // write; the batch run keeps its version expectations intact.
         store.state.value["leased"]?.ocrStatus shouldBe StageStatus.RUNNING
+
         // The lease-free page is cancelled exactly as before (legacy behavior).
+        s.cancelPageTranslation(chapterId = 1L, pageKey = "free")
         store.state.value["free"]?.translationStatus shouldBe StageStatus.CANCELLED
-    }
-
-    @Test
-    fun `per-page cancel leaves a BATCH-leased page untouched`() = runTest {
-        val store = newStore()
-        store.updatePage("leased") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.holdBatchLease("leased")
-        val s = scheduler(store)
-
-        s.cancelPageTranslation(chapterId = 1L, pageKey = "leased")
-
-        store.state.value["leased"]?.ocrStatus shouldBe StageStatus.RUNNING
     }
 
     @Test
@@ -134,24 +110,10 @@ class CancelBatchLeaseSkipTest {
         store.releasePageStageLease("released", PageWriteOrigin.BATCH)
         val s = scheduler(store)
 
-        s.markChapterCancelledSync(chapterId = 1L)
+        s.cancelPageTranslation(chapterId = 1L, pageKey = "released")
 
         // Legacy behavior fully preserved once the batch no longer owns the page.
         store.state.value["released"]?.ocrStatus shouldBe StageStatus.CANCELLED
-    }
-
-    @Test
-    fun `markChapterCancelledAsync leaves a BATCH-leased page untouched`() = runTest {
-        val store = newStore()
-        store.updatePage("leased") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.updatePage("free") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.holdBatchLease("leased")
-        val s = scheduler(store)
-
-        s.markChapterCancelledAsync(chapterId = 1L)
-
-        store.state.value["leased"]?.ocrStatus shouldBe StageStatus.RUNNING
-        store.state.value["free"]?.ocrStatus shouldBe StageStatus.CANCELLED
     }
 
     // ------------------------------------------------------------------

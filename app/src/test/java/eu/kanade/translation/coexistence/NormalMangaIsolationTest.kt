@@ -6,7 +6,6 @@ import io.kotest.assertions.withClue
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -16,13 +15,13 @@ import org.junit.jupiter.api.Test
  * Normal-manga isolation gate. It guards arbitration,
  * storage observation, or decode paths.
  *
- * Scenario: a chapter with no reader session, no auto window, and no queued
+ * Scenario: a chapter with no reader session, no queue demand, and no queued
  * batch (translation-disabled at the product level) sits next to an ACTIVE
  * batch chapter that fully completes through the real graph.
  *
  * Observable oracles, all event-driven (note §3.4):
- *  1. no coordinator: reconcileAutoWindow() never creates a
- *     RollingAutoCoordinator — scheduler.autoSnapshot stays null;
+ *  1. no queue session: reconcileReaderQueues() finds no session for the
+ *     disabled chapter and is an inert no-op — no demand, no decode, no store;
  *  2. no storage observation: the disabled chapter was never opened in the
  *     real ActiveChapterStoreRegistry — observeActiveDisplayStore is null and
  *     selectActiveStore only ever emits the empty map;
@@ -79,21 +78,11 @@ class NormalMangaIsolationTest {
                 harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
             }
 
-            // 1. No arbitration: no reader window update was ever issued for the
-            //    disabled chapter, so reconcileAutoWindow() must not create a
-            //    coordinator and autoSnapshot must stay null.
-            harness.manager.reconcileAutoWindow()
-            val coordinatorAppeared = try {
-                withTimeout(TranslationCoexistenceHarness.NEGATIVE_PROBE_MS) {
-                    harness.scheduler.autoSnapshot.first { it != null }
-                }
-                true
-            } catch (_: TimeoutCancellationException) {
-                false
-            }
-            withClue("isolation: a rolling auto coordinator was created without any reader window update") {
-                coordinatorAppeared shouldBe false
-            }
+            // 1. No queue session: no reader session was ever bound for the
+            //    disabled chapter, so reconcileReaderQueues() must be an inert
+            //    no-op — no demand set, no decode, no store opened (the decode
+            //    and storage oracles below re-prove this after the reconcile).
+            harness.scheduler.reconcileReaderQueues()
 
             // 2. No storage observation: no store was ever opened for the
             //    disabled chapter in the real ActiveChapterStoreRegistry.

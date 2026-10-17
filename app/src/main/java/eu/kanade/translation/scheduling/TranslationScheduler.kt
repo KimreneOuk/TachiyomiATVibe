@@ -9,7 +9,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
@@ -17,16 +16,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -42,12 +33,9 @@ import java.util.concurrent.atomic.AtomicReference
  * Since the Phase 4 S2 cutover the queue owns job scheduling, deduplication,
  * promotion, and cancellation; since S3 the reader callers submit through the
  * typed facade — [bindReaderQueueSession], [submitReaderPage],
- * [updateReaderViewport], [setReaderAutoEnabled] and [reconcileReaderQueue] —
- * which resolves the admitted session token and delegates once. The temporary
- * [ReaderQueueSnapshotAdapter] projection ([updateAutoWindow]/[autoSnapshot])
- * lost its last reader-UI consumer in S3 and is removed in S4. The rolling
- * coordinator is no longer constructed or referenced; its class remains
- * compiled until S4 retirement.
+ * [updateReaderViewport], [setReaderAutoEnabled], [readerOutcomes] and
+ * [reconcileReaderQueue] — which resolves the admitted session token and
+ * delegates once.
  */
 class TranslationScheduler(
     private val executor: TranslationExecutor,
@@ -66,10 +54,12 @@ class TranslationScheduler(
 ) : java.io.Closeable {
 
     override fun close() {
-        // Bounded drain: queued work is cancelled with typed terminals; paid
-        // workers already admitted retain their original Job contract and the
-        // drain handle is bounded by the queue's cancellation wait.
-        runBlocking { queue.closeAndDrain() }
+        runBlocking {
+            when (val drain = queue.closeAndDrain()) {
+                ReaderDrainResult.Completed -> Unit
+                is ReaderDrainResult.PendingNativeDrain -> drain.completion.await()
+            }
+        }
         scope.cancel()
     }
 
@@ -124,10 +114,7 @@ class TranslationScheduler(
 
     private val currentToken = AtomicReference<ReaderSessionToken?>(null)
     private val readerGeneration = AtomicLong(0L)
-    private val ownerVersions = AtomicLong(0L)
-    private val windowVersions = AtomicLong(0L)
-
-    private val autoCoordinatorLock = Any()
+    private val sessionLifecycleLock = Any()
 
     /**
      * Cancellation is attributed before queue sessions are cancelled because
@@ -135,93 +122,17 @@ class TranslationScheduler(
      * path, not just the control mutation.
      */
     private val chapterCancellationEpochs = mutableMapOf<Long, Long>()
-    private var globalAutoCancellationInFlight = false
-    private var autoCancellationEpoch = 0L
-    private var globalAutoCancellationEpoch = 0L
+    private var globalReaderCancellationInFlight = false
+    private var readerCancellationEpoch = 0L
+    private var globalReaderCancellationEpoch = 0L
     private var readerStopInFlight = false
-
-    private val queueWindow = MutableStateFlow<ReaderQueueWindowSpec?>(null)
-
-    /**
-     * Live auto-translation snapshot projected from queue demand/outcome truth
-     * plus the durable store. Null when no window is armed. Observed by the
-     * reader through [TranslationManager].
-     */
-    val autoSnapshot: StateFlow<AutoTranslationSnapshot?> = queueWindow
-        .flatMapLatest { spec ->
-            if (spec == null) {
-                flowOf(null)
-            } else {
-                combine(queue.slotEventFlow, spec.session.store.state) { _, storePages ->
-                    val view = queue.observeSlots(spec.token)
-                    ReaderQueueSnapshotAdapter.project(spec, view, storePages, System.currentTimeMillis())
-                }
-            }
-        }
-        .stateIn(scope, SharingStarted.Eagerly, null)
-
-    /**
-     * Accepts a desired-window update (visible page + ahead target). Rebinds
-     * the queue session when the owner identity changed and delegates demand
-     * reconciliation to [ReaderTranslationQueue.updateViewport].
-     *
-     * Manual arbitration: the queue owns it natively — a manual tap promotes
-     * the same demand (explicit priority) instead of hiding the page from a
-     * separate coordinator, so the resolver is passed through unwrapped.
-     *
-     * Reader-UI callers moved to the typed facade in S3
-     * ([bindReaderQueueSession]/[updateReaderViewport]); this entry remains for
-     * the manager window gate tests until S4 retirement.
-     */
-    fun updateAutoWindow(
-        identity: AutoChapterIdentity,
-        visiblePageIndex: Int,
-        configuredAheadTarget: Int,
-        pageCount: Int,
-        session: TranslationSession,
-        pageResolver: (Int) -> ReaderPageWork?,
-        computeClass: TranslatorComputeClass,
-    ) {
-        val chapterId = session.chapter.id ?: return
-        val existing = sessions[chapterId]
-        val reuse = existing != null &&
-            existing.token == currentToken.get() &&
-            existing.sessionKey == session.key &&
-            existing.store === session.store &&
-            existing.computeClass == computeClass
-        val token = bindReaderQueueSession(chapterId, session, computeClass) ?: return
-        val ownerVersion = if (reuse) {
-            queueWindow.value?.ownerVersion ?: ownerVersions.incrementAndGet()
-        } else {
-            ownerVersions.incrementAndGet()
-        }
-        val windowVersion = windowVersions.incrementAndGet()
-        queueWindow.value = ReaderQueueWindowSpec(
-            identity = identity,
-            session = session,
-            token = token,
-            visiblePageIndex = visiblePageIndex,
-            configuredAheadTarget = configuredAheadTarget,
-            pageCount = pageCount,
-            ownerVersion = ownerVersion,
-            windowVersion = windowVersion,
-            pageKeysByIndex = ConcurrentHashMap(),
-        )
-        queue.updateViewport(
-            session = token,
-            pageIndex = visiblePageIndex,
-            pageCount = pageCount,
-            isAutoEnabled = true,
-            resolve = pageResolver,
-        )
-    }
 
     /**
      * Binds (or reuses) the queue session for [chapterId] and returns its token.
      * Reuse requires the same admitted session key, the same store instance and
      * the same compute class — a changed value rebinds, which cancels the old
      * binding's demand set under the queue's epoch drain. Suppressed during an
-     * in-flight reader stop, a global auto cancellation, or a chapter
+     * in-flight reader stop, a global reader cancellation, or a chapter
      * cancellation epoch; returns null in those cases.
      */
     fun bindReaderQueueSession(
@@ -232,13 +143,13 @@ class TranslationScheduler(
         val rejectionReason = readerSessionRejectionReason(chapterId)
         if (rejectionReason != null) {
             logcat(LogPriority.INFO) {
-                "TachiyomiAT reader auto admission rejected at scheduler gate: " +
+                "TachiyomiAT reader admission rejected at scheduler gate: " +
                     "reason=$rejectionReason chapterId=$chapterId"
             }
             return null
         }
-        synchronized(autoCoordinatorLock) {
-            if (readerStopInFlight || globalAutoCancellationInFlight) return null
+        synchronized(sessionLifecycleLock) {
+            if (readerStopInFlight || globalReaderCancellationInFlight) return null
             if (chapterId in chapterCancellationEpochs) return null
         }
         val existing = sessions[chapterId]
@@ -258,7 +169,7 @@ class TranslationScheduler(
         return fresh
     }
 
-    /** Typed manual/auto page submission for a captured reader session. */
+    /** Typed manual or viewport page submission for a captured reader session. */
     fun submitReaderPage(
         token: ReaderSessionToken,
         work: ReaderPageWork,
@@ -266,7 +177,7 @@ class TranslationScheduler(
         force: Boolean = false,
     ): ReaderSubmission = queue.submitCurrent(token, work, trigger, force)
 
-    /** Arms or refreshes the auto window demand set (exactly N, N+1) for the captured session. */
+    /** Arms or refreshes the viewport demand set (exactly N, N+1) for the captured session. */
     fun updateReaderViewport(
         token: ReaderSessionToken,
         pageIndex: Int,
@@ -276,104 +187,49 @@ class TranslationScheduler(
         queue.updateViewport(token, pageIndex, pageCount, isAutoEnabled = true, resolve = resolve)
     }
 
-    /** Queue-native auto toggle: prunes automatic demand when disabled, arms viewport updates when enabled. */
-    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean) {
+    /** Queue-native auto toggle; disabling retains explicit demand. */
+    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean): Boolean =
         queue.setAutoEnabled(token, enabled)
+
+    /** Typed queue outcomes for reader projection, bounded by the queue's retention cap. */
+    fun readerOutcomes(token: ReaderSessionToken): StateFlow<Map<String, SinglePageOutcome>> =
+        queue.outcomes(token)
+
+    /** Synchronously fences the chapter's queue session for admission/re-key control paths. */
+    fun invalidateQueueSession(chapterId: Long) {
+        val removed = synchronized(sessionLifecycleLock) {
+            sessions.remove(chapterId)?.also { active ->
+                if (currentToken.get() == active.token) currentToken.set(null)
+            }
+        } ?: return
+        queue.cancelSessionAndForget(removed.token)
+    }
+
+    /** Invalidates a chapter session and joins its physical workers before a destructive store action. */
+    suspend fun cancelReaderQueueSession(chapterId: Long) {
+        val cancellation = beginReaderQueueCancellation(chapterId)
+        try {
+            cancellation?.let(::performReaderQueueCancellation)
+            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
+        } finally {
+            finishReaderQueueCancellation(cancellation)
+        }
+    }
+
+    /** Reconciles retained queue sessions after a memory or provider availability event. */
+    fun reconcileReaderQueues(admissionGuard: (Long) -> Boolean = { true }) {
+        val active = synchronized(sessionLifecycleLock) {
+            if (readerStopInFlight || globalReaderCancellationInFlight) return
+            sessions.values.toList()
+        }
+        active.filter { admissionGuard(it.chapterId) }.forEach { queue.reconcile(it.token) }
     }
 
     /** Re-drives queued demands for the captured session after a source/memory/lifecycle event. */
     fun reconcileReaderQueue(
         token: ReaderSessionToken,
         resolve: (Int) -> ReaderPageWork?,
-    ) {
-        queue.reconcile(token, resolve)
-    }
-
-    /**
-     * Stops the queue session for [chapterId] (or every session when null) and
-     * clears the window so [autoSnapshot] settles to null. The rolling
-     * coordinator shutdown this method used to drive is retired; the name
-     * remains for compatibility until S4.
-     */
-    fun shutdownAutoCoordinator(chapterId: Long? = null) {
-        if (chapterId == null) {
-            queueWindow.value = null
-            sessions.keys.forEach { invalidateQueueSession(it) }
-        } else {
-            invalidateQueueSession(chapterId)
-        }
-    }
-
-    /**
-     * Invalidates the queue session bound to [chapterId]: cancels its demand
-     * set (retaining admitted paid work under its own lifecycle contract) and
-     * detaches the window projection. Batch admission, restore admission, and
-     * the download re-key path route here instead of coordinator shutdown.
-     */
-    fun invalidateQueueSession(chapterId: Long) {
-        val removed = sessions.remove(chapterId) ?: return
-        if (currentToken.get() == removed.token) currentToken.set(null)
-        queue.cancelSessionAndForget(removed.token)
-        synchronized(autoCoordinatorLock) {
-            val window = queueWindow.value
-            if (window != null && window.identity.chapterId == chapterId) {
-                queueWindow.value = null
-            }
-        }
-    }
-
-    /**
-     * Re-opens admission for the armed window after an external signal such as
-     * memory recovery, reader foreground resume, or source readiness.
-     */
-    fun reconcileAutoWindow(admissionGuard: (Long) -> Boolean = { true }) {
-        val spec = queueWindow.value ?: return
-        synchronized(autoCoordinatorLock) {
-            if (readerStopInFlight || globalAutoCancellationInFlight) return
-        }
-        if (!admissionGuard(spec.identity.chapterId)) return
-        queue.reconcile(spec.token)
-    }
-
-    fun cancelAutoTranslations(chapterId: Long? = null): Boolean {
-        // Reserve cancellation under the lifecycle lock, then invoke it
-        // outside that lock. Matching window updates either complete before
-        // this reservation or observe it and are suppressed.
-        val cancellation = beginAutoCancellation(chapterId)
-        var cancelled = cancellation != null
-        try {
-            cancellation?.let(::performAutoCancellation)
-            // fast non-blocking in-memory flip on the store first so the
-            // reader overlay/dim clears immediately on the current frame. The
-            // AUTO-fenced write never touches queue-owned (MANUAL-leased)
-            // pages; durable persistence is dispatched asynchronously to IO.
-            if (chapterId != null) {
-                val inMemoryFlipped = immediateStoreResolver?.invoke(chapterId)?.fastCancelInFlightStagesInMemory(
-                    origin = PageWriteOrigin.AUTO,
-                    cancellationReason = "Auto translation cancelled",
-                ) ?: 0
-                if (inMemoryFlipped > 0) {
-                    cancelled = true
-                }
-                if (cancelled) {
-                    scope.launch {
-                        try {
-                            markChapterCancelledAsync(
-                                chapterId,
-                                origin = PageWriteOrigin.AUTO,
-                                reason = "Auto translation cancelled",
-                            )
-                        } catch (e: Throwable) {
-                            logcat(LogPriority.WARN, e) { "Failed to drain cancellation for $chapterId" }
-                        }
-                    }
-                }
-            }
-            return cancelled
-        } finally {
-            finishAutoCancellation(cancellation)
-        }
-    }
+    ) = queue.reconcile(token, resolve)
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String, force: Boolean = false) {
         val rejectionReason = readerSessionRejectionReason(chapter.id)
@@ -496,79 +352,6 @@ class TranslationScheduler(
     }
 
     /**
-     * TachiyomiAT bug 4 fix: synchronously flip every in-flight page in [chapterId]'s
-     * store to CANCELLED so the reader clears the dim/overlay immediately. The auto/
-     * master-toggle-off paths previously only cancelled the jobs (and relied on each
-     * job's finally block to reset the status), which left pages visibly RUNNING until
-     * the coroutine unwound — sometimes never, if the worker was past its suspension
-     * point in uncancellable native/HTTP code.
-     *
-     * Mirrors the proven per-page pattern in [cancelPageTranslation]: runBlocking on
-     * [immediateStoreResolver] is acceptable because callers run on the reader/UI
-     * scope and the store's own mutex is the only inner lock (no nested UI-thread
-     * concerns). Pages that already reached a rendered or failed terminal state are
-     * left untouched so accepted artifacts survive.
-     */
-    suspend fun markChapterCancelledAsync(
-        chapterId: Long,
-        origin: PageWriteOrigin? = null,
-        reason: String = "Translation cancelled",
-    ): Int = withContext(Dispatchers.IO) {
-        val store = immediateStoreResolver?.invoke(chapterId) ?: return@withContext 0
-        val runningKeys = store.state.value.entries
-            .asSequence()
-            .filter { (pageKey, page) ->
-                page != null &&
-                    (page!!.isStageRunning || page.ocrError == "Translation cancelled") &&
-                    (origin == null || store.pageLeaseOwner(pageKey)?.let { it == origin } != false)
-            }
-            .map { it.key }
-            .toList()
-        if (runningKeys.isEmpty()) return@withContext 0
-        var flipped = 0
-        runningKeys.forEach { key ->
-            try {
-                markPageCancelled(store, key, reason, origin)
-                flipped++
-            } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
-            }
-        }
-        flipped
-    }
-
-    fun markChapterCancelledSync(
-        chapterId: Long,
-        reason: String = "Translation cancelled",
-        origin: PageWriteOrigin? = null,
-    ): Int {
-        val store = immediateStoreResolver?.invoke(chapterId) ?: return 0
-        val runningKeys = store.state.value.entries
-            .asSequence()
-            .filter { (pageKey, page) ->
-                page != null &&
-                    page!!.isStageRunning &&
-                    (origin == null || store.pageLeaseOwner(pageKey)?.let { it == origin } != false)
-            }
-            .map { it.key }
-            .toList()
-        if (runningKeys.isEmpty()) return 0
-        store.fastCancelInFlightStagesInMemory(origin = origin, cancellationReason = reason)
-        var flipped = 0
-        runBlocking {
-            runningKeys.forEach { key ->
-                try {
-                    markPageCancelled(store, key, reason, origin)
-                    flipped++
-                } catch (e: Throwable) {
-                    logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
-                }
-            }
-        }
-        return flipped
-    }
-
-    /**
      * Evicts a stuck page demand so the page becomes eligible again. The
      * queue-owned mapping cancels the stuck operation (its attempt-fenced
      * boundary cleanup owns the page write); the eviction is idempotent.
@@ -593,7 +376,7 @@ class TranslationScheduler(
      * if any. This is the per-page granularity [cancelPageTranslations]
      * (chapter-scoped) is too coarse for; it backs the per-page cancel button.
      *
-     * Returns true if a queue operation was actually cancelled or auto work was
+     * Returns true if a queue operation was actually cancelled or legacy page state was
      * stopped, false if none was running (already finished or deduped).
      */
     fun cancelPageTranslation(
@@ -609,13 +392,12 @@ class TranslationScheduler(
             // removed per-operation sweep contract.
             return true
         }
-        val autoCancelled = cancelAutoTranslations(chapterId)
-        // Legacy (batch/coordinator-era) page state still flips synchronously so
+        // Legacy batch-owned page state still flips synchronously so
         // the UI cannot remain stuck on RUNNING while the worker unwinds.
         immediateStoreResolver?.invoke(chapterId)?.let { store ->
             runBlocking { markPageCancelled(store, pageKey, reason) }
         }
-        return autoCancelled
+        return false
     }
 
     /**
@@ -623,9 +405,8 @@ class TranslationScheduler(
      * streams for that chapter. Call on reader navigating away so the previous
      * chapter can't keep holding the executor permit.
      *
-     * The queue's session cancellation bounds the drain at the queue's
-     * cancellation wait, matching the previous job-join timeout; physical
-     * stragglers drain under the teardown drain-handle contract instead.
+     * Store cleanup follows only after every returned physical drain handle
+     * completes; the bounded control wait never authorizes early eviction.
      *
      * NOTE: store eviction is NOT done here; the store lifecycle is owned by
      * TranslationManager. The caller evicts the store if needed.
@@ -634,39 +415,29 @@ class TranslationScheduler(
         chapterId: Long,
         reason: String = "Reader chapter navigation",
     ) {
-        val cancellation = beginAutoCancellation(chapterId)
-        val active = sessions[chapterId]
+        val cancellation = beginReaderQueueCancellation(chapterId)
         try {
-            cancellation?.let(::performAutoCancellation)
+            cancellation?.let(::performReaderQueueCancellation)
             // Chapter teardown also drops the outcomes retained for its pages.
             manualOutcomes.keys.removeAll { it.startsWith("$chapterId:") }
-            if (active != null) {
-                sessions.remove(chapterId, active)
-                if (currentToken.get() == active.token) currentToken.set(null)
-                // Bounded drain of the outgoing chapter's operations.
-                queue.cancelSession(active.token)
-            }
+            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
         } finally {
-            finishAutoCancellation(cancellation)
+            finishReaderQueueCancellation(cancellation)
         }
     }
 
     /**
-     * Cancels every queue session and the armed window. Call on reader destroy
+     * Cancels every queue session. Call on reader destroy
      * or master translation toggle off so no orphaned work keeps running.
-     *
-     * Cancellation is fire-and-forget here (the historical contract: no join on
-     * this path); page state settles through the attempt-fenced boundary
-     * cleanup and the manager-owned store clearing that follows.
      */
-    fun cancelAllPageTranslations(reason: String = "Reader translation stop") {
-        val cancellation = beginAutoCancellation(null)
+    suspend fun cancelAllPageTranslations(reason: String = "Reader translation stop") {
+        val cancellation = beginReaderQueueCancellation(null)
         try {
-            cancellation?.let(::performAutoCancellation)
-            shutdownAutoCoordinator()
+            cancellation?.let(::performReaderQueueCancellation)
             manualOutcomes.clear()
+            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
         } finally {
-            finishAutoCancellation(cancellation)
+            finishReaderQueueCancellation(cancellation)
         }
     }
 
@@ -680,61 +451,59 @@ class TranslationScheduler(
      * available for the next reader session.
      */
     suspend fun awaitReaderStop(reason: String = "Reader stopped") {
-        synchronized(autoCoordinatorLock) {
+        synchronized(sessionLifecycleLock) {
             readerStopInFlight = true
         }
         try {
-            queueWindow.value = null
-            val cancellation = beginAutoCancellation(null)
+            val cancellation = beginReaderQueueCancellation(null)
             val tokensToDrain = cancellation?.tokens ?: emptyList()
             try {
-                cancellation?.let(::performAutoCancellation)
+                cancellation?.let(::performReaderQueueCancellation)
                 manualOutcomes.clear()
             } finally {
-                finishAutoCancellation(cancellation)
+                finishReaderQueueCancellation(cancellation)
             }
-            tokensToDrain.forEach { token ->
-                when (val drain = queue.cancelSession(token)) {
-                    ReaderDrainResult.Completed -> Unit
-                    is ReaderDrainResult.PendingNativeDrain -> drain.completion.await()
-                }
-            }
-            sessions.clear()
-            currentToken.set(null)
+            tokensToDrain.forEach { awaitPhysicalDrain(it) }
         } finally {
-            synchronized(autoCoordinatorLock) {
+            synchronized(sessionLifecycleLock) {
                 readerStopInFlight = false
             }
         }
     }
 
-    private fun beginAutoCancellation(chapterId: Long?): QueueAutoCancellation? =
-        synchronized(autoCoordinatorLock) {
+    private suspend fun awaitPhysicalDrain(token: ReaderSessionToken) {
+        when (val drain = queue.cancelSession(token)) {
+            ReaderDrainResult.Completed -> Unit
+            is ReaderDrainResult.PendingNativeDrain -> drain.completion.await()
+        }
+    }
+
+    private fun beginReaderQueueCancellation(chapterId: Long?): QueueSessionCancellation? =
+        synchronized(sessionLifecycleLock) {
             val tokens = sessions.values
                 .filter { chapterId == null || it.chapterId == chapterId }
                 .map { it.token }
             if (chapterId != null && tokens.isEmpty()) return@synchronized null
-            val epoch = ++autoCancellationEpoch
-            val ownsGlobal = chapterId == null && !globalAutoCancellationInFlight
+            val epoch = ++readerCancellationEpoch
+            val ownsGlobal = chapterId == null && !globalReaderCancellationInFlight
             if (ownsGlobal) {
-                globalAutoCancellationInFlight = true
-                globalAutoCancellationEpoch = epoch
+                globalReaderCancellationInFlight = true
+                globalReaderCancellationEpoch = epoch
             }
             val ownsChapterEpoch = chapterId != null && chapterId !in chapterCancellationEpochs
             if (ownsChapterEpoch) {
                 chapterCancellationEpochs[chapterId] = epoch
             }
-            QueueAutoCancellation(
+            QueueSessionCancellation(
                 chapterId = chapterId,
                 tokens = tokens,
-                invokeSessions = true,
                 ownsChapterEpoch = ownsChapterEpoch,
                 ownsGlobalCancellation = ownsGlobal,
                 epoch = epoch,
             )
         }
 
-    private fun performAutoCancellation(cancellation: QueueAutoCancellation) {
+    private fun performReaderQueueCancellation(cancellation: QueueSessionCancellation) {
         cancellation.tokens.forEach { token ->
             sessions.values.removeIf { it.token == token }
             if (currentToken.get() == token) currentToken.set(null)
@@ -742,9 +511,9 @@ class TranslationScheduler(
         }
     }
 
-    private fun finishAutoCancellation(cancellation: QueueAutoCancellation?) {
+    private fun finishReaderQueueCancellation(cancellation: QueueSessionCancellation?) {
         if (cancellation == null) return
-        synchronized(autoCoordinatorLock) {
+        synchronized(sessionLifecycleLock) {
             if (cancellation.ownsChapterEpoch) {
                 cancellation.chapterId?.let { chapterId ->
                     if (chapterCancellationEpochs[chapterId] == cancellation.epoch) {
@@ -752,16 +521,15 @@ class TranslationScheduler(
                     }
                 }
             }
-            if (cancellation.ownsGlobalCancellation && globalAutoCancellationEpoch == cancellation.epoch) {
-                globalAutoCancellationInFlight = false
+            if (cancellation.ownsGlobalCancellation && globalReaderCancellationEpoch == cancellation.epoch) {
+                globalReaderCancellationInFlight = false
             }
         }
     }
 
-    private class QueueAutoCancellation(
+    private class QueueSessionCancellation(
         val chapterId: Long?,
         val tokens: List<ReaderSessionToken>,
-        val invokeSessions: Boolean,
         val ownsChapterEpoch: Boolean,
         val ownsGlobalCancellation: Boolean,
         val epoch: Long,

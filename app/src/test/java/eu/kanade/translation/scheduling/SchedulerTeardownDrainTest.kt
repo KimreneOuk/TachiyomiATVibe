@@ -4,8 +4,6 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
@@ -57,24 +55,6 @@ class SchedulerTeardownDrainTest {
             }
             return SinglePageOutcome.Completed
         }
-
-        override suspend fun prepareSinglePage(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            pageKey: String,
-            streamFn: (() -> InputStream)?,
-            force: Boolean,
-            stageListener: TranslationStageListener?,
-        ): PreparedPage? = null
-
-        override suspend fun translatePreparedPage(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            prepared: PreparedPage,
-            stageListener: TranslationStageListener?,
-        ): TranslationCompletionOutcome? = null
     }
 
     @Test

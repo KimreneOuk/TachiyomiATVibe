@@ -38,6 +38,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
@@ -236,22 +237,38 @@ class SinglePageOverlapBoundaryTest {
                 harness.fakeTransport.callsFor("p0") shouldBe 1
                 val inpaintBeforeCancel = harness.store.state.value.getValue("p0").inpaintStatus
                 inpaintBeforeCancel shouldBe StageStatus.PENDING
-                pipelineJob.cancel()
+                if (throughScheduler) {
+                    // Real scheduler cancel entry: queue-owned force-cancel of the
+                    // explicit manual demand (the retired per-operation job handle
+                    // has no replacement by design).
+                    harness.scheduler.cancelPageTranslation(harness.CHAPTER_ID, "p0") shouldBe true
+                } else {
+                    pipelineJob.cancel()
+                }
                 // Quarantine owns parked native call until worker exits.
                 pipelineJob.isCompleted shouldBe false
                 verify(exactly = 0) { cleaned.recycle() }
                 harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
-                pipelineJob.join()
+                if (throughScheduler) {
+                    // Queue force-cancel publishes no typed outcome for explicit
+                    // demands; the attempt-fenced cleanup's CANCELLED store write
+                    // is the terminal marker, and run_end lands in the runner's
+                    // teardown after it.
+                    while (harness.store.state.value.getValue("p0").translationStatus != StageStatus.CANCELLED) {
+                        delay(25)
+                    }
+                    while (lines.count { it.contains("event=run_end ") && it.contains("outcome=cancelled") } == 0) {
+                        delay(25)
+                    }
+                } else {
+                    pipelineJob.join()
+                }
                 val cancelledPage = harness.store.state.value.getValue("p0")
                 cancelledPage.translationStatus shouldBe StageStatus.CANCELLED
                 cancelledPage.inpaintStatus shouldBe inpaintBeforeCancel
                 cancelledPage.ocrError shouldBe null
-                pipelineJob.isCancelled shouldBe true
                 if (throughScheduler) {
                     lines.count { it.contains("event=run_end ") && it.contains("outcome=cancelled") } shouldBe 1
-                    val reasonsField = harness.scheduler.javaClass.getDeclaredField("pageCancellationReasons")
-                    reasonsField.isAccessible = true
-                    (reasonsField.get(harness.scheduler) as Map<*, *>).isEmpty() shouldBe true
                 }
                 harness.transportShared.cancelledCalls.get() shouldBe 1
                 verify(exactly = 1) { cleaned.recycle() }
@@ -269,17 +286,12 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     fun `masked textless reader cleans without provider call and reaches durable terminal`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = false) }
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(hasMask = true) }
     }
 
     @Test
-    fun `masked textless prepared page cleans without provider call and reaches durable terminal`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = true) }
-    }
-
-    @Test
-    fun `unmasked textless prepared page needs no cleaned worker and reaches durable terminal`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(prepared = true, hasMask = false) }
+    fun `unmasked textless page needs no cleaned worker and reaches durable terminal`() = runBlocking<Unit> {
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertTextless(hasMask = false) }
     }
 
     @Test
@@ -332,7 +344,7 @@ class SinglePageOverlapBoundaryTest {
         }
     }
 
-    private suspend fun assertTextless(prepared: Boolean, hasMask: Boolean = true) {
+    private suspend fun assertTextless(hasMask: Boolean = true) {
         val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0"), preRegisterInStore = false)
         val harness = TranslationCoexistenceHarness.create(listOf("p0"), storeOverride = store)
         val source = FakeCoexistence.stubBitmap()
@@ -348,39 +360,24 @@ class SinglePageOverlapBoundaryTest {
                 )
             }
             harness.fakeRecognition.inpaintOutcome = { bitmap, _ -> bitmap }
-            var readerOutcome: SinglePageOutcome? = null
-            val reference = if (prepared) {
-                harness.pipeline.prepareSinglePage(
-                    harness.manga,
-                    harness.chapterFor(harness.CHAPTER_ID),
-                    harness.source,
-                    "p0",
-                    streamFn = null,
-                    force = false,
-                    stageListener = null,
-                )
-            } else {
-                readerOutcome = harness.pipeline.translateSinglePage(
-                    harness.manga,
-                    harness.chapterFor(harness.CHAPTER_ID),
-                    harness.source,
-                    "p0",
-                    force = false,
-                    stageListener = null,
-                    origin = PageWriteOrigin.MANUAL,
-                )
-                null
-            }
+            val readerOutcome = harness.pipeline.translateSinglePage(
+                harness.manga,
+                harness.chapterFor(harness.CHAPTER_ID),
+                harness.source,
+                "p0",
+                force = false,
+                stageListener = null,
+                origin = PageWriteOrigin.MANUAL,
+            )
             store.flush()
             harness.fakeRecognition.analyzeCalls.get() shouldBe 1
-            if (prepared) reference.shouldNotBeNull()
             val page = store.snapshot("p0").page
             if (page == null || page.ocrStatus != StageStatus.READY) {
                 throw AssertionError(
                     "textless OCR result was not published: " + harness.failureDiagnostics(listOf("p0")),
                 )
             }
-            if (!prepared) readerOutcome shouldBe SinglePageOutcome.Completed
+            readerOutcome shouldBe SinglePageOutcome.Completed
             page.inpaintStatus shouldBe if (hasMask) StageStatus.READY else StageStatus.SKIPPED
             page.isTextlessTerminal shouldBe true
             harness.fakeRecognition.inpaintCalls.get() shouldBe if (hasMask) 1 else 0
@@ -388,7 +385,6 @@ class SinglePageOverlapBoundaryTest {
             harness.fakeTransport.totalCalls() shouldBe 0
             store.artifactEngine!!.readManifest()!!.pages.getValue("p0").displayState shouldBe
                 PageDisplayState.TEXTLESS_COMPLETE
-            if (prepared) reference.shouldNotBeNull().isTerminal shouldBe true
             verify(exactly = 1) { source.recycle() }
             store.pageLeaseOwner("p0") shouldBe null
         } finally {
@@ -397,66 +393,6 @@ class SinglePageOverlapBoundaryTest {
             } finally {
                 store.closeAndFlush()
             }
-        }
-    }
-
-    @Test
-    fun `prepared success releases aliased source through owner`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.ACCEPT) }
-    }
-
-    @Test
-    fun `prepared rejected persistence releases aliased source and lease`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.REJECT) }
-    }
-
-    @Test
-    fun `prepared thrown persistence releases aliased source and lease`() = runBlocking<Unit> {
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { assertPreparedCleanup(PreparedPublication.THROW) }
-    }
-
-    private enum class PreparedPublication { ACCEPT, REJECT, THROW }
-
-    private suspend fun assertPreparedCleanup(publication: PreparedPublication) {
-        val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
-        val source = FakeCoexistence.stubBitmap()
-        val publicationFailure = java.io.IOException("controlled persistence failure")
-        try {
-            harness.installGraphicsShims()
-            harness.stubChapterPages(listOf("p0"))
-            coEvery { PageDecode.decodePageBitmapForTranslation(any(), any(), any(), any(), any()) } returns
-                FakeCoexistence.decodedPage("p0").copy(bitmap = source)
-            harness.fakeRecognition.inpaintOutcome = { bitmap, _ -> bitmap }
-            when (publication) {
-                PreparedPublication.ACCEPT -> Unit
-                PreparedPublication.REJECT -> coEvery {
-                    harness.cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
-                } returns null
-                PreparedPublication.THROW -> coEvery {
-                    harness.cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any(), any(), any(), any())
-                } throws publicationFailure
-            }
-            val result = runCatching {
-                harness.pipeline.prepareSinglePage(
-                    harness.manga,
-                    harness.chapterFor(harness.CHAPTER_ID),
-                    harness.source,
-                    "p0",
-                    streamFn = null,
-                    force = false,
-                    stageListener = null,
-                )
-            }
-            harness.fakeRecognition.inpaintCalls.get() shouldBe 1
-            verify(exactly = 1) { source.recycle() }
-            harness.store.pageLeaseOwner("p0") shouldBe null
-            when (publication) {
-                PreparedPublication.ACCEPT -> result.getOrThrow().shouldNotBeNull()
-                PreparedPublication.REJECT -> result.getOrThrow() shouldBe null
-                PreparedPublication.THROW -> result.exceptionOrNull() shouldBe publicationFailure
-            }
-        } finally {
-            harness.close()
         }
     }
 

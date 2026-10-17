@@ -90,9 +90,8 @@ class TranslationManagerDeleteResetOrderingTest {
         every { chapter.id } returns 42L
 
         val scheduler = mockk<TranslationScheduler>(relaxed = true)
-        every { scheduler.cancelAutoTranslations(any()) } answers {
-            log("cancelAutoTranslations")
-            true
+        coEvery { scheduler.cancelReaderQueueSession(any()) } coAnswers {
+            log("cancelReaderQueueSession")
         }
         coEvery { scheduler.cancelPageTranslations(any()) } answers {
             log("cancelPageTranslations")
@@ -189,8 +188,9 @@ class TranslationManagerDeleteResetOrderingTest {
             events == listOf(
                 // Preamble: capture the durable truth before any teardown (SAF reads).
                 "findMangaDir",
-                // Step 1: cancelAutoTranslations stops new auto dispatch.
-                "cancelAutoTranslations",
+                // Step 1: cancelReaderQueueSession fences the chapter's queue
+                // session (cancellation epoch) and joins its physical drains.
+                "cancelReaderQueueSession",
                 // Step 2: cancelPageTranslations cancels + joins single-page jobs.
                 "cancelPageTranslations",
                 // Step 3: removeFromTranslationQueue drops the batch entry...
@@ -233,7 +233,7 @@ class TranslationManagerDeleteResetOrderingTest {
         assertTrue(
             events == listOf(
                 "clearDurableStatusCache",
-                "cancelAutoTranslations",
+                "cancelReaderQueueSession",
                 "cancelPageTranslations",
                 "removeFromQueue",
                 "cancelTranslatorJobAndJoin",

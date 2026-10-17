@@ -127,14 +127,17 @@ internal class ChapterDataResetController(
         // guarantees callers land on clean state.
         //
         // Ordering is load-bearing and strictly sequenced:
-        //   1. cancelAutoTranslations bumps the auto generation so the window stops dispatching new pages.
+        //   1. cancelReaderQueueSession fences the chapter's queue session via
+        //      the cancellation epoch (no new admissions) and joins every
+        //      physical drain handle, so retained paid work is finished or
+        //      gone before the store/artifacts are touched.
         //   2. cancelPageTranslations cancels + JOINs each auto/single-page job so native work unwinds.
         //   3. removeFromTranslationQueue + cancelTranslatorJobAndJoin drop the batch entry and JOIN the
         //      batch worker (plain removeFrom only cancel()s) so it releases the translator permit before deletion.
         //   4. unregisterActiveTranslationStore marks the store defunct so a still-unwinding worker's late writes no-op.
         //   5. streamRegistry.clearChapter drops stale reader closures pointing at the about-to-be-deleted PNGs.
         //   6. Only once all work is wound down is it safe to delete the artifact tree and companion images.
-        scheduler.cancelAutoTranslations(chapterId)
+        scheduler.cancelReaderQueueSession(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
         translator.cancelTranslatorJobAndJoin()
@@ -234,7 +237,7 @@ internal class ChapterDataResetController(
     ) {
         val chapterId = chapter.id ?: return
         durableStatusResolver.clearDurableStatusCache()
-        scheduler.cancelAutoTranslations(chapterId)
+        scheduler.cancelReaderQueueSession(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
         translator.cancelTranslatorJobAndJoin()

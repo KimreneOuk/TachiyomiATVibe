@@ -618,7 +618,6 @@ class ReaderActivity : BaseActivity() {
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
                         onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
                         onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
-                        onAutoTranslatePrefetchCountChange = { viewModel.setAutoTranslatePrefetchCount(it) },
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },

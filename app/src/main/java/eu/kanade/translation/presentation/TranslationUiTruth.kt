@@ -13,7 +13,6 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.scheduling.AutoSlotState
 import java.text.DateFormat
 import java.util.Date
 
@@ -115,54 +114,6 @@ object TranslationUiTruth {
         outcome is SinglePageOutcome.Paused -> paused(outcome.nextEligibleRetryAtEpochMs)
         outcome is SinglePageOutcome.Failed -> failed(durable, exhausted)
         else -> fromDurable(durable, outcome, partial)
-    }
-
-    /**
-     * Rolling-auto slot (auto page/status column). [retryAtEpochMs] is the
-     * coordinator's retry epoch for a paused slot, when it knows one; it is
-     * carried separately so the bounded slot model keeps its shape.
-     */
-    fun forAutoSlot(
-        slot: AutoSlotState,
-        retryAtEpochMs: Long? = null,
-    ): PageUiTruth = when (slot) {
-        AutoSlotState.Queued -> QUEUED
-        AutoSlotState.ReadingText -> stage("Reading text.", "reading text")
-        AutoSlotState.Cleaning -> stage("Cleaning bubbles.", "cleaning bubbles")
-        AutoSlotState.Translating -> stage("Translating text.", "translating text")
-        AutoSlotState.Rendering -> stage("Finishing page.", "finishing page")
-        AutoSlotState.Ready -> TRANSLATED
-        is AutoSlotState.Deferred -> PageUiTruth(
-            label = "Auto paused; retries automatically when available.",
-            severity = UiSeverity.WARNING,
-            retryMode = UiRetryMode.AUTOMATIC,
-            retryAtEpochMs = retryAtEpochMs,
-            actions = setOf(UiAction.DETAILS, UiAction.CANCEL),
-            terminalSuccess = false,
-            contentDescription = "Auto translation paused; automatic retry when available.",
-        )
-        is AutoSlotState.Failed ->
-            if (slot.retryable) {
-                PageUiTruth(
-                    label = "Auto failed — will retry when available.",
-                    severity = UiSeverity.ERROR,
-                    retryMode = UiRetryMode.AUTOMATIC,
-                    retryAtEpochMs = null,
-                    actions = setOf(UiAction.DETAILS),
-                    terminalSuccess = false,
-                    contentDescription = "Auto translation failed; retry is available.",
-                )
-            } else {
-                PageUiTruth(
-                    label = "Auto failed — action required.",
-                    severity = UiSeverity.ERROR,
-                    retryMode = UiRetryMode.NONE,
-                    retryAtEpochMs = null,
-                    actions = setOf(UiAction.REVIEW, UiAction.DETAILS),
-                    terminalSuccess = false,
-                    contentDescription = "Auto translation failed and needs attention.",
-                )
-            }
     }
 
     // ------------------------------------------------------------------

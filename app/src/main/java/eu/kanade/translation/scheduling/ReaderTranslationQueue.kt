@@ -46,6 +46,8 @@ enum class ReaderPriority { CURRENT_PAGE, PREFETCH_NEXT }
 enum class ReaderTrigger { MANUAL_TAP, AUTO_VIEWPORT }
 data class ReaderSessionToken(val chapterIdentity: String, val readerGeneration: Long)
 
+internal enum class ReaderDeferralReason { SOURCE_UNAVAILABLE, MEMORY, NETWORK }
+
 /** Captures a fresh-stream factory, never an open stream. Null means source-unavailable. */
 data class ReaderPageWork(val pageKey: String, val readerPageIndex: Int, val streamFn: (() -> InputStream)?)
 
@@ -131,7 +133,7 @@ class ReaderTranslationQueue(
 
         /** Why this demand is currently deferred; null while queued or running. */
         @Volatile
-        var deferral: AutoDeferralReason? = null
+        var deferral: ReaderDeferralReason? = null
         var state = State.QUEUED
         var job: Job? = null
         var enteredBody = false
@@ -182,57 +184,6 @@ class ReaderTranslationQueue(
     private val localPermit = Semaphore(1)
     private val staleOutcomes = MutableStateFlow<Map<String, SinglePageOutcome>>(emptyMap()).asStateFlow()
 
-    /**
-     * Bumped on every demand-lifecycle mutation (submit, defer, stage event,
-     * terminal, cancel). The temporary snapshot adapter re-derives full truth
-     * through [observeSlots] on every bump instead of tracking incremental
-     * per-binding flows.
-     */
-    private val slotEvents = MutableStateFlow(0L)
-
-    private fun pokeSlots() {
-        slotEvents.value = slotEvents.value + 1L
-    }
-
-    /** Monotonic demand-mutation signal for observers of [observeSlots]. */
-    val slotEventFlow: StateFlow<Long> = slotEvents.asStateFlow()
-
-    /**
-     * Atomic queue truth for one bound session: live demands plus retained
-     * terminal outcomes. Stale or unbound sessions observe empty views.
-     */
-    fun observeSlots(session: ReaderSessionToken): ReaderQueueView = synchronized(control) {
-        val b = bound?.takeIf { it.token == session }
-            ?: return ReaderQueueView(emptyMap(), emptyMap())
-        val now = nowEpochMs()
-        val live = (pending.values + liveWorkers.values).distinct()
-            .filter { it.binding === b && (it.state == State.QUEUED || it.state == State.RUNNING) }
-            .associate { demand -> demand.work.pageKey to demand.observationLocked(now) }
-        ReaderQueueView(live, b.outcomes.value)
-    }
-
-    private fun Demand.observationLocked(now: Long): ReaderSlotObservation {
-        val phase = when {
-            state == State.RUNNING -> ReaderSlotPhase.RUNNING
-            retryAt > now || work.streamFn == null ||
-                (deferral != null && deferredAtEvent >= event) -> ReaderSlotPhase.DEFERRED
-            else -> ReaderSlotPhase.QUEUED
-        }
-        val reason = when {
-            phase != ReaderSlotPhase.DEFERRED -> null
-            work.streamFn == null -> AutoDeferralReason.SourceUnavailable
-            else -> deferral
-        }
-        return ReaderSlotObservation(
-            pageKey = work.pageKey,
-            readerPageIndex = work.readerPageIndex,
-            explicit = explicit,
-            phase = phase,
-            stage = stage.get(),
-            deferral = reason,
-        )
-    }
-
     fun bindSession(
         session: ReaderSessionToken,
         manga: Manga,
@@ -256,7 +207,6 @@ class ReaderTranslationQueue(
             jobs
         }
         cancelOutside(cancellations)
-        pokeSlots()
     }
 
     fun submitCurrent(
@@ -314,7 +264,6 @@ class ReaderTranslationQueue(
         }
         cancelOutside(retired)
         pump()
-        pokeSlots()
         return result
     }
 
@@ -387,28 +336,31 @@ class ReaderTranslationQueue(
             }
             cancelOutside(cancellations)
             pump()
-            pokeSlots()
         }
     }
 
-    fun setAutoEnabled(session: ReaderSessionToken, enabled: Boolean) {
+    fun setAutoEnabled(session: ReaderSessionToken, enabled: Boolean): Boolean {
         val now = nowEpochMs()
-        val cancellations = synchronized(control) {
-            val b = currentLocked(session) ?: return
+        val (cancellations, hadAutomaticDemand) = synchronized(control) {
+            val b = currentLocked(session) ?: return false
+            val hadAutomaticDemand = (pending.values + liveWorkers.values).distinct().any {
+                it.binding === b && !it.explicit && (it.state == State.QUEUED || it.state == State.RUNNING)
+            }
             b.autoEnabled = enabled
             revision++
             event++
-            if (enabled) {
+            val jobs = if (enabled) {
                 emptyList()
             } else {
                 cancelLocked(preservePaid = true, now = now) {
                     it.binding === b && !it.explicit
                 }
             }
+            jobs to hadAutomaticDemand
         }
         cancelOutside(cancellations)
         pump()
-        pokeSlots()
+        return !enabled && hadAutomaticDemand
     }
 
     fun reconcile(
@@ -423,7 +375,6 @@ class ReaderTranslationQueue(
             }
             if (valid) {
                 pump()
-                pokeSlots()
             }
             return
         }
@@ -464,7 +415,6 @@ class ReaderTranslationQueue(
             }
             if (valid) {
                 pump()
-                pokeSlots()
             }
         }
     }
@@ -480,7 +430,6 @@ class ReaderTranslationQueue(
             cancelLocked { it.binding === b && it.work.pageKey == pageKey }
         }
         cancelOutside(cancellations)
-        pokeSlots()
         return true
     }
 
@@ -497,7 +446,6 @@ class ReaderTranslationQueue(
             cancelLocked(preservePaid = true, now = now) { it.binding === b }
         }
         cancelOutside(cancellations)
-        pokeSlots()
         return awaitDrain()
     }
 
@@ -516,7 +464,6 @@ class ReaderTranslationQueue(
             cancelLocked(preservePaid = true, now = now) { it.binding === b }
         }
         cancelOutside(cancellations)
-        pokeSlots()
     }
 
     suspend fun closeAndDrain(): ReaderDrainResult {
@@ -528,7 +475,6 @@ class ReaderTranslationQueue(
             cancelLocked(preservePaid = true, now = now) { true }
         }
         cancelOutside(cancellations)
-        pokeSlots()
         return awaitDrain()
     }
 
@@ -638,7 +584,7 @@ class ReaderTranslationQueue(
                 if (!demand.explicit && automatic >= AUTOMATIC_PHYSICAL_LIMIT) return@forEach
                 if (demand.work.streamFn == null) {
                     demand.deferredAtEvent = event
-                    demand.deferral = AutoDeferralReason.SourceUnavailable
+                    demand.deferral = ReaderDeferralReason.SOURCE_UNAVAILABLE
                     return@forEach
                 }
                 if (!demand.explicit) automatic++
@@ -699,7 +645,6 @@ class ReaderTranslationQueue(
         }
         terminal?.let { demand.trace.end(it) }
         drained.first?.complete(Unit)
-        pokeSlots()
         pump()
     }
 
@@ -735,7 +680,6 @@ class ReaderTranslationQueue(
                 Gate.DEFER -> {
                     leaseWaitSpan.end()
                     defer(demand)
-                    pokeSlots()
                     return
                 }
                 Gate.DISPLAY_READY -> {
@@ -747,7 +691,6 @@ class ReaderTranslationQueue(
                             publishLocked(demand, SinglePageOutcome.Completed)
                         }
                     }
-                    pokeSlots()
                     return
                 }
                 Gate.PROCEED -> Unit
@@ -757,7 +700,6 @@ class ReaderTranslationQueue(
                 demand.state = State.RUNNING
                 demand.enteredBody = true
             }
-            pokeSlots()
             leaseWaitSpan.end()
             val outcome = executor.translateSinglePage(
                 manga = demand.binding.manga,
@@ -788,14 +730,12 @@ class ReaderTranslationQueue(
                     }
                 }
             }
-            pokeSlots()
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
             logcat(LogPriority.WARN, t) { "Reader queue execution or admission failed" }
-            demand.deferral = AutoDeferralReason.Network
+            demand.deferral = ReaderDeferralReason.NETWORK
             defer(demand, nowEpochMs() + cancellationWaitMs)
-            pokeSlots()
         } finally {
             if (acquired) permit?.release()
         }
@@ -804,7 +744,6 @@ class ReaderTranslationQueue(
     /** Stage events fire on pipeline threads; publish outside the control lock. */
     private fun onStageEvent(demand: Demand, stage: TranslationStageEvent) {
         demand.stage.set(stage)
-        pokeSlots()
     }
 
     private suspend fun gate(demand: Demand): Gate {
@@ -813,16 +752,16 @@ class ReaderTranslationQueue(
         val automatic = synchronized(control) { !demand.explicit }
         if (automatic) {
             if (store == null) {
-                demand.deferral = AutoDeferralReason.SourceUnavailable
+                demand.deferral = ReaderDeferralReason.SOURCE_UNAVAILABLE
                 return Gate.DEFER
             }
             if (!store.autoAttemptAllowed(demand.work.pageKey)) {
-                demand.deferral = AutoDeferralReason.Network
+                demand.deferral = ReaderDeferralReason.NETWORK
                 return Gate.DEFER
             }
             if (!valid(demand)) return Gate.ABORT
             if (demand.priority.get() == ReaderPriority.PREFETCH_NEXT && !memoryGate()) {
-                demand.deferral = AutoDeferralReason.Memory
+                demand.deferral = ReaderDeferralReason.MEMORY
                 return Gate.DEFER
             }
         }

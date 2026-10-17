@@ -6,8 +6,6 @@ import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
@@ -232,22 +230,4 @@ private class ManualFakeExecutor(
         releaseTranslate.await()
         return SinglePageOutcome.Completed
     }
-
-    override suspend fun prepareSinglePage(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        pageKey: String,
-        streamFn: (() -> InputStream)?,
-        force: Boolean,
-        stageListener: TranslationStageListener?,
-    ): PreparedPage? = null
-
-    override suspend fun translatePreparedPage(
-        manga: tachiyomi.domain.manga.model.Manga,
-        chapter: tachiyomi.domain.chapter.model.Chapter,
-        source: eu.kanade.tachiyomi.source.online.HttpSource,
-        prepared: PreparedPage,
-        stageListener: TranslationStageListener?,
-    ): TranslationCompletionOutcome? = null
 }

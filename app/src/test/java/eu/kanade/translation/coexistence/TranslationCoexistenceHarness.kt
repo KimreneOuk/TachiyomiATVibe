@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
+import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
@@ -51,7 +52,10 @@ import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.scheduling.ReaderPageWork
+import eu.kanade.translation.scheduling.ReaderSessionToken
 import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
@@ -1049,6 +1053,35 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
+     * Binds the queue session for [chapterId] and submits [pageKeys] as
+     * AUTOMATIC viewport demand (exactly N, N+1 at [pageKeys.size]). Returns
+     * the token so tests can drive queue-native cancellation/outcome entries.
+     * Re-seamed in Phase 4 S4: replaces the retired prepared-page boundary as
+     * the automatic (drain-not-cancel) execution path.
+     */
+    fun submitViewport(
+        pageKeys: List<String>,
+        chapterId: Long = CHAPTER_ID,
+        computeClass: TranslatorComputeClass = TranslatorComputeClass.REMOTE_IO,
+    ): ReaderSessionToken {
+        val session = TranslationSession(
+            key = "harness-queue-session-$chapterId",
+            manga = manga,
+            chapter = chapterFor(chapterId),
+            source = source,
+            store = store,
+        )
+        val token = scheduler.bindReaderQueueSession(chapterId, session, computeClass)
+        checkNotNull(token) { "harness: queue session bind was rejected for chapterId=$chapterId" }
+        scheduler.updateReaderViewport(token, 0, pageKeys.size) { index ->
+            pageKeys.getOrNull(index)?.let { pageKey ->
+                ReaderPageWork(pageKey, index) { ByteArrayInputStream("page-$pageKey".toByteArray()) }
+            }
+        }
+        return token
+    }
+
+    /**
      * Awaits (event-driven) the manual attempt's terminal — the queue-bound
      * equivalent of the removed scheduler job map. The returned handle
      * completes when the queue publishes a typed outcome for the page;
@@ -1198,8 +1231,8 @@ internal class TranslationCoexistenceHarness private constructor(
             colorEstimatorShimInstalled = true
             mockkObject(RenderColorEstimator)
             every { RenderColorEstimator.recomputeFor(any(), any()) } returns Unit
-            // AUTO prepared-page test setup:
-            // the AUTO prepared-page translate half (translatePreparedPage) builds a
+            // Runner-path test setup:
+            // the single-page runner's translate/render half builds a
             // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
             // android.jar throws on. Disk/render IO shim only — no coexistence
             // collaborator is faked.

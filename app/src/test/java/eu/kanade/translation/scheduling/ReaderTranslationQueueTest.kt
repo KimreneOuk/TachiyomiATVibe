@@ -19,8 +19,6 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
-import eu.kanade.translation.pipeline.execution.PreparedPage
-import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
@@ -128,24 +126,6 @@ class ReaderTranslationQueueTest {
             }
             return outcomes[pageKey] ?: SinglePageOutcome.Completed
         }
-
-        override suspend fun prepareSinglePage(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            pageKey: String,
-            streamFn: (() -> InputStream)?,
-            force: Boolean,
-            stageListener: TranslationStageListener?,
-        ): PreparedPage? = null
-
-        override suspend fun translatePreparedPage(
-            manga: Manga,
-            chapter: Chapter,
-            source: HttpSource,
-            prepared: PreparedPage,
-            stageListener: TranslationStageListener?,
-        ): TranslationCompletionOutcome? = null
     }
 
     /** REAL house store over fake artifact IO — the production fresh-chapter recipe. */

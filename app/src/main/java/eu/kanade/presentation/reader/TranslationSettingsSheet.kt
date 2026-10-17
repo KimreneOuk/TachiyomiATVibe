@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,8 +57,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 /**
  * Compact Translation settings sheet shown from the reader overlay.
  *
- * Hosts the master Enable switch, the Auto-translate toggle (with a prefetch
- * slider), searchable Source/Target language pickers, and the engine/model
+ * Hosts the master Enable switch, the Auto-translate toggle, searchable
+ * Source/Target language pickers, and the engine/model
  * selector. Built on [AdaptiveSheet] so it matches the reader overlay styling
  * and dismisses together with the reader menus.
  *
@@ -74,7 +73,6 @@ fun TranslationSettingsSheet(
     onStopAllTranslation: () -> Unit,
     onTranslationEnabledChange: (Boolean) -> Unit,
     onAutoTranslateChange: (Boolean) -> Unit,
-    onAutoTranslatePrefetchCountChange: (Int) -> Unit,
     onTranslateFromLanguageChange: (String) -> Unit,
     onTranslateToLanguageChange: (String) -> Unit,
     onOcrModelChange: (OcrModel) -> Unit,
@@ -108,10 +106,8 @@ fun TranslationSettingsSheet(
             TogglesSection(
                 enabled = state.enabled,
                 autoTranslate = state.autoTranslate,
-                prefetchCount = state.autoTranslatePrefetchCount,
                 onTranslationEnabledChange = onTranslationEnabledChange,
                 onAutoTranslateChange = onAutoTranslateChange,
-                onAutoTranslatePrefetchCountChange = onAutoTranslatePrefetchCountChange,
             )
             QueueSection(
                 queue = queue,
@@ -393,10 +389,8 @@ private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedP
 private fun ColumnScope.TogglesSection(
     enabled: Boolean,
     autoTranslate: Boolean,
-    prefetchCount: Int,
     onTranslationEnabledChange: (Boolean) -> Unit,
     onAutoTranslateChange: (Boolean) -> Unit,
-    onAutoTranslatePrefetchCountChange: (Int) -> Unit,
 ) {
     SwitchPreferenceWidget(
         title = stringResource(ATMR.strings.pref_translation_enabled),
@@ -404,55 +398,13 @@ private fun ColumnScope.TogglesSection(
         onCheckedChanged = onTranslationEnabledChange,
     )
 
-    // Auto mode + prefetch slider are only meaningful when translation is on.
+    // Auto mode is only meaningful when translation is on.
     if (enabled) {
         SwitchPreferenceWidget(
             title = stringResource(ATMR.strings.pref_auto_translate),
             subtitle = stringResource(ATMR.strings.pref_auto_translate_summary),
             checked = autoTranslate,
             onCheckedChanged = onAutoTranslateChange,
-        )
-
-        if (autoTranslate) {
-            PrefetchSlider(
-                value = prefetchCount,
-                onValueChange = onAutoTranslatePrefetchCountChange,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PrefetchSlider(
-    value: Int,
-    onValueChange: (Int) -> Unit,
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = MaterialTheme.padding.medium),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = stringResource(ATMR.strings.pref_auto_translate_prefetch),
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Text(
-                text = value.toString(),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Slider(
-            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-            value = value.toFloat(),
-            onValueChange = { onValueChange(it.toInt()) },
-            valueRange = 1f..5f,
-            steps = 3,
         )
     }
 }

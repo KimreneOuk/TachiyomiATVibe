@@ -181,9 +181,8 @@ class ReaderViewModel @JvmOverloads constructor(
             combine(
                 translationPreferences.translationEnabled().changes(),
                 translationPreferences.autoTranslate().changes(),
-                translationPreferences.autoTranslatePrefetchCount().changes(),
                 translationPreferences.translateFromLanguage().changes(),
-            ) { a, b, c, d -> Quad(a, b, c, d) },
+            ) { enabled, auto, from -> Triple(enabled, auto, from) },
             combine(
                 translationPreferences.translationRecentLanguagesFrom().changes(),
                 translationPreferences.translateToLanguage().changes(),
@@ -235,10 +234,9 @@ class ReaderViewModel @JvmOverloads constructor(
         val recentAiModels = TranslationPreferences.decodeRecentModels(aiSubPrefs.recentRaw).toImmutableList()
 
         TranslationSettingsState(
-            enabled = q1.a,
-            autoTranslate = q1.b,
-            autoTranslatePrefetchCount = q1.c,
-            translateFromLanguage = q1.d,
+            enabled = q1.first,
+            autoTranslate = q1.second,
+            translateFromLanguage = q1.third,
             translateToLanguage = q2.b,
             translationRecentLanguagesFrom = recentLangsFrom,
             translationRecentLanguagesTo = recentLangsTo,
@@ -558,19 +556,6 @@ class ReaderViewModel @JvmOverloads constructor(
         translationPreferences.autoTranslate().changes()
             .onEach { enabled ->
                 translationController.onReaderAutoToggled(enabled)
-            }
-            .launchIn(viewModelScope)
-
-        // The target is a live reader preference. Reconcile the existing
-        // rolling window immediately when the user moves the slider; the
-        // visible anchor and its current stage remain unchanged.
-        translationPreferences.autoTranslatePrefetchCount().changes()
-            .onEach {
-                if (translationPreferences.translationEnabled().get() &&
-                    translationPreferences.autoTranslate().get()
-                ) {
-                    translateCurrentPageForAuto()
-                }
             }
             .launchIn(viewModelScope)
 
@@ -1690,9 +1675,6 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setAutoTranslate(auto: Boolean) =
         translationController.setAutoTranslate(auto)
 
-    fun setAutoTranslatePrefetchCount(count: Int) =
-        translationController.setAutoTranslatePrefetchCount(count)
-
     fun setTranslateFromLanguage(language: String) =
         translationController.setTranslateFromLanguage(language)
 
@@ -1787,7 +1769,6 @@ class ReaderViewModel @JvmOverloads constructor(
 data class TranslationSettingsState(
     val enabled: Boolean = false,
     val autoTranslate: Boolean = false,
-    val autoTranslatePrefetchCount: Int = 3,
     val translateFromLanguage: String = "",
     val translateToLanguage: String = "",
     val translationRecentLanguagesFrom: ImmutableList<String> = persistentListOf(),

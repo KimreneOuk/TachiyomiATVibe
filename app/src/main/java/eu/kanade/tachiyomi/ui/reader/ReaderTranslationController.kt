@@ -454,7 +454,7 @@ internal class ReaderTranslationController(
         } else {
             binding
         }
-        val configuredAheadTarget = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
+        val configuredAheadTarget = 1
         logcat(LogPriority.INFO) {
             "TachiyomiAT auto-translate window: visible=$currentIndex " +
                 "ahead=$configuredAheadTarget pageCount=${pages.size} pageKey=${resolvePageKey(currentPage)}"
@@ -560,31 +560,19 @@ internal class ReaderTranslationController(
         handleAutoTranslation(page)
     }
 
-    /**
-     * Reader auto-toggle transition. Enabling arms the captured session
-     * queue-natively and kicks the current page; disabling first prunes the
-     * session's automatic demand, then cancels the session and surfaces the
-     * disabled toast.
-     */
+    /** Reader auto-toggle transition; explicit taps remain in the captured session after auto-off. */
     internal fun onReaderAutoToggled(enabled: Boolean) {
         val binding = capturedSession
-        if (binding != null) {
-            translationManager.setReaderAutoEnabled(binding.token, enabled)
-        }
+        val hadAutomaticDemand = binding?.let {
+            translationManager.setReaderAutoEnabled(it.token, enabled)
+        } ?: false
         if (enabled) {
             if (translationPreferences.translationEnabled().get()) {
                 translateCurrentPageForAuto()
             }
             return
         }
-        resetAutoTranslationState()
-        val wasActive = getCurrentChapter()?.chapter?.id?.let {
-            translationManager.cancelAutoTranslations(it)
-        } ?: false
-        // TachiyomiAT bug 4 fix: surface the cancellation so the user
-        // sees the toggle had an effect; the dim clear (sync CANCELLED
-        // write from B4 step 1) happens inside cancelAutoTranslations.
-        if (wasActive) {
+        if (hadAutomaticDemand) {
             val context = Injekt.get<Application>()
             context.toast(ATMR.strings.auto_translation_disabled_toast)
         }
@@ -1113,10 +1101,6 @@ internal class ReaderTranslationController(
 
     internal fun setAutoTranslate(auto: Boolean) {
         translationPreferences.autoTranslate().set(auto)
-    }
-
-    internal fun setAutoTranslatePrefetchCount(count: Int) {
-        translationPreferences.autoTranslatePrefetchCount().set(count)
     }
 
     internal fun setTranslateFromLanguage(language: String) {
