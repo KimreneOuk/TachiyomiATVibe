@@ -2,14 +2,17 @@ package eu.kanade.translation.pipeline
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.persistence.chapter.AttemptArtifactLease
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -76,20 +79,40 @@ internal class AttemptAuthority(
     suspend fun markTimeout(
         update: (PageTranslation) -> PageTranslation,
     ): ChapterTranslationStore.PatchResult = mutex.withLock {
+        markTerminalLocked(MARK_TIMEOUT_DESCRIPTION, update)
+    }
+
+    /** Only this operation's cancellation may close its captured write authority. */
+    suspend fun markCancelled(): ChapterTranslationStore.PatchResult {
+        val cancelled = callerJob?.isCancelled ?: !currentCoroutineContext().isActive
+        if (!cancelled) {
+            return ChapterTranslationStore.PatchResult.Rejected(reason = "attempt caller is active")
+        }
+        return withContext(NonCancellable) {
+            mutex.withLock {
+                markTerminalLocked("mark attempt cancelled") { current ->
+                    current.apply { cancelInFlightStages() }
+                }
+            }
+        }
+    }
+
+    /** Caller holds [mutex]; closing precedes the fenced store write, including rejection. */
+    private suspend fun markTerminalLocked(
+        description: String,
+        update: (PageTranslation) -> PageTranslation,
+    ): ChapterTranslationStore.PatchResult {
         if (closed) {
-            return@withLock ChapterTranslationStore.PatchResult.Rejected(reason = REASON_ALREADY_CLOSED)
+            return ChapterTranslationStore.PatchResult.Rejected(reason = REASON_ALREADY_CLOSED)
         }
         closed = true
         val result = withContext(NonCancellable) {
-            store.patchPage(pageKey, precondition, MARK_TIMEOUT_DESCRIPTION, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })
+            store.patchPage(pageKey, precondition, description, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {
-            // Same receipt advancement as write: the fenced precondition tracks
-            // the store through the terminal transition too, so a post-terminal
-            // diagnostic read of the authority is never stale.
             precondition = result.snapshot.toPrecondition()
         }
-        result
+        return result
     }
 
     private fun rejectedClosed(description: String): ChapterTranslationStore.PatchResult =

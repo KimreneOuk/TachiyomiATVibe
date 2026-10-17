@@ -74,6 +74,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
@@ -799,6 +800,16 @@ class TranslationPipeline private constructor(
                 is TranslationCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, completionOutcome.reason)
                 is TranslationCompletionOutcome.Completed -> SinglePageOutcome.Completed
             }
+        } catch (e: CancellationException) {
+            if (attempt.callerJob?.isCancelled == true || !coroutineContext.isActive) {
+                deferredPublications.orphaned = true
+                try {
+                    attempt.markCancelled()
+                } catch (markerError: Throwable) {
+                    logcat(LogPriority.ERROR, markerError) { "Attempt cancellation marker failed: pageKey=$pageKey" }
+                }
+            }
+            throw e
         } finally {
             releaseSinglePageResources(manga, chapter, source, pageKey, deferredPublications, sourceCustody, owner)
         }

@@ -11,12 +11,66 @@ import eu.kanade.translation.engines.translator.retry.withTranslationRetry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
 class ProviderRequestGovernorTest {
+
+    @Test
+    fun `release wakes an injected clock waiter before its poll delay finishes`() = runTest {
+        val delayEntered = CompletableDeferred<Unit>()
+        val clock = object : ProviderRequestClock {
+            override fun nowEpochMs(): Long = 0L
+            override suspend fun delay(millis: Long) {
+                delayEntered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val governor = ProviderRequestGovernor(
+            policy = { ProviderQuotaPolicy(minimumSpacingMs = 0, maxInFlight = 1) },
+            clock = clock,
+        )
+        val request = metadata()
+        val held = governor.admit(request)
+        held.shouldBeInstanceOf<ProviderAdmissionDecision.Admitted>()
+        val waiter = async { governor.executeValue(request) { "released" } }
+        try {
+            runCurrent()
+            delayEntered.isCompleted shouldBe true
+            waiter.isCompleted shouldBe false
+            governor.releaseAdmitted(held.permit, request)
+            runCurrent()
+            waiter.isCompleted shouldBe true
+            waiter.await() shouldBe "released"
+        } finally {
+            waiter.cancelAndJoin()
+        }
+    }
+
+    @Test
+    fun `release diagnostics run outside the admission mutex`() = runTest {
+        var releaseMutexLocked: Boolean? = null
+        lateinit var governor: ProviderRequestGovernor
+        governor = ProviderRequestGovernor(
+            policy = { ProviderQuotaPolicy(minimumSpacingMs = 0) },
+            diagnostics = ProviderRequestDiagnostics { event ->
+                if (event.outcome == "completed") {
+                    val field = ProviderRequestGovernor::class.java.getDeclaredField("mutex")
+                    field.isAccessible = true
+                    releaseMutexLocked = (field.get(governor) as kotlinx.coroutines.sync.Mutex).isLocked
+                }
+            },
+        )
+        governor.executeValue(metadata()) { Unit }
+        releaseMutexLocked shouldBe false
+    }
 
     @Test
     fun `rolling request and token reservations pace a shared bucket`() = runTest {

@@ -12,15 +12,21 @@ import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryAttempt
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryBudget
 import eu.kanade.translation.engines.translator.retry.safeAdd
+import eu.kanade.translation.scheduling.OperationPaidCallLifecycle
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import logcat.logcat
 import java.util.Locale
@@ -285,7 +291,7 @@ class ProviderRequestGovernor(
     private sealed interface WaitResult {
         data class Granted(val permit: ProviderRequestPermit) : WaitResult
 
-        data class Wait(val millis: Long) : WaitResult
+        data class Wait(val millis: Long, val wakeGeneration: Long) : WaitResult
 
         data class Defer(val decision: ProviderAdmissionDecision.Deferred) : WaitResult
     }
@@ -293,7 +299,7 @@ class ProviderRequestGovernor(
     private val mutex = Mutex()
     private val buckets = mutableMapOf<ProviderRequestKey, Bucket>()
     private var nextSequence = 0L
-    private val releaseWakeupSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val releaseWakeGeneration = MutableStateFlow(0L)
 
     private fun traceRuns(metadata: ProviderRequestMetadata): List<TranslationRunTrace> =
         (metadata.traceRuns + TranslationTrace.currentRuns()).distinct()
@@ -364,13 +370,7 @@ class ProviderRequestGovernor(
                     }
 
                     is WaitResult.Wait -> {
-                        if (clock is SystemProviderRequestClock) {
-                            withTimeoutOrNull(result.millis.coerceAtLeast(1L)) {
-                                releaseWakeupSignal.first()
-                            }
-                        } else {
-                            clock.delay(result.millis.coerceAtLeast(1L))
-                        }
+                        awaitReleaseOrDelay(result)
                     }
                 }
             }
@@ -381,6 +381,23 @@ class ProviderRequestGovernor(
         } catch (failure: Throwable) {
             finishWait(TranslationTraceOutcome.FAILURE, failure)
             throw failure
+        }
+    }
+
+    private suspend fun awaitReleaseOrDelay(wait: WaitResult.Wait) = coroutineScope {
+        // Subscribe before starting the injected clock; replay also covers release before subscription.
+        val wake = async(start = CoroutineStart.UNDISPATCHED) {
+            releaseWakeGeneration.first { it != wait.wakeGeneration }
+        }
+        val timer = async { clock.delay(wait.millis.coerceAtLeast(1L)) }
+        try {
+            select<Unit> {
+                wake.onAwait { }
+                timer.onAwait { }
+            }
+        } finally {
+            wake.cancel()
+            timer.cancel()
         }
     }
 
@@ -399,6 +416,13 @@ class ProviderRequestGovernor(
         metadata: ProviderRequestMetadata,
         block: suspend () -> ProviderHttpResult<T>,
     ): ProviderHttpResult<T> {
+        val paidLifecycle = currentCoroutineContext()[OperationPaidCallLifecycle]
+        fun stoppedRequest() = ProviderRequestPausedException(
+            key = metadata.key,
+            nextEligibleRetryAtEpochMs = null,
+            reason = "provider stop requested",
+        )
+        if (paidLifecycle?.shouldDenyEntry() == true) throw stoppedRequest()
         val decision = admit(metadata)
         val permit = when (decision) {
             is ProviderAdmissionDecision.Admitted -> decision.permit
@@ -407,6 +431,13 @@ class ProviderRequestGovernor(
                 nextEligibleRetryAtEpochMs = decision.nextEligibleRetryAtEpochMs,
                 reason = decision.reason,
             )
+        }
+        if (paidLifecycle != null && !paidLifecycle.tryEnterPaidCall()) {
+            // A stop raced the grant; return unused capacity before reporting the pause.
+            withContext(NonCancellable) {
+                release(permit, usage = null, metadata = metadata, outcome = "stopped")
+            }
+            throw stoppedRequest()
         }
         // A semantic envelope owns one hard request budget. Charge it only
         // after admission succeeds so waiting/deferred requests do not burn a
@@ -599,7 +630,7 @@ class ProviderRequestGovernor(
                 ),
             )
         }
-        return WaitResult.Wait(waitMs.coerceAtMost(quota.pollIntervalMs))
+        return WaitResult.Wait(waitMs.coerceAtMost(quota.pollIntervalMs), releaseWakeGeneration.value)
     }
 
     private fun nextEligibleAt(
@@ -674,20 +705,24 @@ class ProviderRequestGovernor(
         metadata: ProviderRequestMetadata,
         outcome: String = "completed",
     ) {
-        mutex.withLock {
-            val bucket = buckets[permit.key] ?: return@withLock
-            val reservation = permit.reservation as? Reservation ?: return@withLock
+        val released = mutex.withLock {
+            val bucket = buckets[permit.key] ?: return@withLock null
+            val reservation = permit.reservation as? Reservation ?: return@withLock null
             reservation.actualTokens = usage?.totalTokens
             bucket.inFlight = (bucket.inFlight - 1).coerceAtLeast(0)
-            emitUnsafe(
+            bucket.cooldownSource to usage?.totalTokens
+        }
+        // Wake waiters before invoking external diagnostics; callbacks never own the admission mutex.
+        releaseWakeGeneration.update { it + 1L }
+        if (released != null) {
+            emit(
                 metadata,
                 waitMs = 0L,
-                actualTokens = usage?.totalTokens,
-                cooldownSource = bucket.cooldownSource,
+                actualTokens = released.second,
+                cooldownSource = released.first,
                 outcome = outcome,
             )
         }
-        releaseWakeupSignal.tryEmit(Unit)
     }
 
     private suspend fun applyCooldown(key: ProviderRequestKey, durationMs: Long, source: String) {
@@ -708,29 +743,6 @@ class ProviderRequestGovernor(
     }
 
     private fun emit(
-        metadata: ProviderRequestMetadata,
-        waitMs: Long,
-        actualTokens: Int?,
-        cooldownSource: String?,
-        outcome: String,
-    ) {
-        diagnostics?.onEvent(
-            ProviderAdmissionEvent(
-                keyHash = metadata.key.diagnosticHash(),
-                operation = metadata.operation,
-                priority = metadata.priority,
-                attempt = metadata.attempt,
-                waitMs = waitMs,
-                estimatedTokens = metadata.estimatedTokens,
-                actualTokens = actualTokens,
-                cooldownSource = cooldownSource,
-                outcome = outcome,
-            ),
-        )
-        emitLog(metadata, waitMs, actualTokens, cooldownSource, outcome)
-    }
-
-    private fun emitUnsafe(
         metadata: ProviderRequestMetadata,
         waitMs: Long,
         actualTokens: Int?,

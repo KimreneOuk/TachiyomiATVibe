@@ -68,9 +68,8 @@ class TranslationScheduler(
 
     companion object {
         /**
-         * Max wait for cancelled jobs to unwind (their finally blocks reset a
-         * stranded RUNNING status on a NonCancellable child). Bounded so chapter
-         * navigation stays responsive.
+         * Max wait for cancelled jobs and their attempt-fenced boundary cleanup.
+         * Bounded so chapter navigation stays responsive.
          */
         private const val JOIN_TIMEOUT_MS = 2_000L
 
@@ -369,17 +368,11 @@ class TranslationScheduler(
             val leaseWaitSpan = run.beginStage(TranslationTraceStage.LEASE_WAIT)
             val traceOutcome = AtomicReference<TranslationTraceOutcome?>(null)
             val job = scope.launch(TranslationTrace.elementFor(run)) {
-                var cancelledMidFlight = false
                 var outcome: SinglePageOutcome? = null
                 try {
                     leaseWaitSpan.end()
                     outcome = executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    // Cancelled (chapter switch / reader exit / Stop all) after the
-                    // executor set ocrStatus=RUNNING but before a terminal state: the
-                    // page is stranded RUNNING because the store is never updated as
-                    // the coroutine tears down. Flag for the finally to reset it.
-                    cancelledMidFlight = true
                     traceOutcome.set(TranslationTraceOutcome.CANCELLED)
                     throw e
                 } catch (e: Throwable) {
@@ -402,29 +395,7 @@ class TranslationScheduler(
                     // The page is available to rolling auto work again after
                     // this manual job completes, so reconcile its window.
                     reconcileAutoWindow()
-                    // An attached outcome means the job never owned the page —
-                    // it only observed another origin's terminal commit. Keep
-                    // the stranded-RUNNING reset scoped to owned work.
-                    val attachFamily = when (outcome) {
-                        is SinglePageOutcome.Attached -> true
-                        else -> false
-                    }
-                    if (cancelledMidFlight && !attachFamily) {
-                        val cancellationReason = pageCancellationReasons.remove(jobKey)
-                            ?: "Manual translation cancelled"
-                        // Reset stranded RUNNING on a NonCancellable child so the
-                        // reset can't be torn down by the cancellation that triggered
-                        // it. Guarded so a reset failure never masks the original CancellationException.
-                        try {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                                markPageCancelled(chapter, pageKey, cancellationReason)
-                            }
-                        } catch (resetError: Throwable) {
-                            logcat(LogPriority.WARN, resetError) {
-                                "TachiyomiAT reset of stranded page status failed: pageKey=$pageKey"
-                            }
-                        }
-                    }
+                    pageCancellationReasons.remove(jobKey)
                 }
             }
             activePageJobs[jobKey] = job

@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +101,10 @@ class ReaderTranslationQueue(
         val force: Boolean,
         priority: ReaderPriority,
     ) {
+        val paidCall = if (!explicit) OperationPaidCallLifecycle() else null
+        var retainedForDrain = false
+        var forceCancelled = false
+        var drainTimer: Job? = null
         val priority = AtomicReference(priority)
         var state = State.QUEUED
         var job: Job? = null
@@ -124,6 +129,12 @@ class ReaderTranslationQueue(
             )
         }
     }
+
+    private data class StopAction(
+        val demand: Demand,
+        val worker: Job?,
+        val retainedDeadline: Long? = null,
+    )
 
     private class OperationTrace(val schedule: TranslationScheduleTrace, val run: TranslationRunTrace) {
         fun end(outcome: TranslationTraceOutcome) {
@@ -154,11 +165,12 @@ class ReaderTranslationQueue(
     ) {
         require(session.chapterIdentity.isNotEmpty())
         require(session.readerGeneration >= 0)
+        val now = nowEpochMs()
         val cancellations = synchronized(control) {
             check(!closed) { "reader queue is closed" }
             val old = bound
             old?.accepting = false
-            val jobs = cancelLocked { it.binding === old }
+            val jobs = cancelLocked(preservePaid = true, now = now) { it.binding === old }
             epoch++
             revision++
             event++
@@ -176,7 +188,7 @@ class ReaderTranslationQueue(
         force: Boolean = false,
     ): ReaderSubmission {
         val now = nowEpochMs()
-        val retired = mutableListOf<Demand>()
+        val retired = mutableListOf<StopAction>()
         val result = synchronized(control) {
             val b = currentLocked(session) ?: return rejectedSession()
             event++
@@ -194,7 +206,7 @@ class ReaderTranslationQueue(
                         // An unclaimed predecessor can be replaced without executing it.
                         if (existing.job == null) {
                             existing.state = State.CANCELLED
-                            retired += existing
+                            retired += StopAction(existing, null)
                         }
                         pending[work.pageKey] = replacement
                         ReaderSubmission.Queued(work.pageKey)
@@ -260,8 +272,11 @@ class ReaderTranslationQueue(
                 if (b !== captured.first || revision != captured.second) return@launch
                 event++
                 val keys = if (b.autoEnabled) resolved.mapTo(HashSet()) { it.second.pageKey } else emptySet()
-                val jobs = cancelLocked {
-                    it.binding === b && !it.explicit && it.state == State.QUEUED && it.work.pageKey !in keys
+                val jobs = cancelLocked(preservePaid = !b.autoEnabled, now = now) {
+                    it.binding === b &&
+                        !it.explicit &&
+                        (it.state == State.QUEUED || !b.autoEnabled) &&
+                        it.work.pageKey !in keys
                 }
                 if (b.autoEnabled) {
                     resolved.forEach { (index, work) ->
@@ -291,6 +306,7 @@ class ReaderTranslationQueue(
     }
 
     fun setAutoEnabled(session: ReaderSessionToken, enabled: Boolean) {
+        val now = nowEpochMs()
         val cancellations = synchronized(control) {
             val b = currentLocked(session) ?: return
             b.autoEnabled = enabled
@@ -299,8 +315,8 @@ class ReaderTranslationQueue(
             if (enabled) {
                 emptyList()
             } else {
-                cancelLocked {
-                    it.binding === b && !it.explicit && it.state == State.QUEUED
+                cancelLocked(preservePaid = true, now = now) {
+                    it.binding === b && !it.explicit
                 }
             }
         }
@@ -313,7 +329,7 @@ class ReaderTranslationQueue(
             val b = currentLocked(session) ?: return false
             val exists = pending[pageKey]?.binding === b ||
                 liveWorkers.values.any {
-                    it.binding === b && it.work.pageKey == pageKey && it.state != State.CANCELLED
+                    it.binding === b && it.work.pageKey == pageKey && (it.state != State.CANCELLED || it.retainedForDrain)
                 }
             if (!exists) return false
             cancelLocked { it.binding === b && it.work.pageKey == pageKey }
@@ -327,22 +343,24 @@ class ReaderTranslationQueue(
     }
 
     suspend fun cancelSession(session: ReaderSessionToken): ReaderDrainResult {
+        val now = nowEpochMs()
         val cancellations = synchronized(control) {
             val b = bound?.takeIf { it.token == session } ?: return ReaderDrainResult.Completed
             b.accepting = false
             revision++
-            cancelLocked { it.binding === b }
+            cancelLocked(preservePaid = true, now = now) { it.binding === b }
         }
         cancelOutside(cancellations)
         return awaitDrain()
     }
 
     suspend fun closeAndDrain(): ReaderDrainResult {
+        val now = nowEpochMs()
         val cancellations = synchronized(control) {
             closed = true
             bound?.accepting = false
             revision++
-            cancelLocked { true }
+            cancelLocked(preservePaid = true, now = now) { true }
         }
         cancelOutside(cancellations)
         return awaitDrain()
@@ -364,10 +382,18 @@ class ReaderTranslationQueue(
             it.explicit && (it.state == State.QUEUED || it.state == State.RUNNING || it.job != null)
         }
 
-    /** Marks state under control; cancellation and completion handlers always run after unlock. */
-    private fun cancelLocked(matches: (Demand) -> Boolean): List<Demand> {
-        val jobs = mutableListOf<Demand>()
+    /** Claims stop policy under control; cancellation, timers and callbacks run after unlock. */
+    private fun cancelLocked(
+        preservePaid: Boolean = false,
+        now: Long = 0L,
+        matches: (Demand) -> Boolean,
+    ): List<StopAction> {
+        val actions = mutableListOf<StopAction>()
         (pending.values + liveWorkers.values).distinct().filter(matches).forEach { demand ->
+            val decision = demand.paidCall?.requestStop(now)
+            val retain = preservePaid && !demand.forceCancelled && decision?.retainWorker == true
+            demand.retainedForDrain = retain
+            if (!retain) demand.forceCancelled = true
             if (demand.state != State.CANCELLED && demand.state != State.DONE) {
                 val wasQueued = !demand.enteredBody
                 demand.state = State.CANCELLED
@@ -379,16 +405,41 @@ class ReaderTranslationQueue(
                     )
                 }
             }
-            jobs += demand
+            actions += StopAction(demand, demand.job, if (retain) decision?.deadlineEpochMs else null)
         }
-        return jobs
+        return actions
     }
 
-    private fun cancelOutside(demands: List<Demand>) {
-        demands.forEach { demand ->
-            val job = synchronized(control) { demand.job }
-            if (job != null) job.cancel() else demand.trace.end(TranslationTraceOutcome.CANCELLED)
+    private fun cancelOutside(actions: List<StopAction>) {
+        actions.forEach { action ->
+            val job = action.worker
+            if (action.retainedDeadline != null && job != null) {
+                armDrainTimer(action.demand, job, action.retainedDeadline)
+            } else if (job != null) {
+                job.cancel()
+            } else {
+                action.demand.trace.end(TranslationTraceOutcome.CANCELLED)
+            }
         }
+    }
+
+    private fun armDrainTimer(demand: Demand, worker: Job, deadline: Long) {
+        val timer = scope.launch(workerDispatcher, start = CoroutineStart.LAZY) {
+            val now = nowEpochMs()
+            delay(if (deadline <= now) 0L else deadline - now)
+            if (demand.paidCall?.claimExpiryCancellation(nowEpochMs()) == true) {
+                worker.cancel(CancellationException("Paid-call drain grace expired"))
+            }
+        }
+        val installed = synchronized(control) {
+            if (liveWorkers[worker] === demand && demand.retainedForDrain && demand.drainTimer == null) {
+                demand.drainTimer = timer
+                true
+            } else {
+                false
+            }
+        }
+        if (installed) timer.start() else timer.cancel()
     }
 
     private fun traceOutcome(outcome: SinglePageOutcome): TranslationTraceOutcome = when (outcome) {
@@ -427,7 +478,10 @@ class ReaderTranslationQueue(
                 if (liveWorkers.isEmpty()) drainSignal = CompletableDeferred()
                 val work = demand.work
                 val job = scope.launch(workerDispatcher, start = CoroutineStart.LAZY) {
-                    withContext(TranslationTrace.elementFor(demand.trace.run)) { runDemand(demand, work) }
+                    withContext(
+                        TranslationTrace.elementFor(demand.trace.run) +
+                            (demand.paidCall ?: kotlin.coroutines.EmptyCoroutineContext),
+                    ) { runDemand(demand, work) }
                 }
                 demand.job = job
                 liveWorkers[job] = demand
@@ -460,17 +514,22 @@ class ReaderTranslationQueue(
                     )
                 }
             }
-            if (liveWorkers.isEmpty()) drainSignal else null
+            if (demand.state == State.DONE || demand.state == State.CANCELLED) demand.paidCall?.recordPhysicalExit()
+            val timer = demand.drainTimer
+            demand.drainTimer = null
+            (if (liveWorkers.isEmpty()) drainSignal else null) to timer
         }
+        drained.second?.cancel()
         val terminal = synchronized(control) {
             when {
-                job.isCancelled || demand.state == State.CANCELLED -> TranslationTraceOutcome.CANCELLED
+                job.isCancelled -> TranslationTraceOutcome.CANCELLED
                 demand.state == State.DONE -> demand.traceOutcome
+                demand.state == State.CANCELLED -> TranslationTraceOutcome.CANCELLED
                 else -> null
             }
         }
         terminal?.let { demand.trace.end(it) }
-        drained?.complete(Unit)
+        drained.first?.complete(Unit)
         pump()
     }
 
@@ -536,12 +595,13 @@ class ReaderTranslationQueue(
             )
             val active = currentCoroutineContext().isActive
             synchronized(control) {
-                if (demand.state == State.RUNNING) {
+                if (demand.state == State.RUNNING || demand.retainedForDrain) {
                     demand.state = State.DONE
                     demand.traceOutcome = traceOutcome(outcome)
-                    if (pending[work.pageKey] === demand) {
-                        pending.remove(work.pageKey)
-                        if (active && bound === demand.binding && demand.binding.accepting) publishLocked(demand, outcome)
+                    val ownsPending = pending[work.pageKey] === demand
+                    if (ownsPending) pending.remove(work.pageKey)
+                    if (active && bound === demand.binding && (ownsPending || demand.retainedForDrain)) {
+                        publishLocked(demand, outcome)
                     }
                 }
             }

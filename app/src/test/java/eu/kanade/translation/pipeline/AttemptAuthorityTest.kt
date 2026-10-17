@@ -167,6 +167,67 @@ class AttemptAuthorityTest {
             .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
     }
 
+    @Test
+    fun `cancelled caller closes its authority and cancels only running stages`() = runTest {
+        val store = newStore()
+        val caller = Job()
+        store.updatePage(PAGE) {
+            PageTranslation(
+                sourceFileName = PAGE,
+                ocrStatus = StageStatus.RUNNING,
+                inpaintStatus = StageStatus.RUNNING,
+                translationStatus = StageStatus.READY,
+                renderStatus = StageStatus.PARTIAL,
+                retryCount = 2,
+            ).apply { attemptCount = 3 }
+        }
+        val attempt = AttemptAuthority(store, PAGE, store.snapshot(PAGE).toPrecondition(), caller)
+        caller.cancel()
+        val marker = attempt.markCancelled()
+        marker.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        val page = store.snapshot(PAGE).page
+        page?.ocrStatus shouldBe StageStatus.CANCELLED
+        page?.inpaintStatus shouldBe StageStatus.CANCELLED
+        page?.translationStatus shouldBe StageStatus.READY
+        page?.renderStatus shouldBe StageStatus.PARTIAL
+        page?.retryCount shouldBe 2
+        page?.attemptCount shouldBe 3
+        attempt.closed shouldBe true
+        attempt.write("late publication") { it.copy(ocrStatus = StageStatus.READY) }
+            .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+    }
+
+    @Test
+    fun `cancel marker cannot overwrite a replacement and still closes old authority`() = runTest {
+        val store = newStore()
+        val caller = Job()
+        val attempt = seededAuthority(store, callerJob = caller)
+        store.patchPage(PAGE, store.snapshot(PAGE).toPrecondition(), "replacement") {
+            it!!.copy(ocrStatus = StageStatus.RUNNING)
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        val replacement = store.snapshot(PAGE)
+        caller.cancel()
+        attempt.markCancelled().shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+        store.snapshot(PAGE).pageVersion shouldBe replacement.pageVersion
+        store.snapshot(PAGE).page?.ocrStatus shouldBe StageStatus.RUNNING
+        attempt.closed shouldBe true
+        attempt.write("late old publication") { it.copy(ocrStatus = StageStatus.READY) }
+            .shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+    }
+
+    @Test
+    fun `active caller cannot publish an operation cancellation marker`() = runTest {
+        val store = newStore()
+        val caller = Job()
+        store.updatePage(PAGE) { PageTranslation(sourceFileName = PAGE, ocrStatus = StageStatus.RUNNING) }
+        val snapshot = store.snapshot(PAGE)
+        val attempt = AttemptAuthority(store, PAGE, snapshot.toPrecondition(), caller)
+        attempt.markCancelled().shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+        store.snapshot(PAGE).pageVersion shouldBe snapshot.pageVersion
+        store.snapshot(PAGE).page?.ocrStatus shouldBe StageStatus.RUNNING
+        attempt.closed shouldBe false
+    }
+
     private companion object {
         const val PAGE = "p0"
     }

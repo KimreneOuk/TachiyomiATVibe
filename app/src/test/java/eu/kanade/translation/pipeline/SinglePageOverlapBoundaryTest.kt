@@ -29,6 +29,7 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.verify
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +37,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -149,36 +152,107 @@ class SinglePageOverlapBoundaryTest {
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `caller cancellation cancels real provider and waits for native cleanup`() = runBlocking<Unit> {
+        assertCallerCancellation(throughScheduler = false)
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `scheduler cancellation uses boundary cleanup without a late snapshot reset`() = runBlocking<Unit> {
+        assertCallerCancellation(throughScheduler = true)
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `healthy caller propagates inner cancellation without a terminal marker`() = runBlocking<Unit> {
+        val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
+        val inner = CancellationException("inner engine cancellation")
+        var before: ChapterTranslationStore.PageSnapshot? = null
+        try {
+            harness.installGraphicsShims()
+            harness.stubChapterPages(listOf("p0"))
+            harness.fakeRecognition.analyzeOutcome = {
+                before = runBlocking { harness.store.snapshot("p0") }
+                throw inner
+            }
+            val caught = runCatching {
+                harness.pipeline.translateSinglePage(
+                    harness.manga,
+                    harness.chapterFor(harness.CHAPTER_ID),
+                    harness.source,
+                    "p0",
+                    force = false,
+                    origin = PageWriteOrigin.MANUAL,
+                )
+            }.exceptionOrNull()
+            caught shouldBe inner
+            currentCoroutineContext().isActive shouldBe true
+            val after = harness.store.snapshot("p0")
+            val captured = before.shouldNotBeNull()
+            after.pageVersion shouldBe captured.pageVersion
+            after.page shouldBe captured.page
+        } finally {
+            harness.close()
+        }
+    }
+
+    private suspend fun assertCallerCancellation(throughScheduler: Boolean) = coroutineScope {
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
             val harness = TranslationCoexistenceHarness.create(listOf("p0"), preRegisterInStore = false)
             val cleaned = stubBitmap()
-            var pipelineJob: kotlinx.coroutines.Deferred<SinglePageOutcome>? = null
+            var pipelineJob: Job? = null
+            val diagnostics = eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+            val previousSink = diagnostics.sink
+            val previousGate = diagnostics.detailedTracingEnabled
+            val lines = java.util.concurrent.CopyOnWriteArrayList<String>()
+            if (throughScheduler) {
+                diagnostics.sink = eu.kanade.translation.diagnostics.TranslationTraceSink { _, line -> lines += line }
+                diagnostics.detailedTracingEnabled = true
+            }
             try {
                 harness.installGraphicsShims()
                 harness.stubChapterPages(listOf("p0"))
                 harness.fakeRecognition.inpaintOutcome = { _, _ -> cleaned }
                 harness.barrier.arm(CoexistenceBarrier.BarrierPoint.INPAINT)
                 harness.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-                pipelineJob = async(Dispatchers.Default) {
-                    harness.pipeline.translateSinglePage(
-                        harness.manga,
-                        harness.chapterFor(harness.CHAPTER_ID),
-                        harness.source,
-                        "p0",
-                        force = false,
-                        stageListener = null,
-                        origin = PageWriteOrigin.MANUAL,
-                    )
+                pipelineJob = if (throughScheduler) {
+                    harness.registerReaderStream(harness.CHAPTER_ID, "p0")
+                    harness.tapManual("p0")
+                    harness.capturedManualJob("p0")
+                } else {
+                    async(Dispatchers.Default) {
+                        harness.pipeline.translateSinglePage(
+                            harness.manga,
+                            harness.chapterFor(harness.CHAPTER_ID),
+                            harness.source,
+                            "p0",
+                            force = false,
+                            stageListener = null,
+                            origin = PageWriteOrigin.MANUAL,
+                        )
+                    }
                 }
                 harness.barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.INPAINT)
                 harness.barrier.awaitArrival(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
                 harness.fakeTransport.callsFor("p0") shouldBe 1
+                val inpaintBeforeCancel = harness.store.state.value.getValue("p0").inpaintStatus
+                inpaintBeforeCancel shouldBe StageStatus.PENDING
                 pipelineJob.cancel()
                 // Quarantine owns parked native call until worker exits.
                 pipelineJob.isCompleted shouldBe false
                 verify(exactly = 0) { cleaned.recycle() }
                 harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
                 pipelineJob.join()
+                val cancelledPage = harness.store.state.value.getValue("p0")
+                cancelledPage.translationStatus shouldBe StageStatus.CANCELLED
+                cancelledPage.inpaintStatus shouldBe inpaintBeforeCancel
+                cancelledPage.ocrError shouldBe null
+                pipelineJob.isCancelled shouldBe true
+                if (throughScheduler) {
+                    lines.count { it.contains("event=run_end ") && it.contains("outcome=cancelled") } shouldBe 1
+                    val reasonsField = harness.scheduler.javaClass.getDeclaredField("pageCancellationReasons")
+                    reasonsField.isAccessible = true
+                    (reasonsField.get(harness.scheduler) as Map<*, *>).isEmpty() shouldBe true
+                }
                 harness.transportShared.cancelledCalls.get() shouldBe 1
                 verify(exactly = 1) { cleaned.recycle() }
                 harness.store.state.value.getValue("p0").renderStatus shouldNotBe StageStatus.READY
@@ -187,6 +261,8 @@ class SinglePageOverlapBoundaryTest {
                 harness.barrier.disarm(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
                 withContext(NonCancellable) { pipelineJob?.cancelAndJoin() }
                 harness.close()
+                diagnostics.sink = previousSink
+                diagnostics.detailedTracingEnabled = previousGate
             }
         }
     }

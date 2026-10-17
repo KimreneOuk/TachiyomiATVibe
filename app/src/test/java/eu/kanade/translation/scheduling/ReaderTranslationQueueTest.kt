@@ -28,9 +28,11 @@ import io.mockk.spyk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
@@ -70,6 +72,9 @@ class ReaderTranslationQueueTest {
             val priorityFn: (() -> AdmissionPriority)?,
         )
 
+        val paidPages = ConcurrentHashMap.newKeySet<String>()
+        val paidEntries = ConcurrentHashMap<String, Boolean>()
+        val jobs = ConcurrentHashMap<String, Job>()
         val calls = ConcurrentLinkedQueue<Call>()
         val attempts = ConcurrentHashMap<String, AtomicInteger>()
         val entered = ConcurrentHashMap<String, AtomicInteger>()
@@ -102,6 +107,10 @@ class ReaderTranslationQueueTest {
             readerStreamFn: (() -> InputStream)?,
             readerPriority: (() -> AdmissionPriority)?,
         ): SinglePageOutcome {
+            jobs[pageKey] = currentCoroutineContext()[Job]!!
+            if (pageKey in paidPages) {
+                paidEntries[pageKey] = currentCoroutineContext()[OperationPaidCallLifecycle]?.tryEnterPaidCall() == true
+            }
             attempts.getOrPut(pageKey) { AtomicInteger(0) }.incrementAndGet()
             calls += Call(pageKey, force, origin, readerStreamFn, readerPriority)
             entered.getOrPut(pageKey) { AtomicInteger(0) }.incrementAndGet()
@@ -201,6 +210,156 @@ class ReaderTranslationQueueTest {
     @AfterEach
     fun tearDown() {
         scope.cancel()
+    }
+
+    @Test
+    fun `auto-off cancels running automatic work before paid entry`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        try {
+            q.updateViewport(session, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.enteredFor("p0") shouldBe 1
+            q.setAutoEnabled(session, false)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe true
+            executor.exitedFor("p0") shouldBe 0
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `auto-off retains admitted automatic paid work and publishes its returned outcome`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        try {
+            q.updateViewport(session, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.enteredFor("p0") shouldBe 1
+            executor.paidEntries["p0"] shouldBe true
+            q.setAutoEnabled(session, false)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe false
+            executor.exitedFor("p0") shouldBe 0
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+            executor.exitedFor("p0") shouldBe 1
+            q.outcomes(session).value["p0"] shouldBe SinglePageOutcome.Completed
+            executor.attemptsFor("p0") shouldBe 1
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `automatic gate deferral keeps the demand paid lifecycle usable on a later event`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p1"
+        executor.hold("p1")
+        var memoryAvailable = false
+        val q = newQueue(executor, houseStore(listOf("p0", "p1"), setOf("p0"))) { memoryAvailable }
+        bind(q)
+        try {
+            q.updateViewport(session, 0, 2, true) { work("p$it", it) }
+            testScheduler.runCurrent()
+            executor.attemptsFor("p1") shouldBe 0
+            memoryAvailable = true
+            q.updateViewport(session, 0, 2, true) { work("p$it", it) }
+            testScheduler.runCurrent()
+            executor.enteredFor("p1") shouldBe 1
+            executor.paidEntries["p1"] shouldBe true
+        } finally {
+            executor.release("p1")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `paid drain expiry cancels the exact worker but waits for physical exit`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        try {
+            q.updateViewport(session, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+            q.setAutoEnabled(session, false)
+            testScheduler.advanceTimeBy(210_000)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe true
+            executor.exitedFor("p0") shouldBe 0
+            val drain = q.closeAndDrain()
+            drain.shouldBeInstanceOf<ReaderDrainResult.PendingNativeDrain>()
+            drain.completion.isCompleted shouldBe false
+            executor.release("p0")
+            testScheduler.runCurrent()
+            executor.exitedFor("p0") shouldBe 1
+            drain.completion.isCompleted shouldBe true
+            q.outcomes(session).value["p0"] shouldBe null
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `explicit page cancellation stops an already retained paid worker`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        try {
+            q.updateViewport(session, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+            q.setAutoEnabled(session, false)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe false
+            q.cancelPage(session, "p0") shouldBe true
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe true
+            executor.exitedFor("p0") shouldBe 0
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `rebind retains old paid work without publishing into the new binding`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        bind(q)
+        val next = ReaderSessionToken(session.chapterIdentity, 2L)
+        try {
+            q.updateViewport(session, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+            q.bindSession(next, manga, chapter, source, translatorComputeClass)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe false
+            q.outcomes(next).value shouldBe emptyMap()
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+            executor.exitedFor("p0") shouldBe 1
+            q.outcomes(next).value shouldBe emptyMap()
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
     }
 
     // ---- session/store identity ----

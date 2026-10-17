@@ -1,8 +1,8 @@
 ---
 title: "S2 - scheduler, manager, pipeline, governor and teardown cutover"
 kind: ticket
-status: 0
-assignee: ""
+status: 1
+assignee: "24062d6a-6932-4374-9777-496cb961c7d1"
 comments: none
 ---
 
@@ -43,3 +43,17 @@ Focused scheduler/workflow/coexistence classes on both flavors; no coordinator t
 The cap of three reprepare retries applies specifically to stale prepared-page handoff (`RollingAutoCoordinator.handleStaleTranslate`), not to ordinary automatic executions, provider pauses, or terminal `SinglePageOutcome.Failed`. S1 uses only `translateSinglePage`, whose typed outcomes cannot identify this stale handoff. S1 must preserve terminal outcome semantics and must not invent a generic attempt counter or infer retryability from diagnostic text.
 
 Implement the bounded stale-handoff policy at the typed prepared/stale boundary in S2, before production reader cutover. This is a mandatory S2 acceptance dependency; its absence is not a completed S1 test or an accepted loss of runtime protection. Keep attempt-ledger admission and provider cooldown budgets independent. S1 tests remain responsible for terminal failure retention and event/cooldown reconciliation that the single-page contract can express.
+
+
+## Execution entry — 17 October 2026
+
+S1 independently accepted and locally checkpointed as `e2ebf51f`. S2 starts from that exact commit in clean branch/worktree `phase4-s2-facade-wiring`; local changes from S1, including unrelated LiteRT edits and validation caches, were not carried. Root coordinates mechanisms and builds. Existing implementer/reviewer are performing read-only source preflight before red-test and cutover edits. No S2 production behavior or validation result is claimed yet. Fresh-worktree Gradle stop has not been run; confirm machine idle before that one-time stop and first build.
+
+
+## Partial checkpoint — 17 October 2026
+
+S2 remains in progress. [Portable checkpoint/handoff](../../handoff-checkpoint/index.md) records completed prerequisite mechanisms, focused evidence, settled contracts and remaining work. Queue retention69 and boundary/authority33 focused StandardDebug gates passed; S2 facade/live-priority/stage projection/source reconcile/teardown cutover NOT complete. S1 ancestor is e2ebf51f. Fresh-worktree Gradle stop was performed once before S2 builds; do not repeat without confirming machine idle.
+
+The earlier Files table's retained stranded-RUNNING reset is superseded: per-operation cancellation now belongs to the pipeline boundary's captured AttemptAuthority. The manual scheduler finally current-snapshot reset was removed in the same slice. Do not reintroduce it or adapt chapter-wide snapshot sweeps to queue-owned cancellation; migrate those call sites during facade cutover. The snapshot adapter must carry real demand/stage/deferral truth; a terminal-outcomes-only/Queued fallback is insufficient.
+
+The reprepare-cap wording above is producer-scoped: retain existing cap3 on the old prepared-null producer until that producer retires. No cap counter is to be fabricated on single-page outcomes that cannot express staleness.
