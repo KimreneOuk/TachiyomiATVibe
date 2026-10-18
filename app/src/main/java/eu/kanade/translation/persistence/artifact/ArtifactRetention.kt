@@ -202,13 +202,11 @@ internal class ArtifactRetention(
     private fun reachablePaths(manifest: ChapterArtifactManifest): Set<String> = buildSet {
         manifest.pages.values.forEach { page ->
             listOfNotNull(page.committed, page.previousCommitted).forEach { bundle ->
-                add(layout.generationFile(bundle.generationId))
-                bundle.pageSnapshotFileName?.let(::add)
+                                bundle.pageSnapshotFileName?.let(::add)
                 bundle.displayBase.fileName?.let(::add)
             }
             page.candidate?.let {
-                add(layout.generationFile(it.generationId))
-                it.pageSnapshotFileName?.let(::add)
+                                it.pageSnapshotFileName?.let(::add)
             }
             listOf(
                 page.detection,
@@ -219,9 +217,6 @@ internal class ArtifactRetention(
             ).forEach { stage ->
                 stage?.artifactFileName?.let(::add)
             }
-        }
-        manifest.activeCandidateGenerationIds.forEach { generationId ->
-            add(layout.generationFile(generationId))
         }
         // The attempt-ledger sidecar is always reachable —
         // it is not manifest-pointed, so without this rule the retention sweep

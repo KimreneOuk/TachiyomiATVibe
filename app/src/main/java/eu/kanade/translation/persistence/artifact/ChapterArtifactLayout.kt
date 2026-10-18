@@ -108,10 +108,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
-    val generationsRootDirectory: String get() = generationDirectoryName
-
-    fun generationFile(generationId: String): String =
-        "$generationDirectoryName/${generationSegment(generationId)}.json"
 
     /** The chapter's single durable attempt-ledger document. */
     val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"

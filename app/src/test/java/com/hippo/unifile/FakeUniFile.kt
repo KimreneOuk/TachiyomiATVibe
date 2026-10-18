@@ -77,7 +77,17 @@ class FakeUniFile(
 
     override fun renameTo(displayName: String): Boolean {
         val target = File(backing.parentFile ?: return false, displayName)
-        return backing.renameTo(target)
+        return try {
+            java.nio.file.Files.move(
+                backing.toPath(),
+                target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+            )
+            true
+        } catch (_: Throwable) {
+            target.delete()
+            backing.renameTo(target)
+        }
     }
 
     override fun openOutputStream(): OutputStream = FileOutputStream(backing)

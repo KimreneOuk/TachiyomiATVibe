@@ -361,16 +361,3 @@ data class ProfilePointer(
 internal fun String.isSha256Hex(): Boolean =
     length == 64 && all { it in '0'..'9' || it in 'a'..'f' }
 
-/**
- * Run ownership and lifecycle state of one generation
- * (`generations/<generationId>.json`, lifecycle contract §15).
- */
-@Serializable
-data class GenerationRecord(
-    val generationId: String,
-    val pageKey: String,
-    val origin: ArtifactOrigin = ArtifactOrigin.BATCH,
-    val lifecycle: GenerationLifecycle = GenerationLifecycle.ACTIVE,
-    val createdAtEpochMs: Long = 0L,
-    val closedAtEpochMs: Long? = null,
-)

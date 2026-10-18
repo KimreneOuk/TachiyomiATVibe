@@ -1,17 +1,10 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotManager
-import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Consolidated test-seam collaborator (Phase 7 S8). One counted object owns
- * every production-embedded JVM test hook that used to sit scattered on the
- * [ChapterTranslationStore] facade and its companion, so the facade carries no
- * test-only members. Production code reads a seam only where a test needs to
- * observe or gate a real transition ([ChapterBulkMutator] reads
- * [afterRekeyManifestPublicationBeforeLiveSwap]); everything else is write-only
- * injection delegated to the owning collaborator.
+ * Consolidated test-seam collaborator (Phase 7 S8, P4 cutover). One counted object owns
+ * production-embedded JVM test hooks without carrying test-only members on the facade.
  */
 internal class ChapterStoreTestSeams internal constructor(
     private val store: ChapterTranslationStore,
@@ -32,13 +25,6 @@ internal class ChapterStoreTestSeams internal constructor(
     internal fun countPublishedPageCopy() {
         publishedPageCopyCount.incrementAndGet()
     }
-
-    /** Injects a virtual-storage writer before the first page write in JVM tests. */
-    internal fun attachJournalWriter(writer: ChapterJournalWriter) =
-        store.journalBridge.attachJournalWriterForTests(writer)
-
-    internal fun attachJournalSnapshotManager(manager: ChapterJournalSnapshotManager) =
-        store.journalBridge.attachJournalSnapshotManagerForTests(manager)
 
     /** Test seam for verifying that closeAndFlush joins all drain children. */
     internal fun hasActivePersistenceChildren(): Boolean = store.writeDrain.hasActiveChildren()

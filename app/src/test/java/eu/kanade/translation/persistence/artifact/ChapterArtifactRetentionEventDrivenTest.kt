@@ -21,9 +21,9 @@ class ChapterArtifactRetentionEventDrivenTest {
         val io = FakeChapterDocumentIo()
         val store = createStore(io)
 
-        val orphanGen = layout.generationFile("gen-orphan")
+        val orphanGen = layout.stageArtifactFile("0002.jpg", ArtifactStage.TRANSLATION, "orphan-tx")
         val orphanOcr = layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "orphan-fp")
-        val untouchedOrphan = layout.generationFile("gen-untouched")
+        val untouchedOrphan = layout.stageArtifactFile("0003.jpg", ArtifactStage.OCR, "untouched-fp")
         val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
 
         io.write(orphanGen, byteArrayOf(1))

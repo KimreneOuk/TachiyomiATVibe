@@ -682,24 +682,8 @@ internal class ChapterProfileBatchCoordinator(
         // this to a tracker emission; the tracker flips the snapshot's batch
         // phase to REBUILDING and recomputes its store-derived counters.
         listener.envelopePlanStarted(orderedPages.size)
-        // Since P3C the resume-hydration adoption (adoptCheckpointSnapshot
-        // per pending page) is a MEMORY-ONLY store operation: it rewrites no
-        // manifest and stages no publications, so the coalescing window below
-        // is dormant for adoption. The begin/end bracket is retained because
-        // runtime removal of coalescing is a P4 cutover concern, coherent
-        // with the Engine coalescing machinery — the try/finally still
-        // guarantees the mandatory final flush on every early-return path,
-        // so the plan publication afterwards sees a fully consistent store.
-        store.withArtifactEngineLocked { artifact ->
-            artifact.beginManifestCoalescing()
-        }
-        try {
-            return buildEnvelopeDispatchWorkLocked(artifact, orderedPages, corpusFingerprint)
-        } finally {
-            store.withArtifactEngineLocked { artifact ->
-                artifact.endManifestCoalescing()
-            }
-        }
+        return buildEnvelopeDispatchWorkLocked(artifact, orderedPages, corpusFingerprint)
+    
     }
 
     private suspend fun buildEnvelopeDispatchWorkLocked(

@@ -89,7 +89,7 @@ internal class StoreWriteDrainCoordinator(
                 task.result.complete(false)
             }
         }
-        store.flushPendingLazyMutationsWithJournalCapture()
+        store.flushPendingLazyMutations()
     }
 
     /** Flushes accepted work and joins every child before returning. */
@@ -111,7 +111,6 @@ internal class StoreWriteDrainCoordinator(
      */
     suspend fun markDefunct(
         markGenerationDefunctLocked: () -> Unit,
-        requestDefunctMarkerLocked: () -> Unit,
     ) = withContext(NonCancellable) {
         val pendingDrain = mutex.withLock { drainJob }
         pendingDrain?.let { pending ->
@@ -126,7 +125,6 @@ internal class StoreWriteDrainCoordinator(
             if (drainJob === pendingDrain) drainJob = null
             markGenerationDefunctLocked()
             releaseRetainedCreditsLocked()
-            requestDefunctMarkerLocked()
         }
     }
 
@@ -173,7 +171,6 @@ internal class StoreWriteDrainCoordinator(
 
     /** Caller holds store.mutex after defunct/generation transition. */
     internal fun releaseRetainedCreditsLocked() {
-        pendingLazyMutations.values.forEach { it.journalCredit?.releaseIfRetained() }
         pendingLazyMutations.clear()
         pendingLazyTasks.forEach { it.result.complete(false) }
         pendingLazyTasks.clear()

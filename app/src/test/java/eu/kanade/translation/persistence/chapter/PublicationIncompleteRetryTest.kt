@@ -132,10 +132,9 @@ class PublicationIncompleteRetryTest {
         // a publication failure is diagnostic-visible, not swallowed.
         store.publicationBridge.lastArtifactPublicationRejectionDiagnostic.shouldNotBeNull()
             .contains("candidate open rejected")
-        // The manifest stays authoritative and unchanged; the attempt left
-        // orphaned generation-record sidecars (the receipt's advanced files).
+        // The manifest stays authoritative and unchanged; with generation sidecars retired in P4,
+        // candidate open rejection leaves no orphaned generation sidecars behind.
         store.artifactManifest.shouldNotBeNull()
             .pages.getValue("p1").candidate shouldBe null
-        io.files.keys.any { it.contains("/generations/") } shouldBe true
     }
 }

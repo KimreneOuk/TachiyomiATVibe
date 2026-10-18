@@ -1631,6 +1631,9 @@ class TranslationManager private constructor(
                             error,
                         )
                     }
+                    if (!manifestProbe.exists) {
+                        return@withFileOpeningLock DownloadRekeyOutcome.NoTranslationRecords
+                    }
                     val store = try {
                         ChapterTranslationStore.openArtifactSuspend(
                             parent,

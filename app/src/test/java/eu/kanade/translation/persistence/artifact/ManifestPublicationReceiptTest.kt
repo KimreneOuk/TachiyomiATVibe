@@ -215,7 +215,6 @@ class ManifestPublicationReceiptTest {
         receipt.recoverableCandidateManifest shouldBe recoverable
         receipt.advancedFiles shouldBe listOf(
             layout.committedPageSnapshotFile("page.jpg", generationId),
-            layout.generationFile(generationId),
             layout.candidatePageSnapshotFile("page.jpg", generationId),
         )
         store.readManifest() shouldBe recoverable

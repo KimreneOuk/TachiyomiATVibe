@@ -274,7 +274,6 @@ class ChapterArtifactEngineTest {
         val previousImage = layout.imageFile("0001.jpg", "g0", "fp0", "jpg")
         val candidateImage = layout.imageFile("0001.jpg", "g2", "fp2", "jpg")
         val ocrSidecar = layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "deadbeef")
-        val keptGeneration = layout.generationFile("g1")
         val manifest = ChapterArtifactManifest(
             chapterKey = "Chapter 1",
             pages = mapOf(
@@ -309,8 +308,6 @@ class ChapterArtifactEngineTest {
         io.write("$candidateImage.tmp", byteArrayOf(4))
         io.write(ocrSidecar, byteArrayOf(5))
         io.write(layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "ffffffff"), byteArrayOf(6))
-        io.write(keptGeneration, byteArrayOf(7))
-        io.write(layout.generationFile("stale-gen"), byteArrayOf(8))
         io.write("Chapter 1_artifacts/context/legacy-orphan.json", byteArrayOf(9))
         // Legacy documents outside the managed tree survive.
         io.write("Chapter 1.json", byteArrayOf(14))
@@ -324,12 +321,10 @@ class ChapterArtifactEngineTest {
         io.files.containsKey("$candidateImage.tmp") shouldBe false
         io.files.containsKey(ocrSidecar) shouldBe true
         io.files.containsKey(layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "ffffffff")) shouldBe false
-        io.files.containsKey(keptGeneration) shouldBe true
-        io.files.containsKey(layout.generationFile("stale-gen")) shouldBe false
         io.files.containsKey("Chapter 1_artifacts/context/legacy-orphan.json") shouldBe false
         io.files.containsKey("Chapter 1.json") shouldBe true
         io.files.containsKey("Chapter 1_images/page.cleaned.abc.jpg") shouldBe true
-        result.deletedCount shouldBe 4
+        result.deletedCount shouldBe 3
     }
 
     @Test
@@ -350,9 +345,7 @@ class ChapterArtifactEngineTest {
         io.write(candidateImage, byteArrayOf(1, 2, 3))
 
         val orphanStage = layout.stageArtifactFile("page.jpg", ArtifactStage.OCR, "orphan")
-        val orphanGeneration = layout.generationFile("orphan-generation")
         io.write("$orphanStage.tmp", byteArrayOf(4))
-        io.write(orphanGeneration, byteArrayOf(5))
         io.write(AtomicChapterDocuments.tempNameFor(layout.manifestFileName), byteArrayOf(6))
 
         val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
@@ -360,7 +353,6 @@ class ChapterArtifactEngineTest {
 
         io.files.containsKey(candidateImage) shouldBe true
         io.files.containsKey("$orphanStage.tmp") shouldBe false
-        io.files.containsKey(orphanGeneration) shouldBe false
         io.files.containsKey(AtomicChapterDocuments.tempNameFor(layout.manifestFileName)) shouldBe false
     }
 
@@ -570,41 +562,6 @@ class ChapterArtifactEngineTest {
         store.reconcileRetention(promoted.manifest)
         io.files.containsKey(candidateFile) shouldBe false
         io.listedDirectories.isEmpty() shouldBe false
-    }
-
-    @Test
-    fun `immediate promotion generation failure leaves a readable candidate after reopen`() {
-        val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val opened = store.openCandidate(
-            manifest = store.loadArtifact(seededSnapshot()).manifest,
-            pageKey = "page.jpg",
-            origin = ArtifactOrigin.BATCH,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "deps",
-            nowEpochMs = 100L,
-        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
-        val generationId = opened.generationId.shouldNotBeNull()
-        val page = displayablePage()
-        io.writeNamesToFail += layout.generationFile(generationId)
-
-        val outcome = store.promoteLiveCandidateImmediately(
-            manifest = opened.manifest,
-            pageKey = "page.jpg",
-            generationId = generationId,
-            expectedPageVersion = opened.manifest.pages.getValue("page.jpg").pageVersion,
-            expectedDependencyFingerprint = "deps",
-            pageSnapshot = page,
-            origin = ArtifactOrigin.BATCH,
-            nowEpochMs = 101L,
-        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
-
-        outcome.reason.contains("generation record publication failed") shouldBe true
-        io.writeNamesToFail.clear()
-        val reopened = transactionStore(io).load().manifest
-        val candidate = reopened.pages.getValue("page.jpg").candidate.shouldNotBeNull()
-        candidate.pageSnapshotFileName shouldBe layout.candidatePageSnapshotFile("page.jpg", generationId)
-        transactionStore(io).readPageSnapshot(candidate.pageSnapshotFileName!!) shouldBe page
     }
 
     @Test

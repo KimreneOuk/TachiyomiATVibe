@@ -242,10 +242,6 @@ class ChapterArtifactEngine(
             )
         }
         val stamped = stampChapterKey(manifest)
-        if (manifestCoalescingDepth > 0) {
-            coalescedManifest = stamped
-            if (syncToDisk) coalescedSyncToDisk = true
-        }
         return when (val verified = documents.publishVerifiedJson(layout.manifestFileName, stamped, syncToDisk)) {
             is AtomicChapterDocuments.VerifiedPublishReceipt.Complete ->
                 DestructiveManifestReceipt.Complete(stamped)
@@ -619,18 +615,6 @@ class ChapterArtifactEngine(
             if (candidate.dependencyFingerprint != expectedDependencyFingerprint) {
                 return TransactionOutcome.Rejected("dependency fingerprint changed: pageKey=$pageKey")
             }
-            val cancelledName = layout.generationFile(candidate.generationId)
-            val cancelledRecord = GenerationRecord(
-                generationId = candidate.generationId,
-                pageKey = pageKey,
-                origin = candidate.origin,
-                lifecycle = GenerationLifecycle.CANCELLED,
-                createdAtEpochMs = candidate.createdAtEpochMs,
-                closedAtEpochMs = nowEpochMs,
-            )
-            sidecars += SidecarPublication(cancelledName, checkpoint.ocrContentFingerprint) {
-                documents.publishJson(cancelledName, cancelledRecord)
-            }
             when (mode) {
                 OcrCheckpointMode.CLOSE -> {
                     fun isCandidateOwned(record: StageArtifactRecord?): Boolean =
@@ -662,17 +646,6 @@ class ChapterArtifactEngine(
                 OcrCheckpointMode.REBASE -> {
                     val successorId = newGenerationId(pageKey, nowEpochMs)
                     successorGenerationId = successorId
-                    val successorName = layout.generationFile(successorId)
-                    val successorRecord = GenerationRecord(
-                        generationId = successorId,
-                        pageKey = pageKey,
-                        origin = ArtifactOrigin.BATCH,
-                        lifecycle = GenerationLifecycle.ACTIVE,
-                        createdAtEpochMs = nowEpochMs,
-                    )
-                    sidecars += SidecarPublication(successorName, checkpoint.ocrContentFingerprint) {
-                        documents.publishJson(successorName, successorRecord)
-                    }
                     updatedPage = page.copy(
                         ocr = ocrRecord,
                         candidate = CandidateGenerationMetadata(
@@ -792,7 +765,7 @@ class ChapterArtifactEngine(
                         // The just-cancelled generation's CANCELLED record (and,
                         // for REBASE, nothing else: the successor record stays
                         // reachable via activeCandidateGenerationIds).
-                        producerGenerationId?.let { add(layout.generationFile(it)) }
+                        
                         // This page's superseded checkpoint sidecar.
                         manifest.ocrCheckpoints[pageKey]?.fileName
                             ?.takeIf { it != checkpointFileName }
@@ -1914,18 +1887,7 @@ class ChapterArtifactEngine(
             promotedAtEpochMs = nowEpochMs,
             pageSnapshotFileName = committedFile,
         )
-        val generationRecord = GenerationRecord(
-            generationId = generationId,
-            pageKey = pageKey,
-            origin = origin,
-            lifecycle = GenerationLifecycle.COMMITTED,
-            createdAtEpochMs = candidate.createdAtEpochMs,
-            closedAtEpochMs = nowEpochMs,
-        )
-        if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return rejectAndRestoreCandidate("generation record publication failed: generationId=$generationId")
-        }
-        advancedFiles += layout.generationFile(generationId)
+
         val promotedTranslation = resolvedPage.translation?.copy(
             status = if (pageSnapshot.isTextlessTerminal) {
                 ArtifactStageStatus.TEXTLESS
@@ -1995,19 +1957,7 @@ class ChapterArtifactEngine(
         val page = manifest.pages[pageKey]
             ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
         val candidateGenerationId = page.candidate?.generationId
-        val generationRecord = candidateGenerationId?.let { generationId ->
-            GenerationRecord(
-                generationId = generationId,
-                pageKey = pageKey,
-                origin = page.candidate?.origin ?: ArtifactOrigin.BATCH,
-                lifecycle = GenerationLifecycle.CANCELLED,
-                createdAtEpochMs = page.candidate?.createdAtEpochMs ?: nowEpochMs,
-                closedAtEpochMs = nowEpochMs,
-            )
-        }
-        if (generationRecord != null && !documents.publishJson(layout.generationFile(generationRecord.generationId), generationRecord)) {
-            return TransactionOutcome.Rejected("generation record publication failed: generationId=${generationRecord.generationId}")
-        }
+
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
@@ -2026,9 +1976,7 @@ class ChapterArtifactEngine(
         // P3A: a user reset is destructive — its completion must leave a
         // verified same-state backup so a later backup recovery cannot
         // resurrect the removed committed/candidate pointers.
-        val advancedFiles = listOfNotNull(
-            generationRecord?.let { layout.generationFile(it.generationId) },
-        )
+        val advancedFiles = emptyList<String>()
         return when (val receipt = publishDestructiveManifest(updated)) {
             is DestructiveManifestReceipt.Complete ->
                 TransactionOutcome.Committed(updated, candidateGenerationId)
@@ -2183,19 +2131,7 @@ class ChapterArtifactEngine(
             createdAtEpochMs = existing?.createdAtEpochMs ?: nowEpochMs,
             priorDisplayState = existing?.priorDisplayState ?: page.displayState,
         )
-        val generationRecord = GenerationRecord(
-            generationId = generationId,
-            pageKey = pageKey,
-            origin = origin,
-            lifecycle = GenerationLifecycle.ACTIVE,
-            createdAtEpochMs = candidate.createdAtEpochMs,
-        )
-        if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return TransactionOutcome.Rejected(
-                "generation record publication failed: generationId=$generationId",
-                candidateOpenState = candidateOpenState,
-            )
-        }
+
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
@@ -2222,7 +2158,7 @@ class ChapterArtifactEngine(
                 incompletePublication = IncompletePublicationReceipt(
                     baselineManifest = manifest,
                     actualAdvancedManifest = readManifest(),
-                    advancedFiles = listOf(layout.generationFile(generationId)),
+                    advancedFiles = emptyList(),
                     failureReason = reason,
                 ),
             )
@@ -2276,17 +2212,7 @@ class ChapterArtifactEngine(
             },
             pageVersion = page.pageVersion + 1,
         )
-        val generationRecord = GenerationRecord(
-            generationId = generationId,
-            pageKey = pageKey,
-            origin = page.candidate?.origin ?: ArtifactOrigin.BATCH,
-            lifecycle = GenerationLifecycle.CANCELLED,
-            createdAtEpochMs = page.candidate?.createdAtEpochMs ?: nowEpochMs,
-            closedAtEpochMs = nowEpochMs,
-        )
-        if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return TransactionOutcome.Rejected("generation record publication failed: generationId=$generationId")
-        }
+
         val updated = manifest.copy(
             pages = manifest.pages + (pageKey to cleaned),
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
@@ -2300,7 +2226,7 @@ class ChapterArtifactEngine(
                 incompletePublication = IncompletePublicationReceipt(
                     baselineManifest = manifest,
                     actualAdvancedManifest = readManifest(),
-                    advancedFiles = listOf(layout.generationFile(generationId)),
+                    advancedFiles = emptyList(),
                     failureReason = reason,
                 ),
             )
@@ -2309,7 +2235,7 @@ class ChapterArtifactEngine(
         // SAF tree sweep per page made relaunch slow on large chapters;
         // cross-page orphans stay with the chapter-boundary sweep.
         val orphans = buildList {
-            add(layout.generationFile(generationId))
+            
             listOf(page.detection, page.ocr, page.inpaint, page.translation, page.layout)
                 .filter { it?.generationId == generationId }
                 .forEach { it?.artifactFileName?.let(::add) }
@@ -2338,6 +2264,7 @@ class ChapterArtifactEngine(
         }
         return null
     }
+
 
     /**
      * Process-death recovery (lifecycle contract §13): a stage persisted as
@@ -2692,61 +2619,14 @@ class ChapterArtifactEngine(
     // transaction chain never stale-rejects against its own deferred writes
     // and never rebases onto a manifest that would drop them. With no window
     // open the baseline is the durable file exactly as before.
-    // ------------------------------------------------------------------
-
-    /** Bounded unflushed state: a durable manifest rewrite at most every N stashed publications. */
-    private val manifestCoalescingFlushEvery = 32
-
-    private var manifestCoalescingDepth = 0
-    private var coalescedManifest: ChapterArtifactManifest? = null
-    private var coalescedSyncToDisk = false
-    private var coalescedPublications = 0
 
     /**
-     * Opens one coalescing window. Callers MUST close it with
-     * [endManifestCoalescing] (a try/finally bracket), which performs the
-     * mandatory final flush. Nesting is counted; the outermost end flushes.
-     */
-    fun beginManifestCoalescing() {
-        manifestCoalescingDepth += 1
-    }
-
-    /**
-     * Closes one coalescing window and flushes the stashed manifest when the
-     * OUTERMOST window ends ( the rebuild always ends coherent —
-     * `store.artifactManifest` tracks each Committed manifest, so after the
-     * final flush the façade equals the durable file). A failed final flush is
-     * logged and dropped: the transactions already reported Committed, and the
-     * durable state heals on the next resume via the checkpoint sidecars.
-     */
-    fun endManifestCoalescing() {
-        if (manifestCoalescingDepth > 0) manifestCoalescingDepth -= 1
-        if (manifestCoalescingDepth > 0) return
-        val pending = coalescedManifest
-        coalescedManifest = null
-        val sync = coalescedSyncToDisk
-        coalescedSyncToDisk = false
-        coalescedPublications = 0
-        if (pending != null && !documents.publishJson(layout.manifestFileName, pending, syncToDisk = sync)) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT manifest coalescing final flush failed; prior manifest retained: " +
-                    "chapter=${layout.chapterKey} pendingUpdatedAt=${pending.updatedAtEpochMs}"
-            }
-        }
-    }
-
-    /**
-     *  the manifest CAS baseline — the coalesced (intended) manifest
-     * while a window is open, else the durable file. Must only be called while
+     * Manifest CAS baseline — the durable file. Must only be called while
      * the facade Mutex is held by the owning ChapterTranslationStore.
      */
-    private fun casBaselineManifest(): ChapterArtifactManifest? =
-        coalescedManifest ?: readManifest()
+    private fun casBaselineManifest(): ChapterArtifactManifest? = readManifest()
 
-    //  callers hold the owning ChapterTranslationStore facade Mutex.
-    // The coalescing stash therefore shares the one mutable-state lock with
-    // every transaction. Lock order is facade Mutex → per-name document lock;
-    // document/open locks never acquire the facade Mutex.
+    // Callers hold the owning ChapterTranslationStore facade Mutex.
     internal fun publishManifestInternal(manifest: ChapterArtifactManifest, syncToDisk: Boolean = false): Boolean {
         if (readManifestDocument(layout.manifestFileName)?.schemaVersion
                 ?.let { it > ChapterArtifactManifest.SCHEMA_VERSION } == true
@@ -2763,27 +2643,6 @@ class ChapterArtifactEngine(
                     "chapter=${layout.chapterKey}"
             }
             return false
-        }
-        if (manifestCoalescingDepth > 0) {
-            coalescedManifest = manifest
-            if (syncToDisk) coalescedSyncToDisk = true
-            coalescedPublications += 1
-            if (coalescedPublications % manifestCoalescingFlushEvery == 0) {
-                //  bounded unflushed state — flush through the normal
-                // path WITHOUT closing the window (depth stays > 0).
-                val pending = coalescedManifest
-                coalescedManifest = null
-                val pendingSync = coalescedSyncToDisk
-                coalescedSyncToDisk = false
-                if (pending != null && !documents.publishJson(layout.manifestFileName, pending, syncToDisk = pendingSync)) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT manifest coalescing flush failed: " +
-                            "chapter=${layout.chapterKey} pendingUpdatedAt=${pending.updatedAtEpochMs}"
-                    }
-                    return false
-                }
-            }
-            return true
         }
         return documents.publishJson(layout.manifestFileName, manifest, syncToDisk = syncToDisk)
     }

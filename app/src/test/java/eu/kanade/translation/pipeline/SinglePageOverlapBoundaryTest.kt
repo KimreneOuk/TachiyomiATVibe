@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline
 
+import eu.kanade.translation.model.toDraft
+
 import android.graphics.Bitmap
 import eu.kanade.translation.coexistence.CoexistenceBarrier
 import eu.kanade.translation.coexistence.FakeCoexistence
@@ -653,7 +655,7 @@ class SinglePageOverlapBoundaryTest {
                 artifactFileName = "s5-attempt-lease.json",
                 artifactStore = first.artifactEngine,
                 initialArtifactManifest = first.artifactManifest,
-                initialRecoveredPages = first.capturePublishedPagesForCompaction(),
+                initialPages = first.state.value.mapValues { it.value.toDraft() },
                 persistenceDispatcher = StandardTestDispatcher(testScheduler),
             )
             second = other

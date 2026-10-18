@@ -199,7 +199,6 @@ class CheckpointOcrTransactionTest {
         // precedent), which the committed outcome reports.
         io.files.containsKey(pointer.fileName) shouldBe true
         io.files.containsKey(checkpoint.ocrPageSnapshotPointer.fileName) shouldBe true
-        outcome.deletedFiles.shouldContain(layout.generationFile(fx.generationId))
 
         // The pointer resolves to a usable checkpoint whose snapshot is readable.
         val read = fx.store.readOcrCheckpoint(pointer).shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
@@ -237,8 +236,6 @@ class CheckpointOcrTransactionTest {
         // The closed generation's CANCELLED record was published and then
         // left the reachability graph (retention sweep, cancelCandidate
         // precedent); the successor's ACTIVE record stays reachable.
-        outcome.deletedFiles.shouldContain(layout.generationFile(fx.generationId))
-        String(io.read(layout.generationFile(successorId))!!).shouldContain("\"lifecycle\":\"ACTIVE\"")
         outcome.manifest.ocrCheckpoints.getValue("page.jpg").contentFingerprint shouldBe
             checkpoint.ocrContentFingerprint
 

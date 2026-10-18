@@ -47,8 +47,8 @@ class ChapterArtifactLayoutTest {
     @Test
     fun `control characters and traversal components cannot escape the tree`() {
         val layout = ChapterArtifactLayout("c")
-        val traversing = layout.generationFile("../../outside")
-        traversing.startsWith("c_artifacts/generations/g-") shouldBe true
+        val traversing = layout.ocrCheckpointFile("p", "../../outside")
+        traversing.startsWith("c_artifacts/ocr/${layout.pageSegment("p")}/f-") shouldBe true
         ChapterArtifactLayout.isSafeSegment(traversing.substringAfterLast('/').removeSuffix(".json")) shouldBe true
         layout.isManagedPath(traversing) shouldBe true
     }
@@ -78,7 +78,8 @@ class ChapterArtifactLayoutTest {
     @Test
     fun `generation names follow the layout contract`() {
         val layout = ChapterArtifactLayout("c")
-        layout.generationFile("gen1") shouldBe "c_artifacts/generations/${layout.generationSegment("gen1")}.json"
+        layout.generationSegment("gen1").startsWith("g-") shouldBe true
+        ChapterArtifactLayout.isSafeSegment(layout.generationSegment("gen1")) shouldBe true
     }
 
     @Test

@@ -16,7 +16,6 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
-import eu.kanade.translation.persistence.journal.ChapterJournalCredit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -147,8 +146,6 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         updated: PageTranslation,
         expected: ChapterTranslationStore.PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
-        journalCredit: ChapterJournalCredit? = null,
-        journalFlushBatch: JournalFlushBatch? = null,
     ): Boolean {
         lastArtifactPublicationRejectionDiagnostic = null
         fun reject(reason: String): Boolean {
@@ -168,7 +165,6 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         if (store.engineMode is ChapterStoreEngineMode.Memory) {
             // Pure in-memory stores have no persistence target and never
             // create a compatibility document as a side effect.
-            journalCredit?.releaseIfUnqueued()
             return true
         }
         if (store.engineMode !is ChapterStoreEngineMode.Durable &&
@@ -179,15 +175,13 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         val engine = (store.engineMode as? ChapterStoreEngineMode.Durable)?.artifact
             ?: return reject("durable artifact store unavailable")
         var manifest = store.artifactManifest ?: run {
-            journalCredit?.releaseIfUnqueued()
             return true
         }
         if (pageKey.isEmpty()) {
-            journalCredit?.releaseIfUnqueued()
             return true
         }
         val firstReaderBaseline = if (
-            manifest.expectedPageCount == null && store.statusLedger.pendingExpectedPageCountLocked() == null
+            manifest.expectedPageCount == null && store.pendingExpectedPageCount == null
         ) {
             store.pages.size
         } else {
@@ -195,11 +189,11 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         }
         val expectedPageCount = maxOf(
             manifest.expectedPageCount ?: 0,
-            store.statusLedger.pendingExpectedPageCountLocked() ?: 0,
+            store.pendingExpectedPageCount ?: 0,
             firstReaderBaseline,
         ).takeIf { it > 0 }
         val expectedPageCountTrusted =
-            manifest.expectedPageCountTrusted || store.statusLedger.pendingExpectedPageCountTrustedLocked()
+            manifest.expectedPageCountTrusted || store.pendingExpectedPageCountTrusted
         val registrationKeys = (store.pendingArtifactPageRegistrations + pageKey)
             .filter { it.isNotEmpty() && it !in manifest.pages }
         val expectedCountChanged = expectedPageCount != manifest.expectedPageCount ||
@@ -225,7 +219,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                         val keys = (store.pendingArtifactPageRegistrations + pageKey)
                             .filter { it.isNotEmpty() && it !in current.pages }
                         val currentFirstReaderBaseline =
-                            if (current.expectedPageCount == null && store.statusLedger.pendingExpectedPageCountLocked() == null) {
+                            if (current.expectedPageCount == null && store.pendingExpectedPageCount == null) {
                                 store.pages.size
                             } else {
                                 0
@@ -236,11 +230,11 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                             },
                             expectedPageCount = maxOf(
                                 current.expectedPageCount ?: 0,
-                                store.statusLedger.pendingExpectedPageCountLocked() ?: 0,
+                                store.pendingExpectedPageCount ?: 0,
                                 currentFirstReaderBaseline,
                             ).takeIf { it > 0 },
                             expectedPageCountTrusted =
-                            current.expectedPageCountTrusted || store.statusLedger.pendingExpectedPageCountTrustedLocked(),
+                            current.expectedPageCountTrusted || store.pendingExpectedPageCountTrusted,
                         )
                     },
                     nowEpochMs = System.currentTimeMillis(),
@@ -252,14 +246,8 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                     store.artifactManifest = manifest
                     store.pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
                     if (expectedCountChanged) {
-                        store.statusLedger.clearPendingExpectedTotalsLocked()
-                    }
-                    store.journalWriter?.let { writer ->
-                        journalFlushBatch?.hasJournalWork = true
-                        writer.captureInventory(
-                            store.journalInventorySnapshot(manifest),
-                            deferSyncUntilBarrier = journalFlushBatch != null,
-                        )
+                        store.pendingExpectedPageCount = null
+                        store.pendingExpectedPageCountTrusted = false
                     }
                 }
                 is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
@@ -421,14 +409,6 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                     }
                 }
                 store.artifactManifest = manifest
-                store.capturePageMutationLocked(
-                    pageKey,
-                    updated,
-                    expected,
-                    failure,
-                    journalCredit,
-                    journalFlushBatch = journalFlushBatch,
-                )
             }
             ArtifactMutation.Direct -> {
                 val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
@@ -466,14 +446,6 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                             // handoff only when the fused failure path restored the same truth.
                             manifest = recoverableManifest
                             store.artifactManifest = recoverableManifest
-                            store.capturePageMutationLocked(
-                                pageKey,
-                                updated,
-                                expected,
-                                durableFailure,
-                                journalCredit,
-                                journalFlushBatch = journalFlushBatch,
-                            )
                         }
                         persisted.incompletePublication?.let { receipt ->
                             logcat(LogPriority.WARN) {
@@ -496,14 +468,6 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             }
         }
         store.artifactManifest = manifest
-        store.capturePageMutationLocked(
-            pageKey,
-            updated,
-            expected,
-            durableFailure,
-            journalCredit,
-            journalFlushBatch = journalFlushBatch,
-        )
         return true
     }
 }

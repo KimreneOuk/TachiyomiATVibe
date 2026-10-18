@@ -160,20 +160,4 @@ class DestructivePublicationReceiptTest {
         io.files.containsKey(backupName) shouldBe true
     }
 
-    @Test
-    fun `destructive publication during a coalescing window writes through`() {
-        val io = FakeChapterDocumentIo()
-        val store = artifactStore(io)
-        val seeded = store.loadArtifact(seededSnapshot()).manifest
-
-        store.beginManifestCoalescing()
-        val committed = store.demoteLivePage(seeded, "page.jpg")
-            .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
-        // Stash acceptance is never success: the durable file already holds
-        // the reset state while the window is still open.
-        durableManifest(io) shouldBe committed.manifest
-        store.endManifestCoalescing()
-        // The final flush rewrites the same refreshed state, not the stale one.
-        durableManifest(io) shouldBe committed.manifest
     }
-}

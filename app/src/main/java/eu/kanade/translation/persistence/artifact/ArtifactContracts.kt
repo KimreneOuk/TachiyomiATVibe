@@ -84,13 +84,6 @@ enum class FailureCategory {
     LEGACY_UNKNOWN,
 }
 
-/** Lifecycle state of a candidate generation record (lifecycle contract §13). */
-enum class GenerationLifecycle {
-    ACTIVE,
-    COMMITTED,
-    SUPERSEDED,
-    CANCELLED,
-}
 
 /** Kind of display base a committed bundle renders over (lifecycle contract §9). */
 enum class DisplayBaseKind {
