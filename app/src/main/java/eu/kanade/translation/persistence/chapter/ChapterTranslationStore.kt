@@ -1879,34 +1879,16 @@ class ChapterTranslationStore internal constructor(
         if (manifest.ocrCheckpoints[pageKey] != checkpointPointer) {
             return@withLock rejectedStage(pageKey, description, "checkpoint pointer changed")
         }
-        val checkpoint = when (val read = artifact.readOcrCheckpoint(checkpointPointer)) {
-            is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
-            else -> return@withLock rejectedStage(pageKey, description, "checkpoint sidecar unreadable")
+        // The provenance verification (both fingerprints, complete source
+        // identity, observed sha, READY state) is the ONE classified recovery
+        // read shared with the opener's publication-free reader fallback.
+        val recovery = when (val read = artifact.readRecoveryCheckpoint(checkpointPointer, observedSourceSha256)) {
+            is ChapterArtifactEngine.CheckpointRecoveryRead.Usable -> read
+            is ChapterArtifactEngine.CheckpointRecoveryRead.Unusable ->
+                return@withLock rejectedStage(pageKey, description, read.reason)
         }
-        val ocrSnapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
-            ?: return@withLock rejectedStage(pageKey, description, "checkpoint OCR page snapshot missing")
-        // OCR stage hash is not automatically the page snapshot hash: both
-        // fingerprints are verified against their own recorded values.
-        if (StageFingerprints.pageSnapshot(ocrSnapshot) != checkpoint.ocrPageSnapshotPointer.contentFingerprint) {
-            return@withLock rejectedStage(pageKey, description, "checkpoint page snapshot fingerprint mismatch")
-        }
-        val contentFingerprint = pageOcrContentFingerprint(
-            pageKey = pageKey,
-            page = ocrSnapshot,
-            naturalPageIndex = checkpoint.naturalPageIndex,
-            sourceOrientation = checkpoint.sourceIdentity.orientation,
-            inpaintMaskRevision = checkpoint.inpaintMaskRevision,
-        )
-        if (contentFingerprint != checkpoint.ocrContentFingerprint) {
-            return@withLock rejectedStage(pageKey, description, "checkpoint OCR content fingerprint mismatch")
-        }
-        if (!checkpoint.sourceIdentity.isComplete) {
-            return@withLock rejectedStage(pageKey, description, "incomplete source identity for checkpoint")
-        }
-        val observedSha = observedSourceSha256?.takeIf(String::isSha256Hex)
-        if (observedSha == null || observedSha != checkpoint.sourceIdentity.sha256) {
-            return@withLock rejectedStage(pageKey, description, "checkpoint source identity mismatch")
-        }
+        val checkpoint = recovery.checkpoint
+        val ocrSnapshot = recovery.ocrSnapshot
         if (pageLeases[pageKey] == null) {
             return@withLock rejectedStage(pageKey, description, "page lease required for hydration")
         }
@@ -1925,9 +1907,6 @@ class ChapterTranslationStore internal constructor(
             expectedArtifactPageVersion,
         )
         if (rejection != null) return@withLock rejectedStage(pageKey, description, rejection)
-        if (ocrSnapshot.ocrStatus != StageStatus.READY) {
-            return@withLock rejectedStage(pageKey, description, "checkpointed OCR state is not READY")
-        }
         val currentBlockFingerprints = current!!.ocrBlockFingerprints()
         if (currentBlockFingerprints.isNotEmpty()) {
             if (currentBlockFingerprints == ocrSnapshot.ocrBlockFingerprints()) {
@@ -2655,19 +2634,27 @@ class ChapterTranslationStore internal constructor(
      * Explicitly drops the committed display pointer — reserved for user
      * resets (reset translation/inpaint data), never for candidate retries:
      * pause/cancel/failure keep the committed bundle visible.
+     *
+     * P3B typed reset receipt: null when the durable pointer removal is
+     * committed (or there was nothing to demote); a non-null reason when the
+     * destructive publication completed WITHOUT a verified same-state backup
+     * or was rejected — typed incomplete, never a silent success.
      */
-    suspend fun demoteCommittedDisplay(pageKey: String, reason: String) {
-        if (defunct) return
-        withJournalCapturePermit {
+    suspend fun demoteCommittedDisplay(pageKey: String, reason: String): String? {
+        if (defunct) return null
+        return withJournalCapturePermit {
             mutex.withLock {
                 if (committedDisplay.containsKey(pageKey)) {
                     committedDisplay = committedDisplay.remove(pageKey)
                     retiredCleanedImages.remove(pageKey)
-                    demoteArtifactPageLocked(pageKey)
+                    val demotion = demoteArtifactPageLocked(pageKey)
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT committed display demoted: pageKey=$pageKey reason=$reason"
                     }
                     displaySnapshotLocked(listOf(pageKey))
+                    demotion
+                } else {
+                    null
                 }
             }
         }
@@ -2726,14 +2713,37 @@ class ChapterTranslationStore internal constructor(
         return false
     }
 
-    private fun demoteArtifactPageLocked(pageKey: String) {
-        val store = artifactEngine ?: return
-        val manifest = artifactManifest ?: return
+    /** Caller holds [mutex]; null when the destructive demotion is durably complete. */
+    private fun demoteArtifactPageLocked(pageKey: String): String? {
+        val store = artifactEngine ?: return null
+        val manifest = artifactManifest ?: return null
         val outcome = store.demoteLivePage(manifest, pageKey)
         when (outcome) {
-            is ChapterArtifactEngine.TransactionOutcome.Committed -> artifactManifest = outcome.manifest
-            is ChapterArtifactEngine.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact display demotion rejected: pageKey=$pageKey reason=${outcome.reason}"
+            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
+                artifactManifest = outcome.manifest
+                // P3A/P3B typed incomplete: the pointers were durably removed
+                // but the same-state backup could not be verified. Never a
+                // rollback — the next manifest rotation replaces the backup.
+                outcome.unverifiedBackupReason?.let { reason ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact display demotion published without a verified backup: " +
+                            "pageKey=$pageKey reason=$reason"
+                    }
+                    return "unverified backup after demotion: $reason"
+                }
+                return null
+            }
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                outcome.incompletePublication?.let { receipt ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact display demotion incomplete: pageKey=$pageKey " +
+                            "orphanFiles=${receipt.advancedFiles.size} reason=${receipt.failureReason}"
+                    }
+                }
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT artifact display demotion rejected: pageKey=$pageKey reason=${outcome.reason}"
+                }
+                return outcome.reason
             }
         }
     }

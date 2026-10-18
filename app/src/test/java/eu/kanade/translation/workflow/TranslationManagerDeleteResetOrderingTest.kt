@@ -65,18 +65,19 @@ class TranslationManagerDeleteResetOrderingTest {
                 mockk<ChapterTranslationStore.PageSnapshot>(relaxed = true),
             )
         }
-        coEvery { store.demoteCommittedDisplay(any(), any()) } answers {
+        coEvery { store.demoteCommittedDisplay(any(), any()) } coAnswers {
             log("demoteCommittedDisplay")
-            Unit
+            null
         }
         coEvery { store.deletePage(any()) } answers {
             log("deletePage")
-            Unit
+            null
         }
         coEvery { store.flush() } answers {
             log("storeFlush")
             Unit
         }
+        coEvery { store.retireActiveRun(any()) } returns true
         return store
     }
 
@@ -228,8 +229,9 @@ class TranslationManagerDeleteResetOrderingTest {
         )
         events.clear()
 
-        manager.resetChapterTranslationData(chapter, manga, source, preserveEdits = false)
+        val receipt = manager.resetChapterTranslationData(chapter, manga, source, preserveEdits = false)
 
+        assertTrue(receipt.completed, "a clean reset must report a complete receipt: ${receipt.failures}")
         assertTrue(
             events == listOf(
                 "clearDurableStatusCache",
@@ -246,6 +248,55 @@ class TranslationManagerDeleteResetOrderingTest {
             ),
             "resetChapterData ordering changed: $events",
         )
+    }
+
+    @Test
+    fun `an unverified destructive backup surfaces as typed incomplete reset`() = runBlocking<Unit> {
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { chapter.id } returns 42L
+        val store = storeWithPage("p1")
+        coEvery { store.demoteCommittedDisplay(any(), any()) } answers {
+            log("demoteCommittedDisplay")
+            "unverified backup after demotion: backup copy failed write/readback"
+        }
+        val manager = newManager(
+            store = store,
+            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
+        )
+        events.clear()
+
+        val receipt = manager.resetChapterTranslationData(chapter, manga, source, preserveEdits = false)
+
+        assertTrue(!receipt.completed, "an unverified backup must never read as a clean reset")
+        assertTrue(
+            receipt.failures.single().contains("unverified backup after demotion"),
+            "the typed destructive reason must survive the receipt: ${receipt.failures}",
+        )
+    }
+
+    @Test
+    fun `a rejected page deletion surfaces as typed incomplete reset`() = runBlocking<Unit> {
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { chapter.id } returns 42L
+        val store = storeWithPage("p1")
+        coEvery { store.deletePage(any()) } answers {
+            log("deletePage")
+            "manifest publication failed; page remains authoritative: pageKey=p1"
+        }
+        val manager = newManager(
+            store = store,
+            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
+        )
+        events.clear()
+
+        val receipt = manager.resetOcrData(chapter, manga, source, "p1")
+
+        assertTrue(!receipt.completed, "a rejected deletion must never read as a clean reset")
+        assertTrue(receipt.failures.single().contains("page remains authoritative"))
     }
 
     @Test

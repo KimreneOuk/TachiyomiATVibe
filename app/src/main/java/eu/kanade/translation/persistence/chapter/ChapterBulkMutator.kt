@@ -83,8 +83,15 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
     /** Serializes two-phase re-key preparations without blocking ordinary page mutations. */
     private val pageRekeyMutex = Mutex()
 
-    suspend fun deletePage(pageKey: String) {
-        if (store.defunct) return
+    /**
+     * P3B typed reset receipt: null when the page is durably removed from the
+     * authoritative manifest (verified destructive publication); a non-null
+     * reason when the publication completed without a verified same-state
+     * backup or was rejected — typed incomplete, never a silent success.
+     */
+    suspend fun deletePage(pageKey: String): String? {
+        if (store.defunct) return null
+        var deletionIncomplete: String? = null
         val journalCredit = store.reserveJournalCredit(pageKey)
         try {
             store.withJournalCapturePermit {
@@ -96,6 +103,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                                 "TachiyomiAT store deletePage rejected: " +
                                     "code=${admission.code} reason=${admission.message}"
                             }
+                            deletionIncomplete = "artifact admission rejected: ${admission.message}"
                             return@withLock
                         }
                     }
@@ -106,14 +114,16 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                             pageKey,
                             store.pages[pageKey],
                         )
-                        val deleted = deleteArtifactPageLocked(pageKey)
-                        if (deleted) {
+                        val deletion = deleteArtifactPageLocked(pageKey)
+                        if (deletion == null) {
                             store.capturePageDeletionLocked(
                                 pageKey,
                                 priorPageVersion,
                                 journalCredit,
                                 artifactContentHash = priorArtifactContentHash,
                             )
+                        } else {
+                            deletionIncomplete = deletion
                         }
                         store.pages = store.pages.remove(pageKey)
                         store.committedDisplay = store.committedDisplay.remove(pageKey)
@@ -128,6 +138,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         } finally {
             journalCredit?.releaseIfHeld()
         }
+        return deletionIncomplete
     }
 
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
@@ -167,7 +178,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                                     pageKey,
                                     store.pages[pageKey],
                                 )
-                                if (deleteArtifactPageLocked(pageKey)) {
+                                if (deleteArtifactPageLocked(pageKey) == null) {
                                     store.capturePageDeletionLocked(
                                         pageKey,
                                         pageVersion,
@@ -900,19 +911,29 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         )
     }
 
-    private fun deleteArtifactPageLocked(pageKey: String): Boolean {
-        val artifact = store.artifactEngine ?: return false
-        val manifest = store.artifactManifest ?: return false
+    /** Caller holds [store.mutex]; null when the destructive deletion is durably complete. */
+    private fun deleteArtifactPageLocked(pageKey: String): String? {
+        val artifact = store.artifactEngine ?: return null
+        val manifest = store.artifactManifest ?: return null
         val outcome = artifact.deleteLivePage(manifest, pageKey)
         when (outcome) {
             is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 store.artifactManifest = outcome.manifest
-                return true
+                // P3A/P3B typed incomplete: the page pointer was durably
+                // removed but the same-state backup could not be verified.
+                outcome.unverifiedBackupReason?.let { reason ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact page deletion published without a verified backup: " +
+                            "pageKey=$pageKey reason=$reason"
+                    }
+                    return "unverified backup after page deletion: $reason"
+                }
+                return null
             }
             is ChapterArtifactEngine.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact page deletion rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
         }
-        return false
+        return outcome.reason
     }
 }

@@ -8,6 +8,15 @@ data class ChapterArtifactDeletionResult(
     val manifestRemoved: Boolean,
     val artifactTreeRemoved: Boolean,
     val failures: List<String>,
+    /**
+     * P3B: true when the destructive empty-manifest checkpoint could not be
+     * published with a VERIFIED same-state backup before the authority
+     * removal. Typed incomplete, never a rollback: the file removal still
+     * happened (or failed for its own recorded reasons), but a crash mid-
+     * deletion could restore the pre-deletion generation from the retained
+     * backup until a retry completes the removal.
+     */
+    val destructiveCheckpointUnverified: Boolean = false,
 ) {
     val complete: Boolean get() = failures.isEmpty()
 }
@@ -27,9 +36,39 @@ class ChapterArtifactDeletionPlan private constructor(
      * cannot be removed, the tree is retained to avoid partial data loss and the
      * caller receives a retryable failure. Once all authority copies are gone,
      * leftover payloads are orphaned rather than readable if tree deletion fails.
+     *
+     * P3B: the removal is preceded by ONE checked destructive publication of
+     * an EMPTY current-format manifest through
+     * [ChapterArtifactEngine.publishDestructiveManifest] — the same
+     * verified-same-state-backup requirement every destructive operation
+     * satisfies. A crash between that checkpoint and the file removals can
+     * then only restore an EMPTY authority, never the deleted chapter's
+     * generation state; re-running the idempotent plan finishes the removal.
+     * A checkpoint refusal (future-schema primary/backup preserved, or the
+     * publication itself failing) still attempts the plain removal and
+     * reports the typed incompleteness.
      */
     fun delete(): ChapterArtifactDeletionResult {
         val failures = mutableListOf<String>()
+        var checkpointUnverified = false
+        val documents = AtomicChapterDocuments(io)
+        val engine = ChapterArtifactEngine(documents, layout)
+        when (val receipt = engine.publishDestructiveManifest(
+            ChapterArtifactManifest(chapterKey = layout.chapterKey),
+        )) {
+            is ChapterArtifactEngine.DestructiveManifestReceipt.Complete -> Unit
+            is ChapterArtifactEngine.DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete -> {
+                checkpointUnverified = true
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT chapter artifact deletion checkpoint unverified: " +
+                        "chapter=${layout.chapterKey} reason=${receipt.reason}"
+                }
+            }
+            is ChapterArtifactEngine.DestructiveManifestReceipt.NotPublished -> logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter artifact deletion checkpoint not published: " +
+                    "chapter=${layout.chapterKey} reason=${receipt.reason}"
+            }
+        }
         var manifestRemoved = true
 
         manifestSiblingNames.forEach { name ->
@@ -44,6 +83,7 @@ class ChapterArtifactDeletionPlan private constructor(
                 manifestRemoved = false,
                 artifactTreeRemoved = false,
                 failures = failures,
+                destructiveCheckpointUnverified = checkpointUnverified,
             )
         }
 
@@ -52,6 +92,7 @@ class ChapterArtifactDeletionPlan private constructor(
             manifestRemoved = true,
             artifactTreeRemoved = artifactTreeRemoved,
             failures = failures,
+            destructiveCheckpointUnverified = checkpointUnverified,
         )
     }
 

@@ -29,6 +29,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.decodeFromStream
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -48,10 +50,18 @@ internal sealed interface DurableChapterRead {
     data class Supported(val state: DurableChapterState) : DurableChapterRead
 
     /**
-     * A newer schema owns the semantics; bytes were preserved untouched and
-     * the chapter counts as ABSENT for planning, never as cleanly new.
+     * A non-supported schema owns the semantics; bytes were preserved
+     * untouched and the chapter counts as ABSENT for planning, never as
+     * cleanly new. The minimal version discriminator splits older (explicit
+     * reset/retranslation territory) from newer (a newer build owns it).
      */
-    data class Unsupported(val schemaVersion: Int) : DurableChapterRead
+    sealed interface Unsupported : DurableChapterRead {
+        val schemaVersion: Int
+
+        data class Newer(override val schemaVersion: Int) : Unsupported
+
+        data class Older(override val schemaVersion: Int) : Unsupported
+    }
 
     /** No manifest bytes exist anywhere. Safe re-derivation. */
     data object Missing : DurableChapterRead
@@ -220,15 +230,23 @@ internal object ChapterStoreOpener {
             is ManifestDocumentRead.Unavailable -> throw read.cause
         }
         if (manifest.schemaVersion > ChapterArtifactManifest.SCHEMA_VERSION) {
-            return DurableChapterRead.Unsupported(manifest.schemaVersion)
+            return DurableChapterRead.Unsupported.Newer(manifest.schemaVersion)
+        }
+        if (manifest.schemaVersion < ChapterArtifactManifest.MIN_SUPPORTED_SCHEMA_VERSION) {
+            return DurableChapterRead.Unsupported.Older(manifest.schemaVersion)
         }
         val documents = AtomicChapterDocuments(ReadOnlyChapterDocumentIo(UniFileChapterDocumentIo(parent)))
         val engine = ChapterArtifactEngine(documents, layout)
         val journalReplay = replayJournal(engine, manifest, parent, fileName, privateStorageRoot, privateStorageIdentity)
         val hydration = hydrateChapterState(engine, manifest, journalReplay)
         val statePages: Map<String, PageTranslationView> =
-            hydration.recoveredPages?.toMap()
-                ?: hydration.legacyPages.mapValues { (_, page) -> page.toPublishedPage() }
+            applyCheckpointRecoveryFallback(
+                engine = engine,
+                manifest = manifest,
+                projectedPages = hydration.recoveredPages?.toMap()
+                    ?: hydration.legacyPages.mapValues { (_, page) -> page.toPublishedPage() },
+                journalOutcomes = journalReplay?.pageOutcomes.orEmpty(),
+            )
         // Mirror the store's open-time display seed: committed bundles first,
         // then the live page. Keys are the live state's keys, exactly like
         // displaySnapshotLocked(pages.keys + committedDisplay.keys): a
@@ -256,6 +274,52 @@ internal object ChapterStoreOpener {
                 activeRunRecord = activeRunRecord,
             ),
         )
+    }
+
+    /**
+     * P3B reader fallback: restores saved OCR from a page's verified
+     * recovery checkpoint into the projected page state — publication-free
+     * and writer-free (no store, no lease, no journal bridge; the P3C store
+     * hydration's provenance verification runs identically through
+     * [ChapterArtifactEngine.readRecoveryCheckpoint], the one classified
+     * checkpoint read). Eligibility is deliberately narrow:
+     *
+     * - the CURRENT manifest still points at the checkpoint;
+     * - the manifest recorded the page's source SHA (checkpoint publications
+     *   stamp it atomically with the pointer), so identity is verifiable
+     *   without re-reading source bytes;
+     * - the page has NO content-backed candidate or committed snapshot —
+     *   newer/committed work always wins, the checkpoint is the recovery
+     *   authority only when nothing else carries content;
+     * - the journal replay recorded no outcome for the page — a tombstoned
+     *   or invalidated page is never resurrected from checkpoint bytes.
+     *
+     * An unusable checkpoint never fails the read: the page keeps its
+     * placeholder projection and the chapter stays supported.
+     */
+    private fun applyCheckpointRecoveryFallback(
+        engine: ChapterArtifactEngine,
+        manifest: ChapterArtifactManifest,
+        projectedPages: Map<String, PageTranslationView>,
+        journalOutcomes: Map<String, ChapterJournalPageOutcome>,
+    ): Map<String, PageTranslationView> {
+        var pages = projectedPages
+        manifest.ocrCheckpoints.forEach { (pageKey, pointer) ->
+            if (pageKey in journalOutcomes) return@forEach
+            val record = manifest.pages[pageKey]
+            if (record?.candidate?.pageSnapshotFileName != null) return@forEach
+            if (record?.committed?.pageSnapshotFileName != null) return@forEach
+            val recordedSha = manifest.sourceShaByPageKey[pageKey] ?: return@forEach
+            when (val recovery = engine.readRecoveryCheckpoint(pointer, recordedSha)) {
+                is ChapterArtifactEngine.CheckpointRecoveryRead.Usable ->
+                    pages = pages + (pageKey to recovery.ocrSnapshot.toPublishedPage())
+                is ChapterArtifactEngine.CheckpointRecoveryRead.Unusable -> logcat(LogPriority.WARN) {
+                    "TachiyomiAT durable reader checkpoint recovery unavailable: " +
+                        "pageKey=$pageKey reason=${recovery.reason}"
+                }
+            }
+        }
+        return pages
     }
 
     /**

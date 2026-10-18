@@ -25,6 +25,7 @@ import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.workflow.withDurablePause
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerializationException
 import org.junit.jupiter.api.Test
@@ -175,7 +176,26 @@ class DurableChapterReadProjectionTest {
 
         val read = readChapter()
 
-        read shouldBe DurableChapterRead.Unsupported(99)
+        read shouldBe DurableChapterRead.Unsupported.Newer(99)
+        treeSnapshot() shouldBe before
+    }
+
+    @Test
+    fun `an unsupported older schema classifies separately from newer and missing`() = runTest {
+        val older = ChapterArtifactManifest(
+            schemaVersion = ChapterArtifactManifest.MIN_SUPPORTED_SCHEMA_VERSION - 1,
+            chapterKey = "Chapter 1",
+            pages = mapOf("page.jpg" to PageArtifactRecord(pageKey = "page.jpg")),
+        )
+        manifestFile().writeText(
+            ArtifactDocumentJson.encodeToString(ChapterArtifactManifest.serializer(), older),
+        )
+        val before = treeSnapshot()
+
+        val read = readChapter()
+
+        read shouldBe DurableChapterRead.Unsupported.Older(ChapterArtifactManifest.MIN_SUPPORTED_SCHEMA_VERSION - 1)
+        read shouldNotBe DurableChapterRead.Missing
         treeSnapshot() shouldBe before
     }
 

@@ -8,6 +8,7 @@ import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.SourceIdentity
@@ -335,6 +336,25 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         val dependencyFingerprint = expected?.dependencyFingerprint
             ?: candidate?.dependencyFingerprint
             ?: StageFingerprints.pageSnapshot(previous ?: updated)
+        /**
+         * P3B: one typed finish-retry for a primary-advanced/replica-failed
+         * rejection. The receipt records orphan sidecar evidence (or a
+         * restored candidate manifest); [ChapterArtifactEngine.finishIncompletePublication]
+         * re-presents it with NEWER-STATE DOMINANCE — when the durable
+         * manifest moved past the receipt's actually-advanced state, the
+         * older receipt is retired without any write. A candidate-restore
+         * receipt (recoverable manifest) keeps the journal-handoff handling
+         * in the Direct branch and is not re-run here.
+         */
+        fun finishIncomplete(
+            outcome: ChapterArtifactEngine.TransactionOutcome,
+            retry: (ChapterArtifactManifest) -> ChapterArtifactEngine.TransactionOutcome,
+        ): ChapterArtifactEngine.TransactionOutcome {
+            if (outcome !is ChapterArtifactEngine.TransactionOutcome.Rejected) return outcome
+            val receipt = outcome.incompletePublication ?: return outcome
+            if (outcome.recoverableCandidateManifest != null) return outcome
+            return engine.finishIncompletePublication(receipt, retry)
+        }
         if (candidate == null || candidate.origin != origin) {
             val baseManifest = if (candidate != null && candidate.origin != origin) {
                 when (val cancelled = engine.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
@@ -344,13 +364,14 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             } else {
                 manifest
             }
-            val opened = engine.openCandidate(
-                manifest = baseManifest,
+            fun open(manifest: ChapterArtifactManifest) = engine.openCandidate(
+                manifest = manifest,
                 pageKey = pageKey,
                 origin = origin,
                 expectedPageVersion = baseManifest.pages[pageKey]?.pageVersion ?: record.pageVersion,
                 dependencyFingerprint = dependencyFingerprint,
             )
+            val opened = finishIncomplete(open(baseManifest), ::open)
             manifest = when (opened) {
                 is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     store.reportCandidateReuse(opened.candidateOpenState)
@@ -372,7 +393,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         when (classifyMutation(durableFailure)) {
             ArtifactMutation.Failure -> {
                 val failure = checkNotNull(durableFailure)
-                val persisted = engine.persistLiveCandidateAndFailure(
+                fun persistFailure(manifest: ChapterArtifactManifest) = engine.persistLiveCandidateAndFailure(
                     manifest = manifest,
                     pageKey = pageKey,
                     generationId = currentCandidate.generationId,
@@ -383,9 +404,16 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                     failure = failure,
                     sourceIdentity = updated.sourceIdentity(pageKey),
                 )
+                val persisted = finishIncomplete(persistFailure(manifest), ::persistFailure)
                 manifest = when (persisted) {
                     is ChapterArtifactEngine.TransactionOutcome.Committed -> persisted.manifest
                     is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                        persisted.incompletePublication?.let { receipt ->
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT artifact candidate persist incomplete: pageKey=$pageKey " +
+                                    "orphanFiles=${receipt.advancedFiles.size} reason=${receipt.failureReason}"
+                            }
+                        }
                         logcat(LogPriority.WARN) {
                             "TachiyomiAT artifact candidate persist rejected: pageKey=$pageKey reason=${persisted.reason}"
                         }
@@ -404,29 +432,31 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             }
             ArtifactMutation.Direct -> {
                 val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
-                val persisted = if (immediatelyPromotable) {
-                    engine.promoteLiveCandidateImmediately(
-                        manifest = manifest,
-                        pageKey = pageKey,
-                        generationId = currentCandidate.generationId,
-                        expectedPageVersion = expectedPageVersion,
-                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                        pageSnapshot = updated,
-                        origin = origin,
-                        sourceIdentity = updated.sourceIdentity(pageKey),
-                    )
-                } else {
-                    engine.persistLiveCandidate(
-                        manifest = manifest,
-                        pageKey = pageKey,
-                        generationId = currentCandidate.generationId,
-                        expectedPageVersion = expectedPageVersion,
-                        expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-                        pageSnapshot = updated,
-                        origin = origin,
-                        sourceIdentity = updated.sourceIdentity(pageKey),
-                    )
-                }
+                fun persistDirect(manifest: ChapterArtifactManifest) =
+                    if (immediatelyPromotable) {
+                        engine.promoteLiveCandidateImmediately(
+                            manifest = manifest,
+                            pageKey = pageKey,
+                            generationId = currentCandidate.generationId,
+                            expectedPageVersion = expectedPageVersion,
+                            expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                            pageSnapshot = updated,
+                            origin = origin,
+                            sourceIdentity = updated.sourceIdentity(pageKey),
+                        )
+                    } else {
+                        engine.persistLiveCandidate(
+                            manifest = manifest,
+                            pageKey = pageKey,
+                            generationId = currentCandidate.generationId,
+                            expectedPageVersion = expectedPageVersion,
+                            expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                            pageSnapshot = updated,
+                            origin = origin,
+                            sourceIdentity = updated.sourceIdentity(pageKey),
+                        )
+                    }
+                val persisted = finishIncomplete(persistDirect(manifest), ::persistDirect)
                 when (persisted) {
                     is ChapterArtifactEngine.TransactionOutcome.Committed -> manifest = persisted.manifest
                     is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
@@ -444,6 +474,13 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                                 journalCredit,
                                 journalFlushBatch = journalFlushBatch,
                             )
+                        }
+                        persisted.incompletePublication?.let { receipt ->
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT artifact ${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +
+                                    "incomplete: pageKey=$pageKey orphanFiles=${receipt.advancedFiles.size} " +
+                                    "reason=${receipt.failureReason}"
+                            }
                         }
                         logcat(LogPriority.WARN) {
                             "TachiyomiAT artifact ${if (immediatelyPromotable) "terminal publication" else "candidate persist"} " +

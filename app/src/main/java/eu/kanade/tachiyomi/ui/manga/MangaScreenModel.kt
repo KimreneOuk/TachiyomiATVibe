@@ -49,6 +49,7 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.presentation.TranslationSettingsSummary
 import eu.kanade.translation.presentation.TranslationUiProjection
 import eu.kanade.translation.presentation.snapshotTranslationSummary
+import eu.kanade.translation.persistence.chapter.ChapterResetReceipt
 import eu.kanade.translation.workflow.ChapterQueuePreflight
 import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.collections.immutable.ImmutableList
@@ -1053,12 +1054,22 @@ class MangaScreenModel(
 
     private fun runChapterReset(
         item: ChapterList.Item,
-        action: suspend TranslationManager.(State.Success) -> Unit,
+        action: suspend TranslationManager.(State.Success) -> ChapterResetReceipt,
     ) {
         screenModelScope.launchNonCancellable {
             try {
                 val state = successState ?: return@launchNonCancellable
-                action(translationManager, state)
+                val receipt = action(translationManager, state)
+                // A typed-incomplete reset (unverified destructive backup or a
+                // rejected publication) must not present the chapter as
+                // cleanly reset; the durable state projector still owns truth.
+                if (!receipt.completed) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT chapter reset incomplete: chapter=${item.chapter.name} " +
+                            "failures=${receipt.failures}"
+                    }
+                    return@launchNonCancellable
+                }
                 //  slice 1: reset/delete invalidates the retained snapshot.
                 item.chapter.id?.let(translationSnapshots::forget)
                 updateSuccessState { current ->

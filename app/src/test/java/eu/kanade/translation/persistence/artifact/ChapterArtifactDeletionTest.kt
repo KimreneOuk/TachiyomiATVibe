@@ -1,5 +1,6 @@
 package eu.kanade.translation.persistence.artifact
 
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
@@ -63,5 +64,91 @@ class ChapterArtifactDeletionTest {
         result.artifactTreeRemoved shouldBe false
         io.exists(layout.manifestFileName) shouldBe true
         io.exists(layout.artifactRootDirectoryName) shouldBe true
+    }
+
+    @Test
+    fun `deletion publishes a verified empty-manifest destructive checkpoint before removal`() {
+        val io = FakeChapterDocumentIo()
+        val engine = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
+        val seeded = engine.loadArtifact(
+            ArtifactSeed(
+                pages = mapOf(
+                    "p0" to ArtifactPageFacts(
+                        eu.kanade.translation.model.PageTranslation(sourceFileName = "p0"),
+                    ),
+                ),
+                createdAtEpochMs = 1L,
+            ),
+        ).manifest
+        seeded.pages.getValue("p0").committed shouldNotBe null
+        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, seeded) shouldBe true
+        io.write("${layout.artifactRootDirectoryName}/pages/p0/committed-g.json", byteArrayOf(4)) shouldBe true
+        io.renamed.clear()
+
+        val plan = ChapterArtifactDeletionPlan.capture(io, "Chapter 1.json").shouldNotBeNull()
+        val result = plan.delete()
+
+        result.complete shouldBe true
+        result.destructiveCheckpointUnverified shouldBe false
+        result.manifestRemoved shouldBe true
+        result.artifactTreeRemoved shouldBe true
+        // The empty-manifest tombstone went through the destructive
+        // publication (primary rotated to the backup name) BEFORE the
+        // authority files were removed: a crash mid-deletion could only ever
+        // restore an EMPTY authority, never the deleted generation state.
+        io.renamed.any { it.first == layout.manifestFileName } shouldBe true
+        io.exists(layout.manifestFileName) shouldBe false
+        io.exists("${layout.manifestFileName}.bak") shouldBe false
+        io.exists(layout.artifactRootDirectoryName) shouldBe false
+    }
+
+    @Test
+    fun `an unverified checkpoint backup completes the removal but reports typed incompleteness`() {
+        val io = FakeChapterDocumentIo()
+        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, manifest()) shouldBe true
+        // Fail exactly the checkpoint's same-state backup copy.
+        io.writeNamesToFail += "${layout.manifestFileName}.bak"
+
+        val plan = ChapterArtifactDeletionPlan.capture(io, "Chapter 1.json").shouldNotBeNull()
+        val result = plan.delete()
+
+        result.complete shouldBe true
+        result.destructiveCheckpointUnverified shouldBe true
+        result.manifestRemoved shouldBe true
+        io.exists(layout.manifestFileName) shouldBe false
+        io.exists(layout.artifactRootDirectoryName) shouldBe false
+    }
+
+    @Test
+    fun `a crash after the destructive checkpoint cannot resurrect the deleted generation`() {
+        val io = FakeChapterDocumentIo()
+        val engine = ChapterArtifactEngine(AtomicChapterDocuments(io), layout)
+        val seeded = engine.loadArtifact(
+            ArtifactSeed(
+                pages = mapOf(
+                    "p0" to ArtifactPageFacts(
+                        eu.kanade.translation.model.PageTranslation(sourceFileName = "p0"),
+                    ),
+                ),
+                createdAtEpochMs = 1L,
+            ),
+        ).manifest
+        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, seeded) shouldBe true
+
+        val plan = ChapterArtifactDeletionPlan.capture(io, "Chapter 1.json").shouldNotBeNull()
+        // Simulate the crash window: the tombstone ran, then the process died
+        // before any authority file was removed.
+        plan.delete()
+
+        // Whatever survives the crash window can only be the EMPTY current
+        // format manifest — recovery re-running the idempotent plan finishes.
+        val recovery = ChapterArtifactDeletionPlan.capture(io, "Chapter 1.json")
+        if (recovery != null) {
+            val finished = recovery.delete()
+            finished.complete shouldBe true
+            io.exists(layout.manifestFileName) shouldBe false
+        } else {
+            io.exists(layout.manifestFileName) shouldBe false
+        }
     }
 }

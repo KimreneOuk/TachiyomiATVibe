@@ -1110,6 +1110,84 @@ class ChapterArtifactEngine(
         return OcrCheckpointRead.Usable(checkpoint)
     }
 
+    /**
+     * P3B: the ONE classified checkpoint recovery read, shared by the store's
+     * fenced [eu.kanade.translation.persistence.chapter.ChapterTranslationStore]
+     * hydration and the opener's publication-free reader fallback. Verifies
+     * the checkpoint's own provenance — readable sidecar, readable OCR page
+     * snapshot whose semantic fingerprint equals the pointer's recorded
+     * fingerprint, OCR content fingerprint recomputed over that snapshot,
+     * complete source identity matching [observedSourceSha256], and a READY
+     * checkpointed OCR state. Every rejection is classified with a stable
+     * reason; nothing is written, quarantined, or deleted by this read.
+     */
+    sealed interface CheckpointRecoveryRead {
+        data class Usable(
+            val checkpoint: PageOcrCheckpoint,
+            val ocrSnapshot: PageTranslation,
+        ) : CheckpointRecoveryRead
+
+        data class Unusable(val reason: String) : CheckpointRecoveryRead
+    }
+
+    fun readRecoveryCheckpoint(
+        pointer: SidecarPointer,
+        observedSourceSha256: String?,
+    ): CheckpointRecoveryRead {
+        val checkpoint = when (val read = readOcrCheckpoint(pointer)) {
+            is OcrCheckpointRead.Usable -> read.checkpoint
+            is OcrCheckpointRead.UnsupportedVersion ->
+                return CheckpointRecoveryRead.Unusable("checkpoint schema unsupported: ${read.schemaVersion}")
+            OcrCheckpointRead.Absent -> return CheckpointRecoveryRead.Unusable("checkpoint sidecar unreadable")
+        }
+        val ocrSnapshot = readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+            ?: return CheckpointRecoveryRead.Unusable("checkpoint OCR page snapshot missing")
+        // OCR stage hash is not automatically the page snapshot hash: both
+        // fingerprints are verified against their own recorded values.
+        if (StageFingerprints.pageSnapshot(ocrSnapshot) != checkpoint.ocrPageSnapshotPointer.contentFingerprint) {
+            return CheckpointRecoveryRead.Unusable("checkpoint page snapshot fingerprint mismatch")
+        }
+        val contentFingerprint = recoveryOcrContentFingerprint(ocrSnapshot, checkpoint)
+        if (contentFingerprint != checkpoint.ocrContentFingerprint) {
+            return CheckpointRecoveryRead.Unusable("checkpoint OCR content fingerprint mismatch")
+        }
+        if (!checkpoint.sourceIdentity.isComplete) {
+            return CheckpointRecoveryRead.Unusable("incomplete source identity for checkpoint")
+        }
+        val observedSha = observedSourceSha256?.takeIf(String::isSha256Hex)
+        if (observedSha == null || observedSha != checkpoint.sourceIdentity.sha256) {
+            return CheckpointRecoveryRead.Unusable("checkpoint source identity mismatch")
+        }
+        if (ocrSnapshot.ocrStatus != StageStatus.READY) {
+            return CheckpointRecoveryRead.Unusable("checkpointed OCR state is not READY")
+        }
+        return CheckpointRecoveryRead.Usable(checkpoint, ocrSnapshot)
+    }
+
+    /**
+     * The semantic OCR content identity of a checkpoint's stored snapshot,
+     * recomputed over the snapshot's own records. Shared by the store
+     * hydration and the reader recovery fallback so both sides of any drift
+     * comparison use one builder.
+     */
+    internal fun recoveryOcrContentFingerprint(
+        ocrSnapshot: PageTranslation,
+        checkpoint: PageOcrCheckpoint,
+    ): String = StageFingerprints.pageOcrContentFingerprint(
+        pageKey = checkpoint.pageKey,
+        naturalPageIndex = checkpoint.naturalPageIndex,
+        sourceSha256 = ocrSnapshot.sourceFingerprint.orEmpty(),
+        sourceWidth = ocrSnapshot.imgWidth.toInt(),
+        sourceHeight = ocrSnapshot.imgHeight.toInt(),
+        sourceOrientation = checkpoint.sourceIdentity.orientation.orEmpty(),
+        detectionFingerprint = ocrSnapshot.detectionFingerprint,
+        ocrFingerprint = ocrSnapshot.ocrFingerprint.orEmpty(),
+        textless = ocrSnapshot.isTextlessTerminal,
+        inpaintMaskRevision = checkpoint.inpaintMaskRevision,
+        blocks = StageFingerprints.pageOcrContentBlocks(ocrSnapshot),
+        inpaintMaskBoxes = ocrSnapshot.inpaintMaskBoxes,
+    )
+
     /** Content-addressed OCR-complete page snapshot sidecar name (existing stage layout). */
     internal fun ocrStageSnapshotName(pageKey: String, fingerprint: String): String =
         layout.stageArtifactFile(pageKey, ArtifactStage.OCR, fingerprint)
