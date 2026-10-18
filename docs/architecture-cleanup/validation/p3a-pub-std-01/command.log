@@ -1,0 +1,47 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.12/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:generateExternalPluginSpecBuilders FROM-CACHE
+> Task :buildSrc:extractPrecompiledScriptPluginPlugins FROM-CACHE
+> Task :buildSrc:compilePluginsBlocks FROM-CACHE
+> Task :buildSrc:generatePrecompiledScriptPluginAccessors FROM-CACHE
+> Task :buildSrc:generateScriptPluginAdapters FROM-CACHE
+> Task :buildSrc:compileKotlin FROM-CACHE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+
+> Configure project :app
+w: Deprecated Gradle Property 'kotlin.mpp.androidGradlePluginCompatibility.nowarn' Used
+The `kotlin.mpp.androidGradlePluginCompatibility.nowarn` deprecated property is used in your build.
+Solution:
+It is unsupported, please stop using it.
+
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p3a-publication/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Could not determine the dependencies of task ':app:testStandardDebugUnitTest'.
+> SDK location not found. Define a valid SDK location with an ANDROID_HOME environment variable or by setting the sdk.dir path in your project's local properties file at 'C:\Users\ADMIN\.traycer\worktrees\kimreneouk__tachiyomiatvibe\persistence-p3a-publication\local.properties'.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 18s
+9 actionable tasks: 3 executed, 6 from cache

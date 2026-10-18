@@ -1,0 +1,34 @@
+{
+  "run_id": "9c6e62e0-a906-486a-ab2b-f311653f1afd",
+  "repo": "C:\\Users\\ADMIN\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\persistence-p3a-publication",
+  "task": ":app:testStandardDebugUnitTest",
+  "command": [
+    "gradlew.bat",
+    ":app:testStandardDebugUnitTest",
+    "--tests",
+    "eu.kanade.translation.persistence.artifact.ManifestPublicationReceiptTest",
+    "--tests",
+    "eu.kanade.translation.persistence.artifact.DestructivePublicationReceiptTest",
+    "--tests",
+    "eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest",
+    "--tests",
+    "eu.kanade.translation.persistence.artifact.ChapterArtifactSchemaGuardCacheTest",
+    "--tests",
+    "eu.kanade.translation.persistence.artifact.ChapterArtifactEngineTest",
+    "--max-workers=2",
+    "-Dkotlin.daemon.jvmargs=-Xmx3g",
+    "--no-daemon",
+    "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Dtraycer.validation.runId=9c6e62e0-a906-486a-ab2b-f311653f1afd -Dtraycer.validation.task=:app:testStandardDebugUnitTest -Dtraycer.validation.project=b8ad2423729bc5a336947647 -XX:ErrorFile=C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p3a-publication/docs/architecture-cleanup/validation/p3a-pub-std-01/jvm-9c6e62e0-a906-486a-ab2b-f311653f1afd-52a3e56ee039ab8a-b8ad2423729bc5a336947647-%p.log",
+    "-Pkotlin.compiler.execution.strategy=in-process",
+    "-I",
+    "C:\\Users\\ADMIN\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\persistence-p3a-publication\\docs\\architecture-cleanup\\validation\\p3a-pub-std-01\\run-init.gradle"
+  ],
+  "setup_seconds": 1200,
+  "test_seconds": 300,
+  "tags": [
+    "-Dtraycer.validation.runId=9c6e62e0-a906-486a-ab2b-f311653f1afd",
+    "-Dtraycer.validation.task=:app:testStandardDebugUnitTest",
+    "-Dtraycer.validation.project=b8ad2423729bc5a336947647"
+  ],
+  "daemon_marker": "-XX:ErrorFile=C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p3a-publication/docs/architecture-cleanup/validation/p3a-pub-std-01/jvm-9c6e62e0-a906-486a-ab2b-f311653f1afd-52a3e56ee039ab8a-b8ad2423729bc5a336947647-%p.log"
+}

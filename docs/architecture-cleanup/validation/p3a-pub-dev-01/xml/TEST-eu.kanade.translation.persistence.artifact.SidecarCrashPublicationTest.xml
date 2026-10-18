@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-18T17:05:19" hostname="DESKTOP-8VS098Q" time="0.015">
+  <properties/>
+  <testcase name="manifest temp write failure keeps the prior manifest authoritative()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <testcase name="corrupt quarantined sidecar stays preserved while its pointer references it()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.002"/>
+  <testcase name="happy path publishes sidecar first then installs the pointer()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <testcase name="sidecar rename failure leaves the prior manifest authoritative with at most an orphan temp()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <testcase name="generic transaction publishes multiple sidecars before one manifest publication()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.007"/>
+  <testcase name="stale manifest snapshots recover through the one-shot retry()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <testcase name="sidecar write failure leaves the prior manifest authoritative with no pointer()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <testcase name="manifest publication failure after a durable sidecar keeps the pointer absent()" classname="eu.kanade.translation.persistence.artifact.SidecarCrashPublicationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
