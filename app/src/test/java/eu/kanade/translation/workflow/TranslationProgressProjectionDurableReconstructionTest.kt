@@ -177,24 +177,24 @@ class TranslationProgressProjectionDurableReconstructionTest {
     }
 
     @Test
-    fun `withDurableStore returns null when the source cannot be resolved`() = runTest {
+    fun `withDurableRead returns null when the source cannot be resolved`() = runTest {
         val resolver = resolver(activeStores = ActiveChapterStoreRegistry(), source = null, artifactParentExists = false)
 
-        val result = resolver.withDurableStore(chapterId, "Chapter 1", null, "fixture", 1L) { it }
+        val result = resolver.withDurableRead(chapterId, "Chapter 1", null, "fixture", 1L) { it }
 
         result shouldBe null
     }
 
     @Test
-    fun `withDurableStore prefers the active store and never opens a probe`() = runTest {
+    fun `withDurableRead prefers the active store and never reads the durable document`() = runTest {
         val activeStores = ActiveChapterStoreRegistry()
         val activeStore = ChapterTranslationStore()
         activeStores.register(chapterId, activeStore)
         val resolver = resolver(activeStores, source = mockk<Source>(relaxed = true), artifactParentExists = true)
 
-        val result = resolver.withDurableStore(chapterId, "Chapter 1", null, "fixture", 1L) { store -> store }
+        val result = resolver.withDurableRead(chapterId, "Chapter 1", null, "fixture", 1L) { access -> access }
 
-        result shouldBe activeStore
+        result shouldBe DurableChapterAccess.ActiveStore(activeStore)
     }
 
     @Test

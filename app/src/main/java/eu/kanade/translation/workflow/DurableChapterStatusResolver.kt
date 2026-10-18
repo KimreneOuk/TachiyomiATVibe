@@ -5,7 +5,11 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.chapter.ChapterStatusProjection
+import eu.kanade.translation.persistence.chapter.ChapterStoreOpener
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.DurableChapterRead
+import eu.kanade.translation.persistence.chapter.DurableChapterState
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,6 +47,17 @@ internal data class TranslationDocument(
     val fileName: String,
 ) {
     val registryKey: String get() = "${parent.filePath ?: parent.uri}:$fileName"
+}
+
+/**
+ * One read-through durable access for status and terminal-snapshot
+ * consumers. An active store remains the reader's authority and keeps its
+ * live semantics; the fallback is the opener's publication-free durable read
+ * — no store, writer, probe registry, or journal bridge is ever constructed.
+ */
+internal sealed interface DurableChapterAccess {
+    data class ActiveStore(val store: ChapterTranslationStore) : DurableChapterAccess
+    data class DurableRead(val read: DurableChapterState) : DurableChapterAccess
 }
 
 internal class DurableChapterStatusResolver(
@@ -94,9 +109,10 @@ internal class DurableChapterStatusResolver(
                 sourceId,
             )
         }
-        // A null result includes an absent artifact, a failed probe, and a
-        // recoverable recovery/permission error. Do not turn that transient
-        // outcome into a same-manager cache hit that hides a later retry.
+        // A null result includes an absent artifact, an unsupported future
+        // schema, and corrupt manifest evidence. None of those may become a
+        // same-manager cache hit that hides a later retry; an environment
+        // failure propagates instead of resolving at all.
         state?.let { durableStatusCache[key] = DurableStatus(it) }
         return state
     }
@@ -111,16 +127,18 @@ internal class DurableChapterStatusResolver(
         val source = sourceManager.get(sourceId) ?: return null
         val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
             ?: return null
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        return if (manifestProbe.exists) {
-            withProbeStore(
-                document = document,
-                chapterId = chapterId,
-                privateJournalRoot = provider.privateJournalRoot,
-                privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
-            ) { store -> store.artifactStatus() }
-        } else {
-            null
+        val read = ChapterStoreOpener.readDurableChapter(
+            document.parent,
+            document.fileName,
+            provider.privateJournalRoot,
+            provider.privateJournalIdentity(source, mangaTitle, document.fileName),
+        )
+        // Unsupported future schemas count as ABSENT for planning (bytes are
+        // preserved untouched); corrupt evidence resolves null rather than
+        // masquerading as a cleanly new chapter.
+        val state = (read as? DurableChapterRead.Supported)?.state ?: return null
+        return ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { _ ->
+            state.activeRunRecord
         }
     }
 
@@ -133,7 +151,7 @@ internal class DurableChapterStatusResolver(
         // The document location cannot legitimately move mid-session, and
         // one reader entry used to walk the SAF tree for it 5-7 times
         // (60-210ms each on device). Memoize positive directory/name pairs;
-        // callers probe the artifact manifest before opening.
+        // callers read the durable chapter state before projecting.
         val memoKey = DurableDocumentKey(chapterName, scanlator, mangaTitle, source.id)
         durableDocumentCache[memoKey]?.let { return it }
         val entryStage = ReaderEntryTrace.begin("translation.findDocument", null)
@@ -149,86 +167,44 @@ internal class DurableChapterStatusResolver(
     }
 
     /**
-     * Read-through durable store access for terminal snapshot reconstruction (registry miss
+     * Read-through durable access for terminal snapshot reconstruction (registry miss
      * after process death or eviction). Prefers
-     * the active store; otherwise opens the durable document through the
-     * bounded probe registry and releases it afterwards. No result is cached
-     * here — the caller projects and discards, keeping memory bounded.
+     * the active store; otherwise reads the durable document publication-free
+     * through the opener and hands the caller the pure durable state. No
+     * result is cached here — the caller projects and discards, keeping
+     * memory bounded. No durable truth can advance on this path, so no
+     * status-cache wipe fires.
      */
-    internal suspend fun <T> withDurableStore(
+    internal suspend fun <T> withDurableRead(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-        block: suspend (ChapterTranslationStore) -> T,
+        block: suspend (DurableChapterAccess) -> T,
     ): T? {
         // An active store is already the reader's authority. Return it before
         // resolving the source or walking storage so the in-memory active
-        // path remains probe-free during progress projection.
+        // path remains I/O-free during progress projection.
         if (chapterId != null) {
-            activeStores.get(chapterId)?.let { return block(it) }
+            activeStores.get(chapterId)?.let { return block(DurableChapterAccess.ActiveStore(it)) }
         }
         val source = sourceManager.get(sourceId) ?: return null
         val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
             ?: return null
-        if (!ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName).exists) {
-            return null
-        }
-        return withProbeStore(
-            document = document,
-            chapterId = chapterId,
-            privateJournalRoot = provider.privateJournalRoot,
-            privateJournalIdentity = provider.privateJournalIdentity(source, mangaTitle, document.fileName),
-            block = block,
-        )
-    }
-
-    private suspend fun <T> withProbeStore(
-        document: TranslationDocument,
-        chapterId: Long?,
-        privateJournalRoot: java.io.File,
-        privateJournalIdentity: String,
-        block: suspend (ChapterTranslationStore) -> T,
-    ): T? {
-        if (chapterId != null) {
-            activeStores.get(chapterId)?.let { return block(it) }
-        }
-        val result = activeStores.getOrCreateProbe(document.registryKey) {
-            ChapterTranslationStore.openArtifactSuspend(
+        return when (
+            val read = ChapterStoreOpener.readDurableChapter(
                 document.parent,
                 document.fileName,
-                privateJournalRoot,
-                privateJournalIdentity,
+                provider.privateJournalRoot,
+                provider.privateJournalIdentity(source, mangaTitle, document.fileName),
             )
-        } ?: return null
-        // A newly created probe can recover or seed journal-backed state while
-        // it opens; statuses cached before that transition are stale. Reused probes already had their wipe when
-        // they were created — wiping the whole cache again on every probe
-        // pass reduced the cache to a single surviving entry whenever the
-        // chapter list resolved statuses sequentially.
-        if (result.created) {
-            durableStatusCache.clear()
-        }
-        val statusWriter = ActiveChapterStoreRegistry.registerWriter(
-            chapterId = chapterId,
-            chapterKey = document.registryKey,
-            origin = eu.kanade.translation.persistence.chapter.WriterOrigin.STATUS_RESOLVER,
-        )
-        val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
-        return try {
-            block(result.store)
-        } finally {
-            statusWriter.close()
-            probeStage.end()
-            if (result.owned && activeStores.releaseProbe(document.registryKey, result.store)) {
-                val flushStage = ReaderEntryTrace.begin("probe.closeAndFlush", chapterId)
-                try {
-                    result.store.closeAndFlush()
-                } finally {
-                    flushStage.end()
-                }
-            }
+        ) {
+            is DurableChapterRead.Supported -> block(DurableChapterAccess.DurableRead(read.state))
+            is DurableChapterRead.Missing,
+            is DurableChapterRead.Unsupported,
+            is DurableChapterRead.Corrupt,
+            -> null
         }
     }
 }
