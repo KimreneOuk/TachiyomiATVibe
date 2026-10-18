@@ -20,6 +20,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -118,6 +119,20 @@ class WriteTimeDigestsTest {
     private fun orderedPages(vararg pageKeys: String): List<PageKey> =
         pageKeys.mapIndexed { index, pageKey -> pageKey to index }
 
+    /**
+     * Run-wide configuration identity the fake lane stamps at OCR time,
+     * mirroring production: the OCR/detection configuration fingerprints are
+     * constants of the RUN (model + language), never derived from source
+     * bytes.
+     */
+    private val harnessDetectionFingerprint = hex64("detection-harness-model-v1")
+    private val harnessOcrFingerprint = hex64("ocr-harness-model-v1")
+
+    private fun expectedFingerprints() = BatchExpectedFingerprints(
+        detection = harnessDetectionFingerprint,
+        ocr = harnessOcrFingerprint,
+    )
+
     private fun sourcePairs(pages: List<PageKey>, tag: String = "source"): List<Pair<String, String>> =
         pages.map { (pageKey, _) -> pageKey to hex64("$tag-$pageKey") }
 
@@ -134,6 +149,7 @@ class WriteTimeDigestsTest {
         orderedSourcePairs = sourcePairsOverride ?: sourcePairs(pages),
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         freshSourceShaByPageKey = freshSourceShaByPageKey,
+        expectedBatchFingerprints = expectedFingerprints(),
     )
 
     /**
@@ -164,8 +180,10 @@ class WriteTimeDigestsTest {
             val currentSha = sourceShaFor(pageKey)
             val resultPage = ocrPage(pageKey, textFor(pageKey)).apply {
                 sourceFingerprint = currentSha
-                detectionFingerprint = hex64("detection-$currentSha")
-                ocrFingerprint = hex64("ocr-$currentSha")
+                // Configuration identity is run-wide: same model + language
+                // for every page, independent of the per-page source bytes.
+                detectionFingerprint = harnessDetectionFingerprint
+                ocrFingerprint = harnessOcrFingerprint
             }
             store.mergeOcr(
                 OcrStagePatch(

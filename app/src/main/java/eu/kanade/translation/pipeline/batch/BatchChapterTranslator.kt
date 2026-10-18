@@ -855,6 +855,7 @@ internal class BatchChapterTranslator(
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
                                 ),
+                                expectedBatchFingerprints = expectedBatchFingerprints,
                                 orderedSourcePairs = runIdentitySourcePairs,
                                 freshSourceShaByPageKey = { pageKey -> sourceFingerprints.get(pageKey) },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
@@ -902,6 +903,7 @@ internal class BatchChapterTranslator(
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
                                 ),
+                                expectedBatchFingerprints = expectedBatchFingerprints,
                                 orderedSourcePairs = runIdentitySourcePairs,
                                 freshSourceShaByPageKey = { pageKey -> sourceFingerprints.get(pageKey) },
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },

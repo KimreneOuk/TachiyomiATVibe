@@ -23,6 +23,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -117,6 +118,7 @@ class OcrPreflightCoordinatorTest {
         worker: FakePreflightOcrWorker,
         pages: List<PageKey>,
         sourcePairsOverride: List<Pair<String, String>>? = null,
+        expectedFingerprints: BatchExpectedFingerprints? = null,
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
@@ -124,6 +126,19 @@ class OcrPreflightCoordinatorTest {
         orderedSourcePairs = sourcePairsOverride ?: sourcePairs(pages),
         freshSourceShaByPageKey = { pageKey -> worker.sourceShaFor(pageKey) },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+        // Default: the run's expected configuration identity mirrors the fake
+        // lane's stamping (run-wide, derived from the first page's source
+        // identity). Tests pass an explicit override to prove configuration
+        // misses. Explicit `unknown` (an all-null expectation) is also a
+        // first-class input — unknown means miss.
+        expectedBatchFingerprints = expectedFingerprints
+            ?: pages.firstOrNull()?.first?.let { firstPage ->
+                val sha = worker.sourceShaFor(firstPage)
+                BatchExpectedFingerprints(
+                    detection = hex64("detection-$sha"),
+                    ocr = hex64("ocr-$sha"),
+                )
+            },
     )
 
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */
@@ -356,6 +371,84 @@ class OcrPreflightCoordinatorTest {
         val record = runRecord(resumedStore).shouldNotBeNull()
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
         record.ocrCorpusFingerprint.shouldNotBeNull() shouldNotBe firstCorpus
+    }
+
+    @Test
+    fun `changed ocr configuration re-ocres a checkpointed page with a typed config mismatch`() = runTest {
+        val store = lazyStore()
+        store.preRegisterPages(listOf("p1", "p2"))
+        val pages = orderedPages("p1", "p2")
+        coordinator(store, FakePreflightOcrWorker(store), pages)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // Same source bytes, same run configuration snapshot — but the run's
+        // expected OCR/detection configuration identity changed (a different
+        // OCR/detection model or OCR language). The checkpointed pages were
+        // produced under another configuration: they MUST re-run, typed.
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore)
+        val changedConfig = BatchExpectedFingerprints(
+            detection = hex64("detection-model-v2"),
+            ocr = hex64("ocr-model-v2"),
+        )
+
+        coordinator(resumedStore, resumedWorker, pages, expectedFingerprints = changedConfig)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumedWorker.ocrPages shouldContainExactly listOf("p1", "p2")
+        val record = runRecord(resumedStore).shouldNotBeNull()
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_ADOPT_FAILED] shouldBe 2
+        record.phaseCounters[CheckpointAdoptionFailure.CONFIG_MISMATCH.counterKey] shouldBe 2
+    }
+
+    @Test
+    fun `changed detection identity alone re-ocres a checkpointed page`() = runTest {
+        val store = lazyStore()
+        store.preRegisterPages(listOf("p1"))
+        val pages = orderedPages("p1")
+        coordinator(store, FakePreflightOcrWorker(store), pages)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore)
+        val firstExpected = BatchExpectedFingerprints(
+            detection = hex64("detection-${hex64("source-p1")}"),
+            ocr = hex64("ocr-${hex64("source-p1")}"),
+        )
+        // The OCR configuration still matches; only the detection basis
+        // changed. Detection identity is a required reuse input.
+        val detectionOnly = firstExpected.copy(detection = hex64("detection-model-v2"))
+
+        coordinator(resumedStore, resumedWorker, pages, expectedFingerprints = detectionOnly)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumedWorker.ocrPages shouldContainExactly listOf("p1")
+        val record = runRecord(resumedStore).shouldNotBeNull()
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
+        record.phaseCounters[CheckpointAdoptionFailure.CONFIG_MISMATCH.counterKey] shouldBe 1
+    }
+
+    @Test
+    fun `unknown configuration identity never reuses a checkpointed page`() = runTest {
+        val store = lazyStore()
+        store.preRegisterPages(listOf("p1"))
+        val pages = orderedPages("p1")
+        coordinator(store, FakePreflightOcrWorker(store), pages)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // The run cannot prove its own configuration identity (no expected
+        // fingerprints supplied): reuse fails closed — unknown means miss.
+        val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore)
+
+        coordinator(resumedStore, resumedWorker, pages, expectedFingerprints = BatchExpectedFingerprints())
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumedWorker.ocrPages shouldContainExactly listOf("p1")
+        val record = runRecord(resumedStore).shouldNotBeNull()
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
+        record.phaseCounters[CheckpointAdoptionFailure.CONFIG_UNKNOWN.counterKey] shouldBe 1
     }
 
     @Test

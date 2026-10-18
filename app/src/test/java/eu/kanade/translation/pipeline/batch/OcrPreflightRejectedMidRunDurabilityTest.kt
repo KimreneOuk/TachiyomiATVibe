@@ -23,6 +23,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -138,6 +139,12 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         orderedSourcePairs = sourcePairs(pages),
         freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+        expectedBatchFingerprints = pages.firstOrNull()?.first?.let { firstPage ->
+            BatchExpectedFingerprints(
+                detection = hex64("detection-${hex64("source-$firstPage")}"),
+                ocr = hex64("ocr-${hex64("source-$firstPage")}"),
+            )
+        },
     )
 
     /**

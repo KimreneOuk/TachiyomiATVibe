@@ -56,6 +56,7 @@ import eu.kanade.translation.pipeline.batch.envelope.ReplanResult
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
@@ -130,6 +131,22 @@ internal enum class CheckpointAdoptionFailure(val counterKey: String) {
 
     /** The checkpoint's OCR page-snapshot bundle is unreadable. */
     BUNDLE_MISSING("ocrAdoptBundleMissing"),
+
+    /**
+     * The run cannot prove its own OCR/detection configuration identity
+     * (no expected fingerprints supplied, or the required field is absent),
+     * so a stored checkpoint can never be proven current. Fail closed:
+     * the page re-runs OCR.
+     */
+    CONFIG_UNKNOWN("ocrAdoptConfigUnknown"),
+
+    /**
+     * The checkpoint's recorded OCR/detection configuration identity
+     * differs from the current run's expected identity (changed OCR or
+     * detection model, source language, or reading-order basis). The
+     * checkpointed content was produced under a different configuration.
+     */
+    CONFIG_MISMATCH("ocrAdoptConfigMismatch"),
 }
 
 /** Typed outcome of the checkpoint-reuse probe for one page. */
@@ -225,6 +242,17 @@ internal class ChapterProfileBatchCoordinator(
     private val pageTraceRegistry: BatchPageTraceRegistry? = null,
     /** Lazily observes current source bytes at checkpoint admission/reuse sites. */
     private val freshSourceShaByPageKey: suspend (String) -> String? = { null },
+    /**
+     * The current run's expected stage configuration fingerprints
+     * ([eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints], as
+     * derived once per dispatch by `PageDecode.batchExpectedFingerprints` and
+     * stamped onto pages at OCR time). The OCR checkpoint-reuse probe
+     * requires the recorded `ocrFingerprint` and `detectionFingerprint` to
+     * equal these expectations; `null` (or a null `ocr`/`detection` field)
+     * means the configuration identity is UNKNOWN and reuse fails closed
+     * ([CheckpointAdoptionFailure.CONFIG_UNKNOWN]).
+     */
+    private val expectedBatchFingerprints: BatchExpectedFingerprints? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -311,6 +339,7 @@ internal class ChapterProfileBatchCoordinator(
             },
             admissionSourceSha = { pageKey -> admissionSourceSha(pageKey) },
             orientationOf = { snapshot -> orientationOf(snapshot) },
+            expectedBatchFingerprints = expectedBatchFingerprints,
             resumeFinalizeOrComplete = { recordArtifact, prior, fingerprint, digest, pages ->
                 resumeFinalizeOrComplete(recordArtifact, prior, fingerprint, digest, pages)
             },

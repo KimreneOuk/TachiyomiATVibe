@@ -53,6 +53,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -137,6 +138,10 @@ class ProfileEnvelopeDispatchTest {
 
     private fun ocrPage(pageKey: String, text: String) = ocrPage(pageKey, listOf(block(text)))
 
+    /** Run-wide configuration identity the fake lane stamps at OCR time. */
+    private val harnessDetectionFingerprint = hex64("detection-harness-model-v1")
+    private val harnessOcrFingerprint = hex64("ocr-harness-model-v1")
+
     private fun ocrPage(pageKey: String, blocks: List<TranslationBlock>) = PageTranslation(
         sourceFileName = pageKey,
         blocks = blocks.toMutableList(),
@@ -146,8 +151,8 @@ class ProfileEnvelopeDispatchTest {
         ocrStatus = StageStatus.READY,
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
+        detectionFingerprint = harnessDetectionFingerprint,
+        ocrFingerprint = harnessOcrFingerprint,
         inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
@@ -201,6 +206,10 @@ class ProfileEnvelopeDispatchTest {
         analysisChunkRunner = runner,
         textTranslator = translator,
         translationSublimitGate = gate,
+        expectedBatchFingerprints = BatchExpectedFingerprints(
+            detection = harnessDetectionFingerprint,
+            ocr = harnessOcrFingerprint,
+        ),
     )
 
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */

@@ -7,11 +7,13 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
+import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CheckpointOcrResult
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -49,6 +51,12 @@ internal class PreflightWorkerContext(
     ) -> ChapterRunRecord,
     val admissionSourceSha: suspend (String) -> String?,
     val orientationOf: (ChapterTranslationStore.PageSnapshot) -> String?,
+    /**
+     * The current run's expected stage configuration fingerprints; `null`
+     * (or a null `ocr`/`detection` field) is UNKNOWN and fails checkpoint
+     * reuse closed. See [checkpointConfigIdentityFailure].
+     */
+    val expectedBatchFingerprints: BatchExpectedFingerprints?,
     val resumeFinalizeOrComplete: suspend (
         ChapterArtifactEngine,
         ChapterRunRecord?,
@@ -257,6 +265,14 @@ internal class PreflightWorker(
         val admissionSha = context.admissionSourceSha(pageKey)
         if (admissionSha == null || read.checkpoint.sourceIdentity.sha256 != admissionSha) {
             return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SHA_MISMATCH)
+        }
+        // Configuration identity: source bytes alone do not prove the
+        // checkpointed OCR was produced the way THIS run would produce it.
+        // The OCR/detection model, source language and reading-order basis
+        // must match the run's frozen expectations; anything unprovable is a
+        // miss (fail closed), never a silent reuse across configurations.
+        checkpointConfigIdentityFailure(read.checkpoint, context.expectedBatchFingerprints)?.let {
+            return CheckpointReuse.Unavailable(it)
         }
         return CheckpointReuse.Reusable(read.checkpoint.ocrContentFingerprint)
     }
@@ -690,4 +706,48 @@ internal class PreflightWorker(
             baseCounters = finalCounters,
         )
     }
+}
+
+/**
+ * The exact configuration-identity admission for OCR checkpoint reuse
+ * (P0A): the single owner of the "was this checkpoint produced under the
+ * configuration THIS run would use?" predicate.
+ *
+ * Inputs, in fixed order:
+ *  1. OCR configuration — the checkpoint's `ocrFingerprint` must equal the
+ *     run's expected OCR identity
+ *     (`StageFingerprints.configuration(OCR, ocrModel, sourceLanguage)` as
+ *     derived by `PageDecode.batchExpectedFingerprints` and stamped onto the
+ *     page at OCR time). This covers the selected OCR model AND the OCR
+ *     source language in the exact spelling that was actually recorded.
+ *  2. Detection configuration — the checkpoint's `detectionFingerprint`
+ *     must equal the run's expected detection identity
+ *     (`StageFingerprints.configuration(DETECTION, ocrModel,
+ *     readingOrder)`). The null checkpoint value means detection was
+ *     legitimately skipped when the checkpoint was produced; against a run
+ *     that expects detection, that is a different OCR provenance and a miss.
+ *
+ * `unknown means miss`: a null [expected] fingerprint set, or a null
+ * `ocr`/`detection` expectation, is UNKNOWN — reuse fails closed with
+ * [CheckpointAdoptionFailure.CONFIG_UNKNOWN]. This is deliberately stricter
+ * than `PageWorkPlanner`'s `fingerprintMatches` (absent expectations never
+ * invalidate): checkpoint reuse re-admits PAID work across runs, so an
+ * unprovable identity must never pass.
+ *
+ * Returns null when the configuration identity is proven equal (reuse may
+ * proceed); otherwise the typed miss reason.
+ */
+internal fun checkpointConfigIdentityFailure(
+    checkpoint: PageOcrCheckpoint,
+    expected: BatchExpectedFingerprints?,
+): CheckpointAdoptionFailure? {
+    val expectedOcr = expected?.ocr ?: return CheckpointAdoptionFailure.CONFIG_UNKNOWN
+    if (checkpoint.ocrFingerprint != expectedOcr) {
+        return CheckpointAdoptionFailure.CONFIG_MISMATCH
+    }
+    val expectedDetection = expected.detection ?: return CheckpointAdoptionFailure.CONFIG_UNKNOWN
+    if (checkpoint.detectionFingerprint != expectedDetection) {
+        return CheckpointAdoptionFailure.CONFIG_MISMATCH
+    }
+    return null
 }

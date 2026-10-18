@@ -32,6 +32,7 @@ import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.NativeLaneWorker
 import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
 import eu.kanade.translation.pipeline.batch.PageKey
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -120,6 +121,10 @@ class BatchTelemetryTest {
     private fun sourcePairs(pages: List<PageKey>): List<Pair<String, String>> =
         pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") }
 
+    /** Run-wide configuration identity the fake lane stamps at OCR time. */
+    private val HARNESS_DETECTION_FINGERPRINT = hex64("detection-harness-model-v1")
+    private val HARNESS_OCR_FINGERPRINT = hex64("ocr-harness-model-v1")
+
     private inner class FakeWorker(private val store: ChapterTranslationStore) : NativeLaneWorker {
         var skipPage: String? = null
 
@@ -131,8 +136,10 @@ class BatchTelemetryTest {
             val currentSha = hex64("source-$pageKey")
             val resultPage = ocrPage(pageKey, "text-$pageKey").apply {
                 sourceFingerprint = currentSha
-                detectionFingerprint = hex64("detection-$currentSha")
-                ocrFingerprint = hex64("ocr-$currentSha")
+                // Configuration identity is run-wide (model + language), never
+                // derived from per-page source bytes.
+                detectionFingerprint = HARNESS_DETECTION_FINGERPRINT
+                ocrFingerprint = HARNESS_OCR_FINGERPRINT
             }
             store.mergeOcr(
                 OcrStagePatch(
@@ -238,6 +245,10 @@ class BatchTelemetryTest {
             ),
             orderedSourcePairs = sourcePairs(pages),
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+            expectedBatchFingerprints = BatchExpectedFingerprints(
+                detection = HARNESS_DETECTION_FINGERPRINT,
+                ocr = HARNESS_OCR_FINGERPRINT,
+            ),
         )
 
         // Pass 1: Fresh OCR

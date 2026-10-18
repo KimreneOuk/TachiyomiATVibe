@@ -30,6 +30,7 @@ import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -101,8 +102,8 @@ class StandardPipelineCoordinatorTest {
         ocrStatus = StageStatus.READY,
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         sourceFingerprint = hex64(sourceContent),
-        detectionFingerprint = hex64("detection-$sourceContent"),
-        ocrFingerprint = hex64("ocr-$sourceContent"),
+        detectionFingerprint = HARNESS_DETECTION_FINGERPRINT,
+        ocrFingerprint = HARNESS_OCR_FINGERPRINT,
         // finalizePostOcrStage parity: a blank-text page's render is SKIPPED,
         // and its inpaint is SKIPPED only WITHOUT mask boxes — a masked
         // blank-text page keeps inpaint PENDING for the inpaint drain.
@@ -144,10 +145,14 @@ class StandardPipelineCoordinatorTest {
         renderStatus = StageStatus.SKIPPED,
         inpaintStatus = StageStatus.SKIPPED,
         sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
+        detectionFingerprint = HARNESS_DETECTION_FINGERPRINT,
+        ocrFingerprint = HARNESS_OCR_FINGERPRINT,
         inpaintMaskBoxes = emptyList(),
     )
+
+    /** Run-wide configuration identity the fake lane stamps at OCR time. */
+    private val HARNESS_DETECTION_FINGERPRINT = hex64("detection-harness-model-v1")
+    private val HARNESS_OCR_FINGERPRINT = hex64("ocr-harness-model-v1")
 
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
@@ -440,14 +445,18 @@ class StandardPipelineCoordinatorTest {
             orderedSourcePairs = sourcePairsOverride ?: pages.map { (pageKey, _) ->
                 pageKey to hex64("source-$pageKey")
             },
-            freshSourceShaByPageKey = sourceShaByPageKey,
-            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-            textTranslator = seam.translator,
-            overlapScheduler = overlapScheduler,
-            renderJoin = null,
-            standardLane = true,
-            standardTranslateOutcome = { ref -> seam.translateOutcome(ref) },
-        )
+             freshSourceShaByPageKey = sourceShaByPageKey,
+             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+             textTranslator = seam.translator,
+             overlapScheduler = overlapScheduler,
+             renderJoin = null,
+             standardLane = true,
+             standardTranslateOutcome = { ref -> seam.translateOutcome(ref) },
+             expectedBatchFingerprints = BatchExpectedFingerprints(
+                 detection = HARNESS_DETECTION_FINGERPRINT,
+                 ocr = HARNESS_OCR_FINGERPRINT,
+             ),
+         )
     }
 
     // ------------------------------------------------------------------
