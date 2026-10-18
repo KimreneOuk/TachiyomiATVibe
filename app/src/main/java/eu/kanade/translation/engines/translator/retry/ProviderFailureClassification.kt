@@ -176,6 +176,13 @@ fun classifyProviderFailure(
             kind = ProviderFailureKind.CONFIGURATION
             retryability = ProviderFailureRetryability.TERMINAL
         }
+        error.javaClass.simpleName == "GeminiEmptyResponseException" ||
+            message.contains("empty response") ||
+            message.contains("returned no usable text") ||
+            message.contains("returned no response candidate") -> {
+            kind = ProviderFailureKind.PROTOCOL
+            retryability = ProviderFailureRetryability.RETRY_NOW
+        }
         else -> {
             kind = ProviderFailureKind.PROTOCOL
             retryability = ProviderFailureRetryability.TERMINAL

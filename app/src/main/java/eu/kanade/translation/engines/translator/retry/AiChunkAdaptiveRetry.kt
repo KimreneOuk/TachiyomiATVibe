@@ -427,6 +427,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
                 val classified = classifyFailure(e, clock, envelope.identity)
                 val failure = if (emptyResponseCapExhausted && e is GeminiEmptyResponseException) {
                     classified.copy(
+                        retryability = ProviderFailureRetryability.TERMINAL,
                         safeSummary = "Gemini empty-response reissue cap exhausted " +
                             "($emptyResponseReissues/$MAX_EMPTY_GEMINI_RESPONSE_REISSUES)",
                     )

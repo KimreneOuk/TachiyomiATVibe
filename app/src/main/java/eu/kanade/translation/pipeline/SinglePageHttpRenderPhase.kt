@@ -566,7 +566,7 @@ internal class SinglePageHttpRenderPhase(
                             reason = failure.safeSummary,
                         )
                     }
-                    logcat(LogPriority.ERROR) {
+                    logcat(LogPriority.ERROR, e) {
                         "Failed to translate text for single page pageHash=${ShortHash.hash(pageKey)}: " +
                             "kind=${failure.kind} retryable=$retryable"
                     }

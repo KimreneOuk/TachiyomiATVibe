@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -255,7 +256,8 @@ class ReaderTranslationQueue(
                 // A stalled tap performed no work, so once the lane clears an
                 // explicit tap is a new attempt, not a duplicate of the refusal.
                 val stalledRetryable = done is SinglePageOutcome.Stalled && explicit
-                if (done != null && !force && !pausedEligible && !stalledRetryable) {
+                val failedRetryable = done is SinglePageOutcome.Failed && explicit
+                if (done != null && !force && !pausedEligible && !stalledRetryable && !failedRetryable) {
                     ReaderSubmission.Existing(done)
                 } else if (explicit && explicitCountLocked() >= EXPLICIT_BACKLOG_LIMIT) {
                     capacityRejection()
@@ -516,7 +518,11 @@ class ReaderTranslationQueue(
                 if (wasQueued) {
                     publishLocked(
                         demand,
-                        SinglePageOutcome.Rejected(PageWriteOrigin.MANUAL, PageRejectionKind.OTHER, "cancelled before execution"),
+                        SinglePageOutcome.Rejected(
+                            if (demand.explicit) PageWriteOrigin.MANUAL else PageWriteOrigin.AUTO,
+                            PageRejectionKind.OTHER,
+                            "cancelled before execution",
+                        ),
                     )
                 }
             }
@@ -580,7 +586,14 @@ class ReaderTranslationQueue(
             val b = bound?.takeIf { !closed && it.accepting } ?: return
             val result = mutableListOf<Pair<Job, Demand>>()
             var automatic = liveWorkers.values.count { !it.explicit }
-            pending.values.forEach { demand ->
+            val sortedDemands = pending.values.sortedWith(
+                compareBy(
+                    { !it.explicit },
+                    { it.priority.get() != ReaderPriority.CURRENT_PAGE },
+                    { it.work.readerPageIndex },
+                ),
+            )
+            sortedDemands.forEach { demand ->
                 if (demand.binding !== b || demand.state != State.QUEUED || demand.job != null) return@forEach
                 if (demand.deferredAtEvent >= event || demand.retryAt > now) return@forEach
                 if (liveWorkers.values.any { it.work.pageKey == demand.work.pageKey }) return@forEach
@@ -625,7 +638,7 @@ class ReaderTranslationQueue(
                     publishLocked(
                         demand,
                         SinglePageOutcome.Rejected(
-                            PageWriteOrigin.MANUAL,
+                            if (demand.explicit) PageWriteOrigin.MANUAL else PageWriteOrigin.AUTO,
                             PageRejectionKind.OTHER,
                             "cancelled before execution",
                         ),
@@ -665,6 +678,9 @@ class ReaderTranslationQueue(
     }
 
     private suspend fun runDemand(demand: Demand, work: ReaderPageWork) {
+        if (!demand.explicit && demand.priority.get() == ReaderPriority.PREFETCH_NEXT) {
+            yield()
+        }
         val permit = localPermit.takeIf { demand.binding.computeClass == TranslatorComputeClass.LOCAL_COMPUTE }
         var acquired = false
         val leaseWaitSpan = demand.trace.run.beginStage(TranslationTraceStage.LEASE_WAIT)
@@ -711,7 +727,7 @@ class ReaderTranslationQueue(
                 pageKey = work.pageKey,
                 force = demand.force,
                 stageListener = { _, stage -> onStageEvent(demand, stage) },
-                origin = PageWriteOrigin.MANUAL,
+                origin = if (demand.explicit) PageWriteOrigin.MANUAL else PageWriteOrigin.AUTO,
                 readerStreamFn = work.streamFn,
                 readerPriority = {
                     if (demand.priority.get() == ReaderPriority.CURRENT_PAGE) {

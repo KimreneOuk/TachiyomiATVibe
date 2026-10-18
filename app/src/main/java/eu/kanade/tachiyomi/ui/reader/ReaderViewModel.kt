@@ -844,24 +844,6 @@ class ReaderViewModel @JvmOverloads constructor(
 
         //  ANR fix: resolve the chapter translation status BEFORE the
         // withUIContext block. The query falls through to the durable store
-        // over SAF/UniFile (O(pages) FUSE/binder round-trips — 5-9s on a
-        // 68-page translated chapter) and must never execute on Main. All
-        // loadChapter call sites already run on IO (init: withIOContext,
-        // loadNewChapter: launchIO, loadAdjacent: withIOContext). Same value,
-        // same downstream assignment — only the thread changed.
-        val statusStage = ReaderEntryTrace.begin("vm.translationStatus", chapter.chapter.id)
-        val translationStatus = this@ReaderViewModel.manga?.let { m ->
-            val ch = newChapters.currChapter.chapter
-            translationManager.getChapterTranslationStatus(
-                ch.id!!,
-                ch.name,
-                ch.scanlator,
-                m.title,
-                m.source,
-            )
-        } ?: Translation.State.NOT_TRANSLATED
-        statusStage.end()
-
         val stateStage = ReaderEntryTrace.begin("vm.stateUpdate", chapter.chapter.id)
         withUIContext {
             mutableState.update {
@@ -874,34 +856,53 @@ class ReaderViewModel @JvmOverloads constructor(
                 it.copy(
                     viewerChapters = newChapters,
                     bookmarked = newChapters.currChapter.chapter.bookmark,
-                    translationState = translationStatus,
                 )
             }
         }
         stateStage.end()
-        observeLiveTranslationStore()
-        if (manga != null) observeTranslationState()
 
-        // TachiyomiAT: kick auto-translate for the new chapter's landing page.
-        // handleAutoTranslation() was previously only called from onPageSelected()
-        // (viewer-driven), but the initial/landing page after loadChapter does
-        // not always produce an onPageSelected event — e.g. opening the reader
-        // directly on a chapter, or jumping via the prev/next toolbar buttons.
-        // The result: the landing page sat untranslated until the user scrolled.
-        // This central kick covers all loadChapter paths (initial open, prev/next,
-        // cross-chapter scroll) and runs AFTER cancelTranslationForChapter() so
-        // the previous chapter's work has been wound down. The viewer-driven
-        // onPageSelected kick (below in onPageSelected) stays as a defensive
-        // second kick; translatePage()'s dedup makes the double-kick a no-op.
-        if (translationPreferences.translationEnabled().get() &&
-            translationPreferences.autoTranslate().get()
-        ) {
-            val pages = chapter.pages
-            val landingIndex = chapter.requestedPage.coerceAtLeast(0)
-                .coerceAtMost((pages?.lastIndex ?: 0))
-            val landingPage = pages?.getOrNull(landingIndex) as? ReaderPage
-            if (landingPage != null) {
-                handleAutoTranslation(landingPage)
+        // Resolve chapter translation status asynchronously so reader entry and page rendering
+        // are never blocked by heavy SAF / UniFile I/O.
+        viewModelScope.launchIO {
+            val statusStage = ReaderEntryTrace.begin("vm.translationStatus", chapter.chapter.id)
+            val translationStatus = this@ReaderViewModel.manga?.let { m ->
+                val ch = newChapters.currChapter.chapter
+                translationManager.getChapterTranslationStatus(
+                    ch.id!!,
+                    ch.name,
+                    ch.scanlator,
+                    m.title,
+                    m.source,
+                )
+            } ?: Translation.State.NOT_TRANSLATED
+            statusStage.end()
+
+            withUIContext {
+                mutableState.update {
+                    if (it.viewerChapters === newChapters) {
+                        it.copy(translationState = translationStatus)
+                    } else {
+                        it
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            observeLiveTranslationStore()
+            if (manga != null) observeTranslationState()
+
+            // TachiyomiAT: kick auto-translate for the new chapter's landing page.
+            if (translationPreferences.translationEnabled().get() &&
+                translationPreferences.autoTranslate().get()
+            ) {
+                val pages = chapter.pages
+                val landingIndex = chapter.requestedPage.coerceAtLeast(0)
+                    .coerceAtMost((pages?.lastIndex ?: 0))
+                val landingPage = pages?.getOrNull(landingIndex) as? ReaderPage
+                if (landingPage != null) {
+                    handleAutoTranslation(landingPage)
+                }
             }
         }
 
