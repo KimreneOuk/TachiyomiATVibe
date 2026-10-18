@@ -44,6 +44,7 @@ import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
 import io.kotest.matchers.nulls.shouldBeNull
@@ -114,8 +115,11 @@ class StrandedPageTerminalRoutingTest {
         ocrStatus = StageStatus.READY,
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
+        // Run-wide configuration identity stamps (the P0A reuse contract):
+        // every page's OCR carries the SAME run configuration identity, so a
+        // run-wide expected fingerprint set can prove checkpoint reuse.
+        detectionFingerprint = hex64("detection-run-v1"),
+        ocrFingerprint = hex64("ocr-run-v1"),
         inpaintMaskBoxes = if (blocks.isEmpty()) {
             emptyList()
         } else {
@@ -331,6 +335,12 @@ class StrandedPageTerminalRoutingTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+        // The run's expected configuration identity (P0A): checkpoint
+        // adoption fails closed without it — unknown means miss.
+        expectedBatchFingerprints = BatchExpectedFingerprints(
+            detection = hex64("detection-run-v1"),
+            ocr = hex64("ocr-run-v1"),
+        ),
         analysisChunkRunner = FakeAnalyzer(),
         textTranslator = translator,
         translationSublimitGate = BatchRequestSublimitGate(),

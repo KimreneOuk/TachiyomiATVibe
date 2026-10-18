@@ -40,10 +40,9 @@ import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
+
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
 import eu.kanade.translation.persistence.chapter.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpus
 import eu.kanade.translation.pipeline.batch.analysis.AnalysisCorpusEntry
@@ -126,11 +125,12 @@ internal enum class CheckpointAdoptionFailure(val counterKey: String) {
     /** The BATCH OCR stage lease could not be acquired for the hydration merge. */
     LEASE_DENIED("ocrAdoptLeaseDenied"),
 
-    /** The identity-fenced `mergeOcr` rejected the hydration merge. */
+    /**
+     * The identity-fenced memory-only hydration operation rejected the
+     * adoption (stale pointer/fences, unreadable or fingerprint-mismatched
+     * or missing sidecar, source identity drift, or newer live OCR content).
+     */
     MERGE_REJECTED("ocrAdoptMergeRejected"),
-
-    /** The checkpoint's OCR page-snapshot bundle is unreadable. */
-    BUNDLE_MISSING("ocrAdoptBundleMissing"),
 
     /**
      * The run cannot prove its own OCR/detection configuration identity
@@ -682,18 +682,14 @@ internal class ChapterProfileBatchCoordinator(
         // this to a tracker emission; the tracker flips the snapshot's batch
         // phase to REBUILDING and recomputes its store-derived counters.
         listener.envelopePlanStarted(orderedPages.size)
-        // The resume-hydration adoption below (adoptCheckpointSnapshot
-        // per pending page) used to rewrite the FULL manifest JSON once or more
-        // PER PAGE (~340 rewrites of a ~360KB document on a 206-page chapter,
-        // ~1.3s apart — a main-thread ANR contributor). Coalesce those manifest
-        // publications: inside the window each publication only stages the
-        // intended manifest (durable rewrite at most every 32 staged
-        // publications), and the try/finally guarantees the mandatory final
-        // flush before this function returns — on every early-return path — so
-        // the plan publication afterwards sees the fully adopted durable state
-        // and the façade equals the durable manifest. On any doubt the store
-        // flushes (fail-safe); correctness of the plan publish itself no longer
-        // depends on the window and its one-shot stale-manifest retry.
+        // Since P3C the resume-hydration adoption (adoptCheckpointSnapshot
+        // per pending page) is a MEMORY-ONLY store operation: it rewrites no
+        // manifest and stages no publications, so the coalescing window below
+        // is dormant for adoption. The begin/end bracket is retained because
+        // runtime removal of coalescing is a P4 cutover concern, coherent
+        // with the Engine coalescing machinery — the try/finally still
+        // guarantees the mandatory final flush on every early-return path,
+        // so the plan publication afterwards sees a fully consistent store.
         store.withArtifactEngineLocked { artifact ->
             artifact.beginManifestCoalescing()
         }
@@ -743,10 +739,12 @@ internal class ChapterProfileBatchCoordinator(
             // process death is a synthesized placeholder WITHOUT blocks — the
             // durable OCR content lives in the checkpoint's page-snapshot
             // sidecar (checkpoint CLOSE re-owns it and clears the candidate).
-            // Adopt it into the live store under the M1 lease+merge idiom so
-            // planning, revalidation, and commits all operate on
-            // real block state. Fresh in-session pages carry blocks and skip
-            // this entirely; committed/skipped/manual pages are never adopted.
+            // Restore it into the live store through the memory-only hydration
+            // operation under the BATCH OCR lease — no checkpoint, page
+            // payload, or manifest is rewritten for adoption — so planning,
+            // revalidation, and commits all operate on real block state.
+            // Fresh in-session pages carry blocks and skip this entirely;
+            // committed/skipped/manual pages are never adopted.
             val (effectiveSnapshot, effectivePage) = if (page.blocks.isEmpty()) {
                 val adopted = when (val outcome = adoptCheckpointSnapshot(artifact, entry.storagePageKey, snapshot)) {
                     is CheckpointAdoption.Adopted -> outcome.snapshot
@@ -1009,12 +1007,19 @@ internal class ChapterProfileBatchCoordinator(
 
     /**
      * Resume hydration for a synthesized (block-less) page: loads the page's
-     * durable OCR checkpoint snapshot sidecar and merges it into the live
-     * store under the standard BATCH OCR lease (M1 idiom), fenced by the
-     * placeholder page's identity. Returns [CheckpointAdoption.Adopted] with
-     * the post-merge page snapshot, or [CheckpointAdoption.Failed] with the
-     * TYPED reason — the caller defers the phase or re-runs the
-     * page (fail closed), never plans against fabricated content.
+     * durable OCR checkpoint snapshot sidecar and restores it into the live
+     * store through [ChapterTranslationStore.hydrateOcrFromCheckpoint] — a
+     * MEMORY-ONLY operation under the standard BATCH OCR lease. The saved
+     * checkpoint + snapshot are already manifest-referenced, so hydration
+     * rewrites neither of them and touches no manifest solely for adoption
+     * (the first real mutation opens/binds the candidate through the
+     * publication bridge). Admission mirrors the preflight reuse gate: the
+     * P0A configuration-identity predicate and the observed source identity
+     * must both prove the checkpoint before hydration. Returns
+     * [CheckpointAdoption.Adopted] with the post-merge page snapshot, or
+     * [CheckpointAdoption.Failed] with the TYPED reason — the caller defers
+     * the phase or re-runs the page (fail closed), never plans against
+     * fabricated content.
      */
     private suspend fun adoptCheckpointSnapshot(
         artifact: ChapterArtifactEngine,
@@ -1033,10 +1038,16 @@ internal class ChapterProfileBatchCoordinator(
             is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
-        val ocrSnapshot = store.withArtifactEngineLocked { engine ->
-            engine.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+        // Configuration identity (P0A single-owner predicate): source bytes
+        // alone do not prove the checkpointed OCR was produced the way THIS
+        // run would produce it — unknown means miss.
+        checkpointConfigIdentityFailure(checkpoint, expectedBatchFingerprints)?.let {
+            return CheckpointAdoption.Failed(it)
         }
-            ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.BUNDLE_MISSING)
+        val admissionSha = admissionSourceSha(pageKey)
+        if (admissionSha == null || checkpoint.sourceIdentity.sha256 != admissionSha) {
+            return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SHA_MISMATCH)
+        }
         val lease = when (
             val acquisition = pageTraceRegistry?.withLeaseWait(
                 pageKey = pageKey,
@@ -1050,19 +1061,20 @@ internal class ChapterProfileBatchCoordinator(
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.LEASE_DENIED)
         }
         try {
-            val outcome = store.mergeOcr(
-                OcrStagePatch(
-                    pageKey = pageKey,
-                    generation = before.generation,
-                    expectedPageVersion = before.pageVersion,
-                    expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                    ocrResult = ocrSnapshot,
-                    expectedLeaseToken = lease.token,
-                ),
-                description = "t924 envelope resume: adopt checkpointed OCR into the live store",
+            val outcome = store.hydrateOcrFromCheckpoint(
+                pageKey = pageKey,
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedLeaseToken = lease.token,
+                expectedCandidateGenerationId = before.candidateGenerationId,
+                expectedDependencyFingerprint = before.dependencyFingerprint,
+                expectedArtifactPageVersion = before.artifactPageVersion,
+                checkpointPointer = pointer,
+                observedSourceSha256 = admissionSha,
+                description = "t924 envelope resume: restore checkpointed OCR without republishing",
             )
             return when (outcome) {
-                is StagePatchResult.Accepted -> CheckpointAdoption.Adopted(store.snapshot(pageKey))
+                is StagePatchResult.Accepted -> CheckpointAdoption.Adopted(outcome.snapshot)
                 is StagePatchResult.Rejected -> {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT t924 checkpoint adoption rejected pageHash=${pageHash(pageKey)} " +

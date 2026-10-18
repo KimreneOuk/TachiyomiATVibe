@@ -1834,6 +1834,126 @@ class ChapterTranslationStore internal constructor(
     }
 
     /**
+     * Restores a page's saved OCR from its durable checkpoint into live
+     * memory WITHOUT republishing: the checkpoint and its page-snapshot
+     * sidecar are already manifest-referenced, so rebuilding the in-memory
+     * blocks writes no new checkpoint or page payload and no manifest solely
+     * for this operation. The checkpoint remains the durable recovery
+     * authority; the first REAL mutation after hydration opens/binds the
+     * candidate through the existing publication bridge.
+     *
+     * Shared by the single-page preflight reuse path and the chapter-resume
+     * envelope rebuild. Fences (no grace, mirroring the checkpoint path):
+     * store generation, page version, a HELD OCR lease whose token equals
+     * [expectedLeaseToken], the observed candidate generation / dependency
+     * fingerprint / artifact page version, and the CURRENT manifest
+     * checkpoint pointer — plus the checkpoint's own provenance: a complete
+     * source identity matching [observedSourceSha256], a readable snapshot
+     * bundle whose page-snapshot fingerprint AND OCR content fingerprint both
+     * equal the checkpoint's records. A live page that already carries
+     * different OCR blocks (newer work or user edits) is never overwritten;
+     * identical blocks short-circuit to an idempotent Accepted (repeated
+     * adoption is a no-op). A non-READY checkpointed outcome is refused as
+     * stale; every rejection leaves memory and durable state untouched.
+     */
+    suspend fun hydrateOcrFromCheckpoint(
+        pageKey: String,
+        generation: Long,
+        expectedPageVersion: Long,
+        expectedLeaseToken: Long,
+        expectedCandidateGenerationId: String?,
+        expectedDependencyFingerprint: String?,
+        expectedArtifactPageVersion: Long?,
+        checkpointPointer: SidecarPointer,
+        observedSourceSha256: String?,
+        description: String,
+    ): StagePatchResult = mutex.withLock {
+        if (defunct) return@withLock rejectedStage(pageKey, description, "store is defunct")
+        val manifest = artifactManifest
+        val artifact = artifactEngine
+        if (manifest == null || artifact == null) {
+            return@withLock rejectedStage(pageKey, description, "artifact store was not established")
+        }
+        // Current-snapshot fence: only the checkpoint the manifest still
+        // references may back live state — never a stale file handle.
+        if (manifest.ocrCheckpoints[pageKey] != checkpointPointer) {
+            return@withLock rejectedStage(pageKey, description, "checkpoint pointer changed")
+        }
+        val checkpoint = when (val read = artifact.readOcrCheckpoint(checkpointPointer)) {
+            is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
+            else -> return@withLock rejectedStage(pageKey, description, "checkpoint sidecar unreadable")
+        }
+        val ocrSnapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+            ?: return@withLock rejectedStage(pageKey, description, "checkpoint OCR page snapshot missing")
+        // OCR stage hash is not automatically the page snapshot hash: both
+        // fingerprints are verified against their own recorded values.
+        if (StageFingerprints.pageSnapshot(ocrSnapshot) != checkpoint.ocrPageSnapshotPointer.contentFingerprint) {
+            return@withLock rejectedStage(pageKey, description, "checkpoint page snapshot fingerprint mismatch")
+        }
+        val contentFingerprint = pageOcrContentFingerprint(
+            pageKey = pageKey,
+            page = ocrSnapshot,
+            naturalPageIndex = checkpoint.naturalPageIndex,
+            sourceOrientation = checkpoint.sourceIdentity.orientation,
+            inpaintMaskRevision = checkpoint.inpaintMaskRevision,
+        )
+        if (contentFingerprint != checkpoint.ocrContentFingerprint) {
+            return@withLock rejectedStage(pageKey, description, "checkpoint OCR content fingerprint mismatch")
+        }
+        if (!checkpoint.sourceIdentity.isComplete) {
+            return@withLock rejectedStage(pageKey, description, "incomplete source identity for checkpoint")
+        }
+        val observedSha = observedSourceSha256?.takeIf(String::isSha256Hex)
+        if (observedSha == null || observedSha != checkpoint.sourceIdentity.sha256) {
+            return@withLock rejectedStage(pageKey, description, "checkpoint source identity mismatch")
+        }
+        if (pageLeases[pageKey] == null) {
+            return@withLock rejectedStage(pageKey, description, "page lease required for hydration")
+        }
+        if (expectedCandidateGenerationId != null && expectedDependencyFingerprint == null) {
+            return@withLock rejectedStage(pageKey, description, "dependency fingerprint required for hydration")
+        }
+        val current = pages[pageKey]?.toDraft()
+        val rejection = stageIdentityRejection(
+            current,
+            generation,
+            expectedPageVersion,
+            expectedLeaseToken,
+            pageKey,
+            expectedCandidateGenerationId,
+            expectedDependencyFingerprint,
+            expectedArtifactPageVersion,
+        )
+        if (rejection != null) return@withLock rejectedStage(pageKey, description, rejection)
+        if (ocrSnapshot.ocrStatus != StageStatus.READY) {
+            return@withLock rejectedStage(pageKey, description, "checkpointed OCR state is not READY")
+        }
+        val currentBlockFingerprints = current!!.ocrBlockFingerprints()
+        if (currentBlockFingerprints.isNotEmpty()) {
+            if (currentBlockFingerprints == ocrSnapshot.ocrBlockFingerprints()) {
+                // Already hydrated with identical content: repeated adoption
+                // is a no-op — no version bump, no state churn, no writes.
+                return@withLock StagePatchResult.Accepted(snapshotLocked(pageKey))
+            }
+            return@withLock rejectedStage(pageKey, description, "prior OCR identity changed")
+        }
+        // The OCR merge field semantics (including edited-block inheritance
+        // and the textless SKIPPED propagation) stay owned by mergeOcrFields.
+        val updated = mergeOcrFields(current, ocrSnapshot)
+        // mergeOcrFields does not own the source identity. A synthesized
+        // placeholder carries none, and the checkpoint's source identity was
+        // just proven against the observed source bytes above — restore it so
+        // planning/revalidation see the same identity the OCR was built from.
+        updated.sourceFingerprint = checkpoint.sourceIdentity.sha256
+        val owned = ownedPage(pageKey, updated)
+        pages = pages.put(pageKey, publishPage(owned))
+        stateFlow.value = snapshotPages()
+        displaySnapshotLocked(listOf(pageKey))
+        promoteDisplayIfReadyLocked(pageKey, owned)
+        StagePatchResult.Accepted(snapshotLocked(pageKey))
+    }
+
+    /**
      * The semantic `PageOcrContentFingerprint` of the page's current OCR
      * state (  encoding). Transaction identities
      * (versions, generations, timestamps, file names) are excluded by the
