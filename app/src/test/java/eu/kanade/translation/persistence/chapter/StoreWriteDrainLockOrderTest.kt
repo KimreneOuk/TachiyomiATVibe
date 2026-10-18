@@ -12,15 +12,10 @@ import org.junit.jupiter.api.Test
 
 class StoreWriteDrainLockOrderTest {
 
-    private fun writeDrain(store: ChapterTranslationStore): Any =
-        ChapterTranslationStore::class.java.getDeclaredField("writeDrain").apply {
-            isAccessible = true
-        }.get(store)
-
     private fun drainJob(store: ChapterTranslationStore): Job? =
         StoreWriteDrainCoordinator::class.java.getDeclaredField("drainJob").apply {
             isAccessible = true
-        }.get(writeDrain(store)) as Job?
+        }.get(store.writeDrain) as Job?
 
     @Test
     fun `drain handoff stays synchronous and flush waits on the store mutex`() = runTest {
@@ -37,10 +32,10 @@ class StoreWriteDrainLockOrderTest {
                 // This store-to-drain call is deliberately made while the
                 // only state mutex is held. It must return synchronously and
                 // repeated requests must reuse the same active drain job.
-                store.schedulePendingLazyDrain()
+                store.writeDrain.scheduleDrain()
                 scheduledJob = drainJob(store)
                 scheduledJob shouldNotBe null
-                store.schedulePendingLazyDrain()
+                store.writeDrain.scheduleDrain()
                 drainJob(store) shouldBe scheduledJob
 
                 // Virtual time runs the debounce worker until it reaches the

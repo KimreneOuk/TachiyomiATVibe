@@ -19,10 +19,7 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
@@ -747,15 +744,10 @@ class OverlapSchedulerTest {
         //  round 2 fixture fix: the committed-display promotion
         // (ChapterArtifactEngine.promoteLiveCandidate → displayBaseIsValid)
         // validates the cleaned image FOR REAL — the companion file must exist
-        // on disk and probe as a decodable image matching the page's source
-        // dimensions. Production is correct; the fixture was missing both. The
-        // JVM has no BitmapFactory, so install the header-probe seam
-        // (ChapterTranslationStorePersistenceTest /  fixture recipe) and
-        // persist the cleaned companion file the layout expects.
-        val productionProbe = ChapterStoreTestSeams.artifactImageProbe
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
-        try {
-            val store = lazyStore()
+        // on disk matching the page's source dimensions. Production is correct;
+        // the fixture was missing both, so persist the cleaned companion file
+        // the layout expects.
+        val store = lazyStore()
             val pageKeys = listOf("p1")
             store.preRegisterPages(pageKeys)
             pageKeys.forEach { seedOcrOnlyPage(store, it) }
@@ -822,9 +814,6 @@ class OverlapSchedulerTest {
             promoted.toPageDisplayProjection().displayReady shouldBe true
             promoted.translationStatus shouldBe StageStatus.READY
             promoted.cleanedImageName shouldBe "cleaned-p1.jpg"
-        } finally {
-            ChapterStoreTestSeams.artifactImageProbe = productionProbe
-        }
     }
 
     /**
@@ -870,10 +859,7 @@ class OverlapSchedulerTest {
         // later carries the full display evidence (p1: cleaned image +
         // translated block), and skip the one missing it (p2: no cleaned
         // image) — the drain-side twin of the coordinator's E2 stamp.
-        val productionProbe = ChapterStoreTestSeams.artifactImageProbe
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
-        try {
-            val store = lazyStore()
+        val store = lazyStore()
             val pageKeys = listOf("p1", "p2")
             store.preRegisterPages(pageKeys)
             pageKeys.forEach { seedOcrOnlyPage(store, it) }
@@ -921,9 +907,6 @@ class OverlapSchedulerTest {
             //  teardown discipline: the sweep's Render lease is released.
             store.snapshot("p1").leaseToken shouldBe null
             store.snapshot("p2").leaseToken shouldBe null
-        } finally {
-            ChapterStoreTestSeams.artifactImageProbe = productionProbe
-        }
     }
 
     // ------------------------------------------------------------------

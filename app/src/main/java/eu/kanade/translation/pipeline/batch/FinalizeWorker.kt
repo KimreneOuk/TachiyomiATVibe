@@ -94,12 +94,6 @@ internal class FinalizeWorker(
         carrier: String,
     ) = context.persistEnvelopeStructuralFailure(pageKey, reason, carrier)
 
-    private fun runConfigFingerprint(config: RunConfigSnapshot): String =
-        ChapterProfileBatchCoordinator.runConfigFingerprint(config)
-
-    private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
-        ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
-
     private fun sourceFingerprintUnavailable(): BatchPass1Outcome = BatchPass1Outcome(
         needsTranslation = emptyList(),
         status = BatchPass1Status.PAUSED,
@@ -113,9 +107,9 @@ internal class FinalizeWorker(
         corpusFingerprint: String,
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
         val sourceDigest = context.freshSourcePairsForPages(orderedPages)
-            ?.let(::orderedSourceDigest)
+            ?.let(ChapterProfileBatchCoordinator::orderedSourceDigest)
             ?: return sourceFingerprintUnavailable()
 
         //  entry: the FINALIZE phase pointer (resume re-runs finalize —
@@ -189,9 +183,9 @@ internal class FinalizeWorker(
         corpusFingerprint: String,
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
         val sourceDigest = context.freshSourcePairsForPages(orderedPages)
-            ?.let(::orderedSourceDigest)
+            ?.let(ChapterProfileBatchCoordinator::orderedSourceDigest)
             ?: return sourceFingerprintUnavailable()
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 

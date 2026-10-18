@@ -9,7 +9,6 @@ import eu.kanade.translation.model.isTextlessTerminal
 data class ArtifactPageFacts(
     val page: PageTranslation,
     val cleanedFileState: CleanedFileState = CleanedFileState.NONE_RECORDED,
-    val cleanedImageDimensions: ProbedImage? = null,
 )
 
 enum class CleanedFileState {

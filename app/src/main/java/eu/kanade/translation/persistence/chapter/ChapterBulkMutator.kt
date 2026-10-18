@@ -89,7 +89,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         try {
             store.withJournalCapturePermit {
                 store.mutex.withLock {
-                    when (val admission = store.admitMutation()) {
+                    when (val admission = store.publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             logcat(LogPriority.WARN) {
@@ -141,7 +141,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         try {
             store.withJournalCapturePermit {
                 store.mutex.withLock {
-                    when (val admission = store.admitMutation()) {
+                    when (val admission = store.publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             logcat(LogPriority.WARN) {
@@ -183,7 +183,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                         updatedPages.forEach { (pageKey, page) ->
                             val owned = store.ownedPage(pageKey, page)
                             store.pages = store.pages.put(pageKey, store.publishPage(owned))
-                            if (store.persistArtifactMutation(pageKey, null, owned)) {
+                            if (store.publicationBridge.persistArtifactMutation(pageKey, null, owned)) {
                                 store.promoteDisplayIfReadyLocked(pageKey, owned)
                             }
                         }
@@ -542,7 +542,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         }
         return store.withJournalCapturePermit {
             store.mutex.withLock {
-                when (val admission = store.admitMutation()) {
+                when (val admission = store.publicationBridge.admitMutation()) {
                     MutationAdmission.Granted -> Unit
                     is MutationAdmission.Rejected -> {
                         logcat(LogPriority.WARN) {
@@ -579,7 +579,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                     store.artifactParent != null &&
                     store.artifactFileName != null
                 ) {
-                    store.ensureArtifactStore()
+                    store.publicationBridge.ensureArtifactStore()
                 }
                 val artifact = store.artifactEngine
                 val manifest = store.artifactManifest
@@ -658,7 +658,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         }
         store.withJournalCapturePermit {
             store.mutex.withLock {
-                when (val admission = store.admitMutation()) {
+                when (val admission = store.publicationBridge.admitMutation()) {
                     MutationAdmission.Granted -> Unit
                     is MutationAdmission.Rejected -> {
                         logcat(LogPriority.WARN) {
@@ -719,7 +719,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         onlineKeys: List<String>,
         onDiskKeys: List<String>,
     ): PageRekeyPlanResult {
-        when (val admission = store.admitMutation()) {
+        when (val admission = store.publicationBridge.admitMutation()) {
             MutationAdmission.Granted -> Unit
             is MutationAdmission.Rejected -> {
                 logcat(LogPriority.WARN) {

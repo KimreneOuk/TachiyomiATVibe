@@ -4,11 +4,11 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifestReader
+import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.toArtifactPageFallback
@@ -20,8 +20,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.decodeFromStream
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+
+/** Result of reading manifest metadata without opening page snapshots or sidecars. */
+internal data class ArtifactManifestProbe(
+    val exists: Boolean,
+    val manifest: ChapterArtifactManifest?,
+)
 
 /**
  * Store-opening collaborator (Phase 7 S6). Owns the open mechanics that used to
@@ -39,8 +46,24 @@ import java.util.concurrent.ConcurrentHashMap
 internal object ChapterStoreOpener {
 
     /** Reads only the small manifest header; page snapshots stay unopened. */
-    internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe =
-        ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
+    internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe {
+        val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
+        val primary = parent.findFile(layout.manifestFileName)
+        if (primary != null && primary.exists()) {
+            return ArtifactManifestProbe(exists = true, manifest = readManifestFile(primary))
+        }
+
+        val backup = parent.findFile(AtomicChapterDocuments.backupNameFor(layout.manifestFileName))
+        if (backup == null || !backup.exists()) return ArtifactManifestProbe(exists = false, manifest = null)
+        // A backup is persisted metadata too. If it exists but cannot be read,
+        // propagate that failure instead of treating the chapter as cleanly new.
+        return ArtifactManifestProbe(exists = true, manifest = readManifestFile(backup))
+    }
+
+    private fun readManifestFile(file: UniFile): ChapterArtifactManifest =
+        file.openInputStream().use { input ->
+            ArtifactDocumentJson.decodeFromStream<ChapterArtifactManifest>(input)
+        }
 
     /** Opens an artifact and installs only the state reconstructed from its ACKed journal prefix. */
     internal suspend fun openArtifactSuspend(

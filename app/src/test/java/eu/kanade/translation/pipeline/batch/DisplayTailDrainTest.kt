@@ -34,17 +34,13 @@ import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.persistence.artifact.EvidenceRef
 import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.OcrStagePatch
@@ -63,8 +59,6 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -84,7 +78,7 @@ import java.util.concurrent.ConcurrentHashMap
  * mirrors the real lane's publication substage (cleaned-image reference) but
  * NOT the in-lane render-terminal stamp — exactly the order-inverted shape
  * the drain owns. This harness's pages reach the
- * committed-display promotion, so @BeforeEach seeds the cleaned companion
+ * committed-display promotion, the fixture seeds the cleaned companion
  * bytes and uses a controlled store image probe (android.graphics is unavailable on
  * the JVM) — the display-base validation the promotion runs on every stamp.
  */
@@ -154,21 +148,6 @@ class DisplayTailDrainTest {
         artifactParent = root(),
         artifactFileName = "Chapter 1.json",
     )
-
-    private var probeBeforeDisplayBaseFixture: CleanedImageProbe? = null
-
-    @BeforeEach
-    fun seedDisplayBaseFixtures() {
-        probeBeforeDisplayBaseFixture = ChapterStoreTestSeams.artifactImageProbe
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 160) }
-    }
-
-    @AfterEach
-    fun restoreDisplayBaseProbe() {
-        ChapterStoreTestSeams.artifactImageProbe =
-            probeBeforeDisplayBaseFixture ?: BitmapFactoryCleanedImageProbe
-        probeBeforeDisplayBaseFixture = null
-    }
 
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,

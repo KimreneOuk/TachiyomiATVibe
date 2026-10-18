@@ -20,21 +20,18 @@ import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AttemptOrigin
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterTranslationProfile
 import eu.kanade.translation.persistence.artifact.CommittedDisplayRef
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
 import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
 import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.SidecarRead
 import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.isSha256Hex
@@ -68,7 +65,6 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -206,7 +202,7 @@ class ChapterTranslationStore internal constructor(
      * 2. producer capture permit (`withJournalCapturePermit`);
      * 3. the store [mutex] — suspending, so holders may await lower locks;
      * 4. the per-artifact open lock (`withArtifactOpenLock`) — acquired only
-     *    from inside [mutex] via [ensureArtifactStore], as a coroutine.
+     *    from inside [mutex] via publication admission, as a coroutine.
      *
      * The open path (`openArtifactSuspend`) takes ONLY level 4 and never the
      * store mutex, so the order cannot invert and a first write never blocks a
@@ -431,10 +427,11 @@ class ChapterTranslationStore internal constructor(
     /**
      * Publication collaborator (Phase 7 S4). Owns mutation admission, lazy
      * artifact-store initialization, the registration CAS, and the candidate
-     * open/cancel/persist/promote/failure orchestration; the store delegates
-     * under [mutex].
+     * open/cancel/persist/promote/failure orchestration. Module-internal so
+     * the store and its in-module mutator collaborators call the publication
+     * path directly under [mutex] — no facade shells in between.
      */
-    private val publicationBridge = ChapterStorePublicationBridge(this)
+    internal val publicationBridge = ChapterStorePublicationBridge(this)
 
     // Lazy-write queue state is stored by the drain coordinator, but every
     // mutation is serialized by this store's mutex. Store-to-drain scheduling
@@ -633,10 +630,6 @@ class ChapterTranslationStore internal constructor(
     @Volatile
     internal var lastBatchWriteGateRejectionDiagnostic: String? = null
         private set
-
-    /** Publication rejections live on the bridge; the facade only reads the latest diagnostic. */
-    private val lastArtifactPublicationRejectionDiagnostic: String?
-        get() = publicationBridge.lastArtifactPublicationRejectionDiagnostic
 
     internal fun recordBatchWriteGateRejectionDiagnostic(diagnostic: String) {
         lastBatchWriteGateRejectionDiagnostic = diagnostic
@@ -989,9 +982,6 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    /** Caller holds [mutex]; suspending while a lazy first write opens the artifact store. Delegates to the publication bridge. */
-    internal suspend fun admitMutation(): MutationAdmission = publicationBridge.admitMutation()
-
     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
         generation++
         logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
@@ -1093,7 +1083,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -1222,7 +1212,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -1258,7 +1248,7 @@ class ChapterTranslationStore internal constructor(
                                 pageKey,
                                 "description" to description,
                                 "reason" to "ARTIFACT_PUBLICATION_FAILED",
-                                "artifactPublication" to (lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
+                                "artifactPublication" to (publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
                                 "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
                                     "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
                                     "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
@@ -1298,7 +1288,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> {
                             return@withLock TranslationPublicationReconciliation.Deferred(
@@ -1351,7 +1341,7 @@ class ChapterTranslationStore internal constructor(
                             if (!publishLocked(current, owned, expectedCurrent, journalCredit = journalCredit)) {
                                 restorePageLocked(pageKey, current)
                                 return@withLock TranslationPublicationReconciliation.PublicationFailed(
-                                    lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
+                                    publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
                                 )
                             }
                             return@withLock TranslationPublicationReconciliation.Rebased(snapshotLocked(pageKey))
@@ -1378,7 +1368,7 @@ class ChapterTranslationStore internal constructor(
                     if (!publishLocked(current, owned, expectedCurrent, journalCredit = journalCredit)) {
                         restorePageLocked(pageKey, current)
                         TranslationPublicationReconciliation.PublicationFailed(
-                            lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
+                            publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
                         )
                     } else {
                         TranslationPublicationReconciliation.Rebased(snapshotLocked(pageKey))
@@ -1441,7 +1431,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejected(
                             pageKey,
@@ -1462,7 +1452,7 @@ class ChapterTranslationStore internal constructor(
                         return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
                     }
                     pages = pages.put(pageKey, publishPage(updated))
-                    val persisted = persistArtifactMutation(
+                    val persisted = publicationBridge.persistArtifactMutation(
                         pageKey = pageKey,
                         previous = previous,
                         updated = updated,
@@ -1583,7 +1573,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejectedStage(
                             patch.pageKey,
@@ -1627,30 +1617,24 @@ class ChapterTranslationStore internal constructor(
         description: String,
         journalCredit: ChapterJournalCredit?,
     ): StagePatchResult {
-        val rejection = when {
-            patch.generation != generation ->
-                "generation expected=${patch.generation} actual=$generation"
-            current == null -> "page missing"
-            patch.expectedPageVersion != current.pageVersion ->
-                "pageVersion expected=${patch.expectedPageVersion} actual=${current.pageVersion}"
-            patch.expectedArtifactPageVersion != null &&
-                patch.expectedArtifactPageVersion != artifactManifest?.pages?.get(patch.pageKey)?.pageVersion ->
-                "artifact pageVersion changed"
-            patch.expectedCandidateGenerationId != null &&
-                patch.expectedCandidateGenerationId != artifactManifest?.pages?.get(patch.pageKey)?.candidate?.generationId ->
-                "candidate generation changed"
-            patch.expectedDependencyFingerprint != null &&
-                artifactManifest?.pages?.get(patch.pageKey)?.candidate?.let { candidate ->
-                    patch.expectedDependencyFingerprint != candidate.dependencyFingerprint
-                } == true ->
-                "candidate dependency fingerprint changed"
-            patch.expectedPriorOcrFingerprints != current.ocrBlockFingerprints() ->
-                "prior OCR identity changed"
-            patch.expectedLeaseToken != null && pageLeases[patch.pageKey]?.token != patch.expectedLeaseToken ->
-                "page lease token changed"
-            patch.expectedLeaseToken == null && pageLeases[patch.pageKey] != null ->
-                "page lease token required"
-            else -> null
+        // Same identity fence as the translation/render merges
+        // (stageIdentityRejection); the OCR-specific prior-OCR check sits
+        // between the dependency fingerprint and the lease clauses, exactly
+        // where it sat in the previous inline chain. Reason strings and
+        // ordering are behavior.
+        val rejection = stageIdentityRejection(
+            current,
+            patch.generation,
+            patch.expectedPageVersion,
+            patch.expectedLeaseToken,
+            patch.pageKey,
+            patch.expectedCandidateGenerationId,
+            patch.expectedDependencyFingerprint,
+            patch.expectedArtifactPageVersion,
+        ) ?: if (patch.expectedPriorOcrFingerprints != current!!.ocrBlockFingerprints()) {
+            "prior OCR identity changed"
+        } else {
+            null
         }
         if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
 
@@ -1708,7 +1692,7 @@ class ChapterTranslationStore internal constructor(
         return try {
             withJournalCapturePermit {
                 mutex.withLock {
-                    when (val admission = admitMutation()) {
+                    when (val admission = publicationBridge.admitMutation()) {
                         MutationAdmission.Granted -> Unit
                         is MutationAdmission.Rejected -> return@withLock rejectedCheckpoint(
                             description,
@@ -2305,7 +2289,7 @@ class ChapterTranslationStore internal constructor(
         val isDurable = shouldPersistUpdate(previous, updated)
         var actuallyPersisted = false
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
-            val ok = persistArtifactMutation(
+            val ok = publicationBridge.persistArtifactMutation(
                 pageKey = pageKey,
                 previous = previous,
                 updated = updated,
@@ -2380,39 +2364,6 @@ class ChapterTranslationStore internal constructor(
     }
 
     /**
-     * Production artifact publication for mutable page emissions. Delegates to
-     * the publication bridge (Phase 7 S4), which owns the registration CAS and
-     * the candidate open/cancel/persist/promote/failure orchestration. Caller
-     * holds [mutex]; the lazy flusher (Phase 7 S5) re-enters this shell from
-     * inside its barrier-held mutex.
-     */
-    internal suspend fun persistArtifactMutation(
-        pageKey: String,
-        previous: PageTranslation?,
-        updated: PageTranslation,
-        expected: PatchPrecondition? = null,
-        durableFailure: DurableFailureMetadata? = null,
-        journalCredit: ChapterJournalCredit? = null,
-        journalFlushBatch: JournalFlushBatch? = null,
-    ): Boolean = publicationBridge.persistArtifactMutation(
-        pageKey = pageKey,
-        previous = previous,
-        updated = updated,
-        expected = expected,
-        durableFailure = durableFailure,
-        journalCredit = journalCredit,
-        journalFlushBatch = journalFlushBatch,
-    )
-
-    /**
-     * Lazily creates the artifact store for a chapter that has no manifest
-     * yet; delegates to the publication bridge. Suspending: acquires the
-     * per-artifact open lock as a coroutine (store mutex -> artifact-open
-     * lock, never reversed).
-     */
-    internal suspend fun ensureArtifactStore(): Boolean = publicationBridge.ensureArtifactStore()
-
-    /**
      * Atomic committed-display promotion: when the page just reached a fully
      * displayable state (cleaned image file published and verified upstream by
      * [CleanedImagePublisher], translation READY/PARTIAL, render READY, some
@@ -2468,21 +2419,14 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    private fun displayFingerprintOf(page: PageTranslationView): String {
-        val canonical = buildString {
-            appendField(page.cleanedImageName)
-            appendField(page.inpaintRevision)
-            page.blockFingerprints().forEach { fingerprint -> appendField(fingerprint) }
-        }
-        return MessageDigest.getInstance("SHA-256")
-            .digest(canonical.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
-    }
-
-    private fun StringBuilder.appendField(value: Any?) {
-        val text = value?.toString() ?: "<null>"
-        append(text.length).append(':').append(text).append('|')
-    }
+    private fun displayFingerprintOf(page: PageTranslationView): String =
+        StageFingerprints.canonicalFingerprint(
+            buildList {
+                add(page.cleanedImageName)
+                add(page.inpaintRevision)
+                addAll(page.blockFingerprints())
+            },
+        )
 
     /** Resolves the reader-facing page state: committed bundle first, live candidate otherwise. */
     fun resolveDisplayPage(pageKey: String): PageTranslationView? =
@@ -2733,32 +2677,6 @@ class ChapterTranslationStore internal constructor(
     /** Durable translation status derived from the committed artifact state. */
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
 
-    fun readReusableProfile(): ChapterTranslationProfile? {
-        val artifact = artifactEngine ?: return null
-        val manifest = artifact.readManifest() ?: return null
-        val pointer = manifest.profile ?: return null
-        if (!pointer.isWellFormed()) return null
-        val read = artifact.readSidecarDocument(
-            pointer = pointer.toSidecarPointer(),
-            serializer = ChapterTranslationProfile.serializer(),
-            currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
-            expectedKind = ChapterTranslationProfile.KIND,
-            schemaVersionOf = { it.schemaVersion },
-            kindOf = { it.kind },
-            isValid = { it.isSemanticallyValid },
-        )
-        val profile = (read as? SidecarRead.Usable<*>)?.document as? ChapterTranslationProfile ?: return null
-        if (pointer.contentFingerprint != profile.contentFingerprint ||
-            pointer.version != profile.version
-        ) {
-            return null
-        }
-        if (StageFingerprints.profileContentFingerprint(profile) != profile.contentFingerprint) {
-            return null
-        }
-        return profile
-    }
-
     internal fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
         // Persist only DURABLE progress worth surviving a chapter reopen, not
         // transient placeholders; transient bookkeeping stays in-memory (the
@@ -2839,12 +2757,6 @@ class ChapterTranslationStore internal constructor(
             },
         )
     }
-
-    /**
-     * Store-to-drain queue boundary. Callers hold [mutex]; this handoff is
-     * synchronous and does not acquire another state lock.
-     */
-    internal fun schedulePendingLazyDrain() = writeDrain.scheduleDrain()
 
     companion object {
         /**

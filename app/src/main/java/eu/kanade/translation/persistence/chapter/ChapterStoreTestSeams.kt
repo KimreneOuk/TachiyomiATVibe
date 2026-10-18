@@ -1,7 +1,5 @@
 package eu.kanade.translation.persistence.chapter
 
-import eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.journal.ChapterJournalSnapshotManager
 import eu.kanade.translation.persistence.journal.ChapterJournalWriter
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,9 +42,4 @@ internal class ChapterStoreTestSeams internal constructor(
 
     /** Test seam for verifying that closeAndFlush joins all drain children. */
     internal fun hasActivePersistenceChildren(): Boolean = store.writeDrain.hasActiveChildren()
-
-    companion object {
-        /** Artifact cleaned-image probe retained for artifact validation tests. */
-        internal var artifactImageProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe
-    }
 }

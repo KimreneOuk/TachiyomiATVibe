@@ -5,10 +5,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
@@ -16,7 +13,6 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tachiyomi.domain.source.service.SourceManager
@@ -27,15 +23,6 @@ class TranslationManagerArtifactReadTest {
 
     @TempDir
     lateinit var mangaDir: File
-
-    @AfterEach
-    fun restoreProductionProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
-    }
-
-    private fun installImageProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
-    }
 
     private fun page() = PageTranslation(
         blocks = mutableListOf(
@@ -118,7 +105,6 @@ class TranslationManagerArtifactReadTest {
 
     @Test
     fun `artifact authority status and reader reads survive a fresh manager`() = runTest {
-        installImageProbe()
         writeArtifactChapter("Chapter 1")
         val fileName = artifactFileName("Chapter 1")
         val root = artifactParent()
@@ -142,7 +128,6 @@ class TranslationManagerArtifactReadTest {
 
     @Test
     fun `artifact status reports warnings for a partial page after restart`() = runTest {
-        installImageProbe()
         writeArtifactChapter("Chapter 4")
         val fileName = artifactFileName("Chapter 4")
         val store = ChapterTranslationStore.openArtifactSuspend(artifactParent(), fileName)
@@ -170,7 +155,6 @@ class TranslationManagerArtifactReadTest {
         // and no Retry affordance. An unresolved REAL page must resolve the
         // chapter to retryable ERROR; only placeholder-count shortfalls
         // without any recorded failure stay warnings.
-        installImageProbe()
         val root = FakeUniFile(parent = null, backing = mangaDir)
         File(mangaDir, "Chapter 5.json").createNewFile()
         val file = root.findFile("Chapter 5.json")!!

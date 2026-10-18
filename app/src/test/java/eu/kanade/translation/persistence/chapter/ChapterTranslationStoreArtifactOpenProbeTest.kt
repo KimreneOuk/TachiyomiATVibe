@@ -8,12 +8,10 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
 import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DisplayBaseReference
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
@@ -23,14 +21,12 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
@@ -39,21 +35,11 @@ import java.util.zip.DeflaterOutputStream
  * Production-path coverage for artifact-open, probe, and lazy-store successor
  * behavior. These tests also pin that opening a legacy flat translation file
  * does not migrate it into an artifact manifest or recreate the flat file.
- *
- * The cleaned-image validation seam ([ChapterStoreTestSeams.artifactImageProbe])
- * is pointed at a header-parsing PNG probe because android.graphics is not
- * available in JVM unit tests; production keeps the BitmapFactory
- * bounds-only probe.
  */
 class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @TempDir
     lateinit var mangaDir: File
-
-    @AfterEach
-    fun restoreProductionProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
-    }
 
     /** Complete PNG fixture; the production path never validates fabricated text/header-only bytes. */
     private fun pngBytes(width: Int, height: Int): ByteArray {
@@ -92,37 +78,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         writeChunk("IDAT", compressed)
         writeChunk("IEND", byteArrayOf())
         return output.toByteArray()
-    }
-
-    /** JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR. */
-    private fun installPngHeaderProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
-            val bytes = input.readPrefix(24)
-            if (bytes.size < 24) return@CleanedImageProbe null
-            val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-            if (!bytes.copyOfRange(0, 8).contentEquals(signature)) return@CleanedImageProbe null
-            if (String(bytes.copyOfRange(12, 16)) != "IHDR") return@CleanedImageProbe null
-            fun be32(offset: Int): Int =
-                ((bytes[offset].toInt() and 0xff) shl 24) or
-                    ((bytes[offset + 1].toInt() and 0xff) shl 16) or
-                    ((bytes[offset + 2].toInt() and 0xff) shl 8) or
-                    (bytes[offset + 3].toInt() and 0xff)
-            val width = be32(16)
-            val height = be32(20)
-            if (width <= 0 || height <= 0) return@CleanedImageProbe null
-            ProbedImage(width, height)
-        }
-    }
-
-    private fun InputStream.readPrefix(limit: Int): ByteArray {
-        val output = ByteArray(limit)
-        var offset = 0
-        while (offset < limit) {
-            val read = read(output, offset, limit - offset)
-            if (read < 0) break
-            offset += read
-        }
-        return output.copyOf(offset)
     }
 
     private fun block(translation: String = "hello") = TranslationBlock(
@@ -235,7 +190,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `pre-registered pages publish one durable baseline with only the changed candidate`() = runTest {
-        installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
             artifactParentResolver = { root.createFile("Chapter 2.json")!! },
@@ -258,7 +212,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `batch baseline certifies complete artifact pages`() = runTest {
-        installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         File(mangaDir, "Chapter 6_images").mkdirs()
         File(mangaDir, "Chapter 6_images/p1.cleaned.jpg").writeBytes(pngBytes(100, 100))
@@ -317,7 +270,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `chapter without a legacy translation file gains no manifest`() {
-        installPngHeaderProbe()
         val root: UniFile = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         ChapterTranslationStore.lazy { root.createFile("Chapter 2.json")!! }
         File(mangaDir, "Chapter 2.manifest.json").exists() shouldBe false
@@ -325,7 +277,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `artifact-authoritative reopen keeps committed display while incomplete candidate resumes`() = runTest {
-        installPngHeaderProbe()
         writeArtifactChapter()
         val first = openChapterStore()
         first.updatePage("page.jpg") { page ->
@@ -369,7 +320,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `artifact candidate cancel and failure reopen retain committed display`() = runTest {
-        installPngHeaderProbe()
         writeArtifactChapter()
         val first = openChapterStore()
         first.updatePage("page.jpg") { page ->
@@ -405,7 +355,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `released batch callbacks cannot overwrite a reacquired artifact candidate`() = runTest {
-        installPngHeaderProbe()
         writeArtifactChapter()
         val store = openChapterStore()
         val pageKey = "page.jpg"
@@ -463,7 +412,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `production promotion retains a held previous cleaned stream until release`() = runTest {
-        installPngHeaderProbe()
         writeArtifactChapter()
         val store = openChapterStore()
         val imageDir = File(mangaDir, "image-fixtures").apply { mkdirs() }
@@ -512,7 +460,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `lazy store cuts over before first candidate and reopens from artifact pointers`() = runTest {
-        installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val store = ChapterTranslationStore.lazy(
             artifactParent = root,
@@ -567,7 +514,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `lazy store without parent resolves artifact authority through artifactParentResolver`() = runTest {
-        installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         var creatorCalls = 0
         val store = ChapterTranslationStore.lazy(
@@ -605,7 +551,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
 
     @Test
     fun `openArtifactSuspend falls back to synthesized page and getOrLoadPageSnapshot lazily hydrates`() = runTest {
-        installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val layout = ChapterArtifactLayout("Chapter 9")
         val snapshotFile = layout.committedPageSnapshotFile("page1.jpg", "gen-1")

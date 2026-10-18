@@ -158,12 +158,6 @@ internal class EnvelopeDispatcher(
         baseCounters,
     )
 
-    private fun runConfigFingerprint(config: RunConfigSnapshot): String =
-        ChapterProfileBatchCoordinator.runConfigFingerprint(config)
-
-    private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
-        ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
-
     suspend fun runPhase(
         artifact: ChapterArtifactEngine,
         runId: String,
@@ -172,8 +166,8 @@ internal class EnvelopeDispatcher(
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
         val overlapScheduler = context.overlapScheduler
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
+        val sourceDigest = ChapterProfileBatchCoordinator.orderedSourceDigest(effectiveSourcePairs)
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         fun envelopeCounters(extra: Map<String, Int>): Map<String, Int> =

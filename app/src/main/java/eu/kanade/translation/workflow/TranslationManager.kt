@@ -14,7 +14,7 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.persistence.artifact.ArtifactManifestProbe
+import eu.kanade.translation.persistence.chapter.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterResetPreflight

@@ -10,22 +10,18 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
 import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.pipeline.toPrecondition
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.zip.CRC32
@@ -35,11 +31,6 @@ class ChapterTranslationStorePersistenceTest {
 
     @TempDir
     lateinit var mangaDir: File
-
-    @AfterEach
-    fun restoreProductionProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
-    }
 
     private fun block(translation: String = "target", userEditedAt: Long? = null) = TranslationBlock(
         text = "source",
@@ -127,7 +118,6 @@ class ChapterTranslationStorePersistenceTest {
      */
     @Test
     fun `user edited committed block survives checkpointOcr close and adopt with bundle identity intact`() = runTest {
-        installPngHeaderProbe()
         File(mangaDir, "Chapter 1_images").mkdirs()
         File(mangaDir, "Chapter 1_images/p1.cleaned.jpg").writeBytes(pngBytes(100, 100))
         val store = lazyStore()
@@ -202,40 +192,6 @@ class ChapterTranslationStorePersistenceTest {
         afterAdopt.pages.getValue("p1").candidate shouldBe null
         afterAdopt.ocrCheckpoints.keys shouldBe setOf("p1")
         assertUserEditIntact(artifactStore(), committedBefore)
-    }
-
-    /**
-     * JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR
-     * (android.graphics is unavailable in JVM unit tests).
-     */
-    private fun installPngHeaderProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
-            val bytes = input.readPrefix(24)
-            if (bytes.size < 24) return@CleanedImageProbe null
-            val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-            if (!bytes.copyOfRange(0, 8).contentEquals(signature)) return@CleanedImageProbe null
-            if (String(bytes.copyOfRange(12, 16)) != "IHDR") return@CleanedImageProbe null
-            fun be32(offset: Int): Int =
-                ((bytes[offset].toInt() and 0xff) shl 24) or
-                    ((bytes[offset + 1].toInt() and 0xff) shl 16) or
-                    ((bytes[offset + 2].toInt() and 0xff) shl 8) or
-                    (bytes[offset + 3].toInt() and 0xff)
-            val width = be32(16)
-            val height = be32(20)
-            if (width <= 0 || height <= 0) return@CleanedImageProbe null
-            ProbedImage(width, height)
-        }
-    }
-
-    private fun InputStream.readPrefix(limit: Int): ByteArray {
-        val output = ByteArray(limit)
-        var read = 0
-        while (read < limit) {
-            val chunk = read(output, read, limit - read)
-            if (chunk < 0) break
-            read += chunk
-        }
-        return output.copyOf(read)
     }
 
     /** Complete PNG fixture; the production path never validates fabricated text/header-only bytes. */

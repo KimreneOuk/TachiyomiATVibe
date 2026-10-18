@@ -5,7 +5,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import java.security.MessageDigest
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 
 /**
  * Lease-layer provenance of a page write. Priority on one page is
@@ -188,54 +188,43 @@ sealed interface LeaseAcquisition {
 }
 
 /** OCR identity excludes mutable translation, render colors, revision flags, and edits. */
-fun TranslationBlockView.ocrFingerprint(): String {
-    val canonical = buildString {
-        appendField(text)
-        appendField(width.toRawBits())
-        appendField(height.toRawBits())
-        appendField(x.toRawBits())
-        appendField(y.toRawBits())
-        appendField(symHeight.toRawBits())
-        appendField(symWidth.toRawBits())
-        appendField(angle.toRawBits())
-        appendField(label)
-        appendField(score.toRawBits())
-        appendField(parentX.toRawBits())
-        appendField(parentY.toRawBits())
-        appendField(parentWidth.toRawBits())
-        appendField(parentHeight.toRawBits())
-        appendField(direction)
-        appendField(panelIndex)
-        appendField(panelAssignment)
-        appendField(panelContainment.toRawBits())
-        appendField(bubbleIndex)
-        segmentationMask?.let { mask ->
-            appendField(mask.width)
-            appendField(mask.height)
-            mask.bounds.forEach(::appendField)
-            mask.runs.forEach(::appendField)
-            appendField(mask.score.toRawBits())
-        } ?: appendField(null)
-    }
-    return MessageDigest.getInstance("SHA-256")
-        .digest(canonical.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-}
+fun TranslationBlockView.ocrFingerprint(): String =
+    StageFingerprints.canonicalFingerprint(
+        buildList {
+            add(text)
+            add(width.toRawBits())
+            add(height.toRawBits())
+            add(x.toRawBits())
+            add(y.toRawBits())
+            add(symHeight.toRawBits())
+            add(symWidth.toRawBits())
+            add(angle.toRawBits())
+            add(label)
+            add(score.toRawBits())
+            add(parentX.toRawBits())
+            add(parentY.toRawBits())
+            add(parentWidth.toRawBits())
+            add(parentHeight.toRawBits())
+            add(direction)
+            add(panelIndex)
+            add(panelAssignment)
+            add(panelContainment.toRawBits())
+            add(bubbleIndex)
+            segmentationMask?.let { mask ->
+                add(mask.width)
+                add(mask.height)
+                mask.bounds.forEach(::add)
+                mask.runs.forEach(::add)
+                add(mask.score.toRawBits())
+            } ?: add(null)
+        },
+    )
 
 fun PageTranslationView.ocrBlockFingerprints(): List<String> = blocks.map { it.ocrFingerprint() }
 
 fun PageTranslationView.inpaintMaskFingerprint(): String =
-    fingerprint(
+    StageFingerprints.sha256Hex(
         inpaintMaskBoxes.joinToString("|") { box ->
             "${box.x1},${box.y1},${box.x2},${box.y2},${box.label}"
-        },
+        }.toByteArray(Charsets.UTF_8),
     )
-
-private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
-    .digest(value.toByteArray(Charsets.UTF_8))
-    .joinToString("") { byte -> "%02x".format(byte) }
-
-private fun StringBuilder.appendField(value: Any?) {
-    val text = value?.toString() ?: "<null>"
-    append(text.length).append(':').append(text).append('|')
-}

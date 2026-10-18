@@ -615,9 +615,7 @@ object StageFingerprints {
                 }
             }
         }
-        return MessageDigest.getInstance("SHA-256")
-            .digest(canonical.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
+        return sha256Hex(canonical.toByteArray(Charsets.UTF_8))
     }
 
     private fun StringBuilder.appendField(value: String) {

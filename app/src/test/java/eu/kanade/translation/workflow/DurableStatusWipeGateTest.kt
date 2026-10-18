@@ -5,10 +5,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.CleanedImageProbe
-import eu.kanade.translation.persistence.artifact.ProbedImage
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterStoreTestSeams
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import io.kotest.matchers.shouldBe
@@ -19,14 +16,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tachiyomi.domain.source.service.SourceManager
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.CRC32
@@ -62,45 +57,7 @@ class DurableStatusWipeGateTest {
         sourceManager = manager
     }
 
-    @AfterEach
-    fun restoreProductionProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = eu.kanade.translation.persistence.artifact.BitmapFactoryCleanedImageProbe
-    }
-
     private fun sentinel() = DurableChapterKey(null, "wipe-sentinel", null, "wipe-sentinel", -1L)
-
-    /** JVM stand-in for the BitmapFactory bounds probe: parses the PNG IHDR. */
-    private fun installPngHeaderProbe() {
-        ChapterStoreTestSeams.artifactImageProbe = CleanedImageProbe { input ->
-            val bytes = input.readPrefix(24)
-            if (bytes.size < 24) return@CleanedImageProbe null
-            val signature = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-            if (!bytes.copyOfRange(0, 8).contentEquals(signature)) return@CleanedImageProbe null
-            if (String(bytes.copyOfRange(12, 16), StandardCharsets.US_ASCII) != "IHDR") {
-                return@CleanedImageProbe null
-            }
-            fun be32(offset: Int): Int =
-                ((bytes[offset].toInt() and 0xff) shl 24) or
-                    ((bytes[offset + 1].toInt() and 0xff) shl 16) or
-                    ((bytes[offset + 2].toInt() and 0xff) shl 8) or
-                    (bytes[offset + 3].toInt() and 0xff)
-            val width = be32(16)
-            val height = be32(20)
-            if (width <= 0 || height <= 0) return@CleanedImageProbe null
-            ProbedImage(width, height)
-        }
-    }
-
-    private fun InputStream.readPrefix(limit: Int): ByteArray {
-        val output = ByteArray(limit)
-        var offset = 0
-        while (offset < limit) {
-            val read = read(output, offset, limit - offset)
-            if (read < 0) break
-            offset += read
-        }
-        return output.copyOf(offset)
-    }
 
     /** Complete PNG fixture; the production path never validates fabricated bytes. */
     private fun pngBytes(width: Int, height: Int): ByteArray {
@@ -206,7 +163,6 @@ class DurableStatusWipeGateTest {
 
     @Test
     fun `a created probe pass wipes the durable status cache while a held probe does not`() = runTest {
-        installPngHeaderProbe()
         writeLegacyChapter()
         // Materialize the artifact manifest beside the preserved flat file;
         // the open path never decodes or renames that file.
@@ -238,7 +194,6 @@ class DurableStatusWipeGateTest {
 
     @Test
     fun `an active store short-circuits the probe path without wiping`() = runTest {
-        installPngHeaderProbe()
         writeLegacyChapter()
         val registry = ActiveChapterStoreRegistry()
         val resolver = resolver(provider(), registry)

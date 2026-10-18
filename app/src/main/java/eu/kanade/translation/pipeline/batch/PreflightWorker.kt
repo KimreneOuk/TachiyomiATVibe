@@ -292,15 +292,6 @@ internal class PreflightWorker(
     private suspend fun recordPageFailure(failure: PreflightStageFailure) =
         context.failureRecorder(failure)
 
-    private fun runConfigFingerprint(config: RunConfigSnapshot): String =
-        ChapterProfileBatchCoordinator.runConfigFingerprint(config)
-
-    private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
-        ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
-
-    private fun newRunId(sourceDigest: String, frozenFingerprint: String): String =
-        ChapterProfileBatchCoordinator.newRunId(sourceDigest, frozenFingerprint)
-
     suspend fun runPhase(
         orderedPages: List<PageKey>,
         computeClass: TranslatorComputeClass,
@@ -327,7 +318,7 @@ internal class PreflightWorker(
             )
         }
 
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
         val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
         val terminalPrior = priorRecord?.takeIf {
             it.state == ChapterRunState.FINALIZE || it.state == ChapterRunState.COMPLETE
@@ -337,7 +328,7 @@ internal class PreflightWorker(
         // before attempting a FINALIZE/COMPLETE shortcut.
         val freshTerminalPairs = terminalPrior?.let { context.freshSourcePairsForPages(orderedPages) }
         if (freshTerminalPairs != null) context.useFreshSourcePairsForRun(freshTerminalPairs)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val sourceDigest = ChapterProfileBatchCoordinator.orderedSourceDigest(effectiveSourcePairs)
         val reusablePrior = priorRecord?.takeIf {
             it.frozenRunConfigFingerprint == frozenFingerprint &&
                 (
@@ -345,7 +336,7 @@ internal class PreflightWorker(
                         (freshTerminalPairs != null && it.orderedSourceDigest == sourceDigest)
                     )
         }
-        val runId = reusablePrior?.runId ?: newRunId(sourceDigest, frozenFingerprint)
+        val runId = reusablePrior?.runId ?: ChapterProfileBatchCoordinator.newRunId(sourceDigest, frozenFingerprint)
 
         // A missing or malformed current observation refuses terminal resume
         // and starts a new run. A changed valid digest also starts a new id.

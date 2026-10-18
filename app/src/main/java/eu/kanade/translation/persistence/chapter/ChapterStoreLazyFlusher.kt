@@ -115,7 +115,7 @@ internal class ChapterStoreLazyFlusher(private val store: ChapterTranslationStor
                 return@forEach
             }
             try {
-                if (!store.persistArtifactMutation(
+                if (!store.publicationBridge.persistArtifactMutation(
                         pageKey = mutation.pageKey,
                         previous = mutation.previous,
                         updated = mutation.updated,

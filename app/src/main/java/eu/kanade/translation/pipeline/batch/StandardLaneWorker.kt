@@ -98,12 +98,6 @@ internal class StandardLaneWorker(
         baseCounters,
     )
 
-    private fun runConfigFingerprint(config: RunConfigSnapshot): String =
-        ChapterProfileBatchCoordinator.runConfigFingerprint(config)
-
-    private fun orderedSourceDigest(pairs: List<Pair<String, String>>): String =
-        ChapterProfileBatchCoordinator.orderedSourceDigest(pairs)
-
     private suspend fun standardPageTerminalAtTranslate(pageKey: String, page: PageTranslationView): Boolean =
         ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
             page,
@@ -119,8 +113,8 @@ internal class StandardLaneWorker(
         hasGaps: Boolean = false,
     ): BatchPass1Outcome {
         val overlapScheduler = context.overlapScheduler
-        val frozenFingerprint = runConfigFingerprint(frozenConfig)
-        val sourceDigest = orderedSourceDigest(effectiveSourcePairs)
+        val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
+        val sourceDigest = ChapterProfileBatchCoordinator.orderedSourceDigest(effectiveSourcePairs)
         val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         fun translateCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra

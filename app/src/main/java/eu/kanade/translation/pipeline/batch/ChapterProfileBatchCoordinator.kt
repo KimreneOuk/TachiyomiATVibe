@@ -36,6 +36,7 @@ import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.artifact.StageFingerprints
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -61,7 +62,6 @@ import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import java.security.MessageDigest
 
 /**
  * Coordinates durable batch translation for the AI and standard lanes.
@@ -1654,9 +1654,8 @@ internal class ChapterProfileBatchCoordinator(
             "${part.encodeToByteArray().size}:$part"
         }
 
-        fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { byte -> "%02x".format(byte) }
+        /** Raw SHA-256 over already-serialized bytes, lowercase hex. */
+        fun sha256Hex(bytes: ByteArray): String = StageFingerprints.sha256Hex(bytes)
 
         fun sha256Hex(text: String): String = sha256Hex(text.encodeToByteArray())
 

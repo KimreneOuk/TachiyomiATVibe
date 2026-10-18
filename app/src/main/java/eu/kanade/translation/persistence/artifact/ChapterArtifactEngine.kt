@@ -311,7 +311,6 @@ class ChapterArtifactEngine(
                 )
             },
             nowEpochMs = nowEpochMs,
-            commitPoint = CommitPoint.CHAPTER_PHASE_RECORD,
         )
     }
 
@@ -352,7 +351,7 @@ class ChapterArtifactEngine(
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         if (manifest.activeRun == null) {
-            return TransactionOutcome.Committed(manifest, commitPoint = CommitPoint.CHAPTER_PHASE_RECORD)
+            return TransactionOutcome.Committed(manifest)
         }
         val updated = manifest.copy(activeRun = null, updatedAtEpochMs = nowEpochMs)
         if (!publishManifestInternal(updated)) {
@@ -362,7 +361,7 @@ class ChapterArtifactEngine(
             }
             return TransactionOutcome.Rejected("manifest publication failed; active run pointer unchanged")
         }
-        return TransactionOutcome.Committed(updated, commitPoint = CommitPoint.CHAPTER_PHASE_RECORD)
+        return TransactionOutcome.Committed(updated)
     }
 
     // ------------------------------------------------------------------
@@ -676,7 +675,6 @@ class ChapterArtifactEngine(
             updatePointers = { updated },
             nowEpochMs = nowEpochMs,
         )
-        val point = if (mode == OcrCheckpointMode.CLOSE) CommitPoint.OCR_CHECKPOINT_CLOSE else null
         return when (outcome) {
             is TransactionOutcome.Committed ->
                 if (sweepAfterCommit) {
@@ -714,10 +712,9 @@ class ChapterArtifactEngine(
                         outcome.manifest,
                         successorGenerationId ?: outcome.generationId,
                         retention.deletedNames,
-                        commitPoint = point,
                     )
                 } else {
-                    outcome.copy(commitPoint = point)
+                    outcome
                 }
             is TransactionOutcome.Rejected -> outcome
         }
@@ -789,7 +786,6 @@ class ChapterArtifactEngine(
             val manifest: ChapterArtifactManifest,
             val generationId: String? = null,
             val deletedFiles: List<String> = emptyList(),
-            val commitPoint: CommitPoint? = null,
             val candidateOpenState: CandidateOpenState? = null,
         ) : TransactionOutcome
 
@@ -851,8 +847,6 @@ class ChapterArtifactEngine(
         sidecars: List<SidecarPublication>,
         updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
         nowEpochMs: Long = System.currentTimeMillis(),
-        commitPoint: CommitPoint? = null,
-        syncToDisk: Boolean = false,
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         sidecars.forEach { sidecar ->
@@ -868,14 +862,11 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
             }
         }
-        val shouldSync = syncToDisk ||
-            commitPoint == CommitPoint.EXPLICIT_FLUSH ||
-            commitPoint == CommitPoint.CHAPTER_COMPLETE
         val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
-        if (!publishManifestInternal(updated, syncToDisk = shouldSync)) {
+        if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
         }
-        return TransactionOutcome.Committed(updated, commitPoint = commitPoint)
+        return TransactionOutcome.Committed(updated)
     }
 
     /**
@@ -896,7 +887,6 @@ class ChapterArtifactEngine(
         sidecars: List<SidecarPublication>,
         updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
         nowEpochMs: Long = System.currentTimeMillis(),
-        commitPoint: CommitPoint? = null,
         seam: String,
     ): TransactionOutcome = retryOnStaleManifest(
         firstAttempt = publishSidecarPointers(
@@ -904,7 +894,6 @@ class ChapterArtifactEngine(
             sidecars = sidecars,
             updatePointers = updatePointers,
             nowEpochMs = nowEpochMs,
-            commitPoint = commitPoint,
         ),
         callerManifest = manifest,
         seam = seam,
@@ -914,7 +903,6 @@ class ChapterArtifactEngine(
             sidecars = sidecars,
             updatePointers = updatePointers,
             nowEpochMs = nowEpochMs,
-            commitPoint = commitPoint,
         )
     }
 
@@ -1712,7 +1700,7 @@ class ChapterArtifactEngine(
         if (!publishManifestInternal(updated)) {
             return rejectAndRestoreCandidate("manifest publication failed; committed pointer unchanged")
         }
-        return TransactionOutcome.Committed(updated, generationId, commitPoint = CommitPoint.PAGE_TERMINAL_PROMOTION)
+        return TransactionOutcome.Committed(updated, generationId)
     }
 
     /** Cancels a live candidate while retaining the committed pointer. */
