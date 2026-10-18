@@ -1,0 +1,300 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.12/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+Configuration on demand is an incubating feature.
+Type-safe project accessors is an incubating feature.
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:generateExternalPluginSpecBuilders FROM-CACHE
+> Task :buildSrc:extractPrecompiledScriptPluginPlugins FROM-CACHE
+> Task :buildSrc:compilePluginsBlocks FROM-CACHE
+> Task :buildSrc:generatePrecompiledScriptPluginAccessors FROM-CACHE
+> Task :buildSrc:generateScriptPluginAdapters FROM-CACHE
+> Task :buildSrc:compileKotlin FROM-CACHE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+
+> Configure project :app
+w: Deprecated Gradle Property 'kotlin.mpp.androidGradlePluginCompatibility.nowarn' Used
+The `kotlin.mpp.androidGradlePluginCompatibility.nowarn` deprecated property is used in your build.
+Solution:
+It is unsupported, please stop using it.
+
+
+> Task :core-metadata:preBuild UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core-metadata:preDebugBuild UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preStandardDebugBuild UP-TO-DATE
+> Task :core-metadata:generateDebugResValues FROM-CACHE
+> Task :core-metadata:generateDebugResources FROM-CACHE
+> Task :core-metadata:packageDebugResources FROM-CACHE
+> Task :data:preBuild UP-TO-DATE
+> Task :data:preDebugBuild UP-TO-DATE
+> Task :data:generateDebugResValues FROM-CACHE
+> Task :data:generateDebugResources FROM-CACHE
+> Task :data:packageDebugResources FROM-CACHE
+> Task :domain:preBuild UP-TO-DATE
+> Task :domain:preDebugBuild UP-TO-DATE
+> Task :domain:generateDebugResValues FROM-CACHE
+> Task :domain:generateDebugResources FROM-CACHE
+> Task :domain:packageDebugResources FROM-CACHE
+> Task :i18n:generateLocalesConfig UP-TO-DATE
+> Task :i18n:generateMRcommonMain
+> Task :i18n:generateMRandroidDebug SKIPPED
+> Task :i18n:generateMRandroidInstrumentedTest FROM-CACHE
+> Task :i18n:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n:generateMRandroidMain FROM-CACHE
+> Task :i18n:generateMRandroidRelease SKIPPED
+> Task :i18n:generateMRcommonTest
+> Task :i18n:generateMRandroidUnitTest FROM-CACHE
+> Task :i18n:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n:preBuild UP-TO-DATE
+> Task :i18n:preDebugBuild UP-TO-DATE
+> Task :i18n:generateDebugResValues FROM-CACHE
+> Task :i18n:generateDebugResources FROM-CACHE
+> Task :i18n:packageDebugResources FROM-CACHE
+> Task :i18n-at:generateMRcommonMain
+> Task :i18n-at:generateMRandroidDebug SKIPPED
+> Task :i18n-at:generateMRandroidInstrumentedTest FROM-CACHE
+> Task :i18n-at:generateMRandroidInstrumentedTestDebug SKIPPED
+> Task :i18n-at:generateMRandroidMain FROM-CACHE
+> Task :i18n-at:generateMRandroidRelease SKIPPED
+> Task :i18n-at:generateMRcommonTest
+> Task :i18n-at:generateMRandroidUnitTest FROM-CACHE
+> Task :i18n-at:generateMRandroidUnitTestDebug SKIPPED
+> Task :i18n-at:generateMRandroidUnitTestRelease SKIPPED
+> Task :i18n-at:preBuild UP-TO-DATE
+> Task :i18n-at:preDebugBuild UP-TO-DATE
+> Task :i18n-at:generateDebugResValues FROM-CACHE
+> Task :i18n-at:generateDebugResources FROM-CACHE
+> Task :i18n-at:packageDebugResources FROM-CACHE
+> Task :presentation-core:preBuild UP-TO-DATE
+> Task :presentation-core:preDebugBuild UP-TO-DATE
+> Task :presentation-core:generateDebugResValues FROM-CACHE
+> Task :presentation-core:generateDebugResources FROM-CACHE
+> Task :presentation-core:packageDebugResources FROM-CACHE
+> Task :presentation-widget:preBuild UP-TO-DATE
+> Task :presentation-widget:preDebugBuild UP-TO-DATE
+> Task :presentation-widget:generateDebugResValues FROM-CACHE
+> Task :presentation-widget:generateDebugResources FROM-CACHE
+> Task :presentation-widget:packageDebugResources FROM-CACHE
+> Task :source-api:preBuild UP-TO-DATE
+> Task :source-api:preDebugBuild UP-TO-DATE
+> Task :source-api:generateDebugResValues FROM-CACHE
+> Task :source-api:generateDebugResources FROM-CACHE
+> Task :source-api:packageDebugResources FROM-CACHE
+> Task :source-local:preBuild UP-TO-DATE
+> Task :source-local:preDebugBuild UP-TO-DATE
+> Task :source-local:generateDebugResValues FROM-CACHE
+> Task :source-local:generateDebugResources FROM-CACHE
+> Task :source-local:packageDebugResources FROM-CACHE
+> Task :core:archive:preBuild UP-TO-DATE
+> Task :core:archive:preDebugBuild UP-TO-DATE
+> Task :core:archive:generateDebugResValues FROM-CACHE
+> Task :core:archive:generateDebugResources FROM-CACHE
+> Task :core:archive:packageDebugResources FROM-CACHE
+> Task :core:common:preBuild UP-TO-DATE
+> Task :core:common:preDebugBuild UP-TO-DATE
+> Task :core:common:generateDebugResValues FROM-CACHE
+> Task :core:common:generateDebugResources FROM-CACHE
+> Task :core:common:packageDebugResources FROM-CACHE
+> Task :core-metadata:writeDebugAarMetadata
+> Task :data:writeDebugAarMetadata
+> Task :domain:writeDebugAarMetadata
+> Task :i18n:writeDebugAarMetadata
+> Task :i18n-at:writeDebugAarMetadata
+> Task :presentation-core:writeDebugAarMetadata
+> Task :presentation-widget:writeDebugAarMetadata
+> Task :source-api:writeDebugAarMetadata
+> Task :source-local:writeDebugAarMetadata
+> Task :core:archive:writeDebugAarMetadata
+> Task :core:common:writeDebugAarMetadata
+> Task :core-metadata:extractDeepLinksDebug FROM-CACHE
+> Task :core-metadata:processDebugManifest FROM-CACHE
+> Task :data:extractDeepLinksDebug FROM-CACHE
+> Task :data:processDebugManifest FROM-CACHE
+> Task :domain:extractDeepLinksDebug FROM-CACHE
+> Task :domain:processDebugManifest FROM-CACHE
+> Task :i18n:extractDeepLinksDebug FROM-CACHE
+> Task :i18n:processDebugManifest FROM-CACHE
+> Task :i18n-at:extractDeepLinksDebug FROM-CACHE
+> Task :i18n-at:processDebugManifest FROM-CACHE
+> Task :presentation-core:extractDeepLinksDebug FROM-CACHE
+> Task :presentation-core:processDebugManifest FROM-CACHE
+> Task :presentation-widget:extractDeepLinksDebug FROM-CACHE
+> Task :presentation-widget:processDebugManifest FROM-CACHE
+> Task :source-api:extractDeepLinksDebug FROM-CACHE
+> Task :source-api:processDebugManifest FROM-CACHE
+> Task :source-local:extractDeepLinksDebug FROM-CACHE
+> Task :source-local:processDebugManifest FROM-CACHE
+> Task :core:archive:extractDeepLinksDebug FROM-CACHE
+> Task :core:archive:processDebugManifest FROM-CACHE
+> Task :core:common:extractDeepLinksDebug FROM-CACHE
+> Task :core:common:processDebugManifest FROM-CACHE
+> Task :core-metadata:compileDebugLibraryResources FROM-CACHE
+> Task :core-metadata:parseDebugLocalResources FROM-CACHE
+> Task :source-api:parseDebugLocalResources FROM-CACHE
+> Task :i18n:parseDebugLocalResources FROM-CACHE
+> Task :app:dataBindingMergeDependencyArtifactsStandardDebug
+> Task :i18n:generateDebugRFile FROM-CACHE
+> Task :app:generateStandardDebugResValues FROM-CACHE
+> Task :core:common:parseDebugLocalResources FROM-CACHE
+> Task :app:generateStandardDebugResources FROM-CACHE
+> Task :app:collectDependencies FROM-CACHE
+> Task :app:prepareLibraryDefinitionsStandardDebug FROM-CACHE
+> Task :app:prepareStandardDebugShortcutXML
+> Task :core:common:generateDebugRFile FROM-CACHE
+> Task :source-api:generateDebugRFile FROM-CACHE
+> Task :core-metadata:generateDebugRFile FROM-CACHE
+> Task :data:compileDebugLibraryResources FROM-CACHE
+> Task :data:parseDebugLocalResources FROM-CACHE
+> Task :domain:parseDebugLocalResources FROM-CACHE
+> Task :domain:generateDebugRFile FROM-CACHE
+> Task :data:generateDebugRFile FROM-CACHE
+> Task :domain:compileDebugLibraryResources FROM-CACHE
+> Task :i18n:compileDebugLibraryResources FROM-CACHE
+> Task :i18n-at:compileDebugLibraryResources FROM-CACHE
+> Task :i18n-at:parseDebugLocalResources FROM-CACHE
+> Task :i18n-at:generateDebugRFile FROM-CACHE
+> Task :presentation-core:compileDebugLibraryResources FROM-CACHE
+> Task :presentation-core:parseDebugLocalResources FROM-CACHE
+> Task :app:mergeStandardDebugResources FROM-CACHE
+> Task :presentation-core:generateDebugRFile FROM-CACHE
+> Task :app:dataBindingGenBaseClassesStandardDebug FROM-CACHE
+> Task :presentation-widget:compileDebugLibraryResources FROM-CACHE
+> Task :presentation-widget:parseDebugLocalResources FROM-CACHE
+> Task :app:generateStandardDebugBuildConfig
+> Task :presentation-widget:generateDebugRFile FROM-CACHE
+> Task :app:checkStandardDebugAarMetadata
+> Task :app:mapStandardDebugSourceSetPaths
+> Task :source-api:compileDebugLibraryResources FROM-CACHE
+> Task :source-local:compileDebugLibraryResources FROM-CACHE
+> Task :app:createStandardDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksStandardDebug FROM-CACHE
+> Task :source-local:parseDebugLocalResources FROM-CACHE
+> Task :core:archive:parseDebugLocalResources FROM-CACHE
+> Task :core:archive:generateDebugRFile FROM-CACHE
+> Task :source-local:generateDebugRFile FROM-CACHE
+> Task :core:archive:compileDebugLibraryResources FROM-CACHE
+> Task :core:common:compileDebugLibraryResources FROM-CACHE
+> Task :core-metadata:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :source-api:kmpPartiallyResolvedDependenciesChecker
+> Task :source-api:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n:compileDebugKotlinAndroid FROM-CACHE
+> Task :i18n:javaPreCompileDebug FROM-CACHE
+> Task :i18n:compileDebugJavaWithJavac NO-SOURCE
+> Task :i18n:bundleLibCompileToJarDebug
+> Task :core:common:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:processStandardDebugMainManifest
+> Task :app:processStandardDebugManifest
+> Task :app:processStandardDebugManifestForPackage
+> Task :core:common:compileDebugKotlin FROM-CACHE
+> Task :core:common:javaPreCompileDebug FROM-CACHE
+> Task :core:common:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:common:bundleLibCompileToJarDebug
+> Task :source-api:compileDebugKotlinAndroid FROM-CACHE
+> Task :source-api:javaPreCompileDebug FROM-CACHE
+> Task :source-api:compileDebugJavaWithJavac NO-SOURCE
+> Task :source-api:bundleLibCompileToJarDebug
+> Task :core-metadata:compileDebugKotlin FROM-CACHE
+> Task :core-metadata:javaPreCompileDebug FROM-CACHE
+> Task :core-metadata:compileDebugJavaWithJavac NO-SOURCE
+> Task :core-metadata:bundleLibCompileToJarDebug
+> Task :data:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :data:generateDebugDatabaseInterface FROM-CACHE
+> Task :domain:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :domain:compileDebugKotlin FROM-CACHE
+> Task :domain:javaPreCompileDebug FROM-CACHE
+> Task :domain:compileDebugJavaWithJavac NO-SOURCE
+> Task :domain:bundleLibCompileToJarDebug
+> Task :data:compileDebugKotlin FROM-CACHE
+> Task :data:javaPreCompileDebug FROM-CACHE
+> Task :data:compileDebugJavaWithJavac NO-SOURCE
+> Task :data:bundleLibCompileToJarDebug
+> Task :i18n-at:kmpPartiallyResolvedDependenciesChecker
+> Task :i18n-at:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :i18n-at:compileDebugKotlinAndroid FROM-CACHE
+> Task :i18n-at:javaPreCompileDebug FROM-CACHE
+> Task :i18n-at:compileDebugJavaWithJavac NO-SOURCE
+> Task :i18n-at:bundleLibCompileToJarDebug
+> Task :presentation-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-core:compileDebugKotlin FROM-CACHE
+> Task :presentation-core:javaPreCompileDebug FROM-CACHE
+> Task :presentation-core:compileDebugJavaWithJavac NO-SOURCE
+> Task :presentation-core:bundleLibCompileToJarDebug
+> Task :presentation-widget:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :presentation-widget:compileDebugKotlin FROM-CACHE
+> Task :presentation-widget:javaPreCompileDebug FROM-CACHE
+> Task :presentation-widget:compileDebugJavaWithJavac NO-SOURCE
+> Task :presentation-widget:bundleLibCompileToJarDebug
+> Task :source-local:kmpPartiallyResolvedDependenciesChecker
+> Task :source-local:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:archive:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :core:archive:compileDebugKotlin FROM-CACHE
+> Task :core:archive:javaPreCompileDebug FROM-CACHE
+> Task :core:archive:compileDebugJavaWithJavac NO-SOURCE
+> Task :core:archive:bundleLibCompileToJarDebug
+> Task :source-local:compileDebugKotlinAndroid FROM-CACHE
+> Task :source-local:javaPreCompileDebug FROM-CACHE
+> Task :source-local:compileDebugJavaWithJavac NO-SOURCE
+> Task :source-local:bundleLibCompileToJarDebug
+> Task :app:javaPreCompileStandardDebug FROM-CACHE
+> Task :app:preStandardDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileStandardDebugUnitTest FROM-CACHE
+> Task :core-metadata:bundleLibRuntimeToJarDebug
+> Task :core-metadata:processDebugJavaRes
+> Task :data:bundleLibRuntimeToJarDebug
+> Task :data:processDebugJavaRes
+> Task :domain:bundleLibRuntimeToJarDebug
+> Task :domain:processDebugJavaRes
+> Task :i18n:bundleLibRuntimeToJarDebug
+> Task :i18n:processDebugJavaRes
+> Task :i18n-at:bundleLibRuntimeToJarDebug
+> Task :i18n-at:processDebugJavaRes
+> Task :presentation-core:bundleLibRuntimeToJarDebug
+> Task :presentation-core:processDebugJavaRes
+> Task :presentation-widget:bundleLibRuntimeToJarDebug
+> Task :presentation-widget:processDebugJavaRes
+> Task :source-api:bundleLibRuntimeToJarDebug
+> Task :source-api:processDebugJavaRes
+> Task :source-local:bundleLibRuntimeToJarDebug
+> Task :source-local:processDebugJavaRes
+> Task :core:archive:bundleLibRuntimeToJarDebug
+> Task :core:archive:processDebugJavaRes
+> Task :core:common:bundleLibRuntimeToJarDebug
+> Task :core:common:processDebugJavaRes
+> Task :app:processStandardDebugResources
+> Task :app:compileStandardDebugKotlin
+e: file:///C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p0b-auto-token/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderTranslationController.kt:1339:32 Argument type mismatch: actual type is 'PageTranslationView', but 'PageTranslation' was expected.
+
+> Task :app:compileStandardDebugKotlin FAILED
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p0b-auto-token/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileStandardDebugKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 2m 16s
+198 actionable tasks: 66 executed, 132 from cache

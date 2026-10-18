@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-18T15:06:26" hostname="DESKTOP-8VS098Q" time="0.268">
+  <properties/>
+  <testcase name="reproduction - snapshot-shaped mutation after MANUAL preemption borrows the replacement authority()" classname="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" time="0.195"/>
+  <testcase name="MANUAL eviction whose record is already released still rejects the resumed sweep()" classname="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" time="0.02"/>
+  <testcase name="MANUAL preemption between AUTO acquisition and mutation rejects the resumed sweep and preserves MANUAL page, version and lease()" classname="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" time="0.042"/>
+  <testcase name="uncontested AUTO repair flips stranded stages and releases only its acquired token()" classname="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" time="0.004"/>
+  <testcase name="sweep acquisition denied while MANUAL owns the page leaks no release()" classname="eu.kanade.translation.persistence.chapter.StrandedPageLeaseRepairTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -30,7 +30,6 @@ import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
@@ -45,8 +44,7 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.chapter.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
@@ -1329,48 +1327,18 @@ internal class ReaderTranslationController(
                     "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
             }
             //   the sweep is reader-side AUTOMATIC maintenance — its
-            // lease is AUTO (never preempts; a reader tap evicts it).
+            // lease is AUTO (never preempts; a reader tap evicts it). The
+            // mutation fences on the EXACT lease evidence captured at
+            // acquisition (token/generation/version), never a fresh snapshot:
+            // a MANUAL tap preempting between acquire and mutate would
+            // otherwise lend the stale sweep its own write authority. Release
+            // is token-fenced to the acquired record only.
             val repaired = withStrandedSweepTrace(chapterId, pageKey) {
-                val lease = TranslationTrace.withLeaseWait(
-                    site = TranslationTraceSite.READER_STRANDED_SWEEP,
-                    leaseKind = TranslationTraceLeaseKind.OCR,
-                ) {
-                    store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
-                }
-                if (lease !is LeaseAcquisition.Granted) return@withStrandedSweepTrace false
-                try {
-                    store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
-                        val safe = existing ?: return@updatePageFromCurrentSnapshot pt.toDraft()
-                        if (safe.runGeneration != store.currentGeneration) return@updatePageFromCurrentSnapshot safe
-                        val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
-                            safe.inpaintStatus == StageStatus.FAILED ||
-                            safe.translationStatus == StageStatus.FAILED ||
-                            safe.renderStatus == StageStatus.FAILED ||
-                            safe.displayImageName != null ||
-                            safe.isCleanedImageReady ||
-                            safe.isTextlessTerminal
-                        if (safeTerminal) return@updatePageFromCurrentSnapshot safe
-                        safe.apply {
-                            if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
-                                ocrStatus = StageStatus.CANCELLED
-                            }
-                            if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
-                                inpaintStatus = StageStatus.CANCELLED
-                            }
-                            if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
-                                translationStatus = StageStatus.CANCELLED
-                            }
-                            if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
-                                renderStatus = StageStatus.CANCELLED
-                            }
-                            errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
-                            updatedAt = System.currentTimeMillis()
-                        }
-                    }
-                } finally {
-                    store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO)
-                }
-                true
+                repairStrandedPageWithAcquiredAutoLease(
+                    store = store,
+                    pageKey = pageKey,
+                    stranded = pt.toDraft(),
+                )
             }
             if (!repaired) continue
         }

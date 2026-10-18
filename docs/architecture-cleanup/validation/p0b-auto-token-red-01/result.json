@@ -1,0 +1,9 @@
+{
+  "actual_exit": 0,
+  "guard_exit": 0,
+  "breach": null,
+  "monitor_error": null,
+  "elapsed_seconds": 61.05,
+  "sibling_survived": false,
+  "verified_target_terminated": false
+}

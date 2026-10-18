@@ -1,0 +1,9 @@
+{
+  "actual_exit": 1,
+  "guard_exit": 124,
+  "breach": "setup/compilation deadline",
+  "monitor_error": null,
+  "elapsed_seconds": 9.67,
+  "sibling_survived": true,
+  "verified_target_terminated": true
+}

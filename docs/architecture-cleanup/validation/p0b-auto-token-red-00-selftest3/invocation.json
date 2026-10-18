@@ -1,0 +1,20 @@
+{
+  "run_id": "a0989dc3-7833-480d-8662-4349367a88ce",
+  "repo": "C:\\Users\\ADMIN\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\persistence-p0b-auto-token",
+  "task": ":app:testStandardDebugUnitTest",
+  "command": [
+    "C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\java.exe",
+    "-Dtraycer.validation.runId=a0989dc3-7833-480d-8662-4349367a88ce",
+    "-Dtraycer.validation.task=:app:testStandardDebugUnitTest",
+    "-Dtraycer.validation.project=bce7c8dc18eaa7d91835e28a",
+    "C:\\Users\\ADMIN\\.traycer\\worktrees\\kimreneouk__tachiyomiatvibe\\persistence-p0b-auto-token\\docs\\architecture-cleanup\\validation\\p0b-auto-token-red-00-selftest3\\GuardSleeper.java"
+  ],
+  "setup_seconds": 8,
+  "test_seconds": 300,
+  "tags": [
+    "-Dtraycer.validation.runId=a0989dc3-7833-480d-8662-4349367a88ce",
+    "-Dtraycer.validation.task=:app:testStandardDebugUnitTest",
+    "-Dtraycer.validation.project=bce7c8dc18eaa7d91835e28a"
+  ],
+  "daemon_marker": "-XX:ErrorFile=C:/Users/ADMIN/.traycer/worktrees/kimreneouk__tachiyomiatvibe/persistence-p0b-auto-token/docs/architecture-cleanup/validation/p0b-auto-token-red-00-selftest3/jvm-a0989dc3-7833-480d-8662-4349367a88ce-52a3e56ee039ab8a-bce7c8dc18eaa7d91835e28a-%p.log"
+}
