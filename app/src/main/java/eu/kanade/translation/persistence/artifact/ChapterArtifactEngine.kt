@@ -149,15 +149,15 @@ class ChapterArtifactEngine(
                 reconcileRetention(existing)
                 retentionStage.end()
             }
-            val hadInterruptedStage = existing.pages.values.any { page ->
-                ArtifactStage.entries.any { stage -> page.stage(stage)?.status == ArtifactStageStatus.RUNNING }
-            }
             val recoverInterruptedStage = ReaderEntryTrace.begin("store.recoverInterrupted", null)
             val recovered = recoverInterruptedStages(existing)
             recoverInterruptedStage.end()
-            if (!hadInterruptedStage || recovered != existing) {
-                io.delete(backupName())
-            }
+            // P3A: the open-time backup deletion was removed. The retained
+            // `.bak` is the chapter's crash-recovery copy and repair/retry
+            // evidence; the next manifest rotation replaces it, and explicit
+            // chapter teardown remains the only other remover. Interrupted-
+            // stage recovery (when it published) already rotated a fresh
+            // backup into place.
             return LoadResult(recovered)
         }
 
@@ -165,10 +165,15 @@ class ChapterArtifactEngine(
             chapterKey = layout.chapterKey,
             updatedAtEpochMs = System.currentTimeMillis(),
         )
-        val published = publishManifestInternal(created)
-        if (!published) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact manifest creation failed: chapter=${layout.chapterKey}"
+        when (val receipt = publishDestructiveManifest(created)) {
+            is DestructiveManifestReceipt.Complete -> {}
+            is DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete -> logcat(LogPriority.WARN) {
+                "TachiyomiAT artifact manifest created without a verified backup: " +
+                    "chapter=${layout.chapterKey} reason=${receipt.reason}"
+            }
+            is DestructiveManifestReceipt.NotPublished -> logcat(LogPriority.WARN) {
+                "TachiyomiAT artifact manifest creation failed: " +
+                    "chapter=${layout.chapterKey} reason=${receipt.reason}"
             }
         }
         return LoadResult(created)
@@ -185,6 +190,103 @@ class ChapterArtifactEngine(
     /** Crash-safe manifest publication: temp, validate, rotate backup, rename. */
     fun publishManifest(manifest: ChapterArtifactManifest): Boolean =
         publishManifestInternal(stampChapterKey(manifest))
+
+    /**
+     * P3A receipt of a destructive or initialization manifest publication:
+     * the publication must leave a verified same-state backup, because
+     * restoring a stale previous generation after a later primary corruption
+     * would resurrect state the destructive operation removed.
+     */
+    sealed interface DestructiveManifestReceipt {
+        /** Primary and backup verified same-state. */
+        data class Complete(val manifest: ChapterArtifactManifest) : DestructiveManifestReceipt
+
+        /**
+         * Primary advanced but the same-state backup copy is unverified —
+         * typed incomplete, never rolled back, never silent. The previous
+         * generation may still occupy the backup name.
+         */
+        data class PrimaryAdvancedBackupIncomplete(
+            val manifest: ChapterArtifactManifest,
+            val reason: String,
+        ) : DestructiveManifestReceipt
+
+        /** Nothing published; the prior manifest remains authoritative. */
+        data class NotPublished(val reason: String) : DestructiveManifestReceipt
+    }
+
+    /**
+     * Checked destructive/initialization publication: same future-primary and
+     * future-backup guards as [publishManifestInternal], then ONE
+     * [AtomicChapterDocuments.publishVerifiedJson] publication that leaves a
+     * verified same-state backup. Never routed through the coalescing stash —
+     * stash acceptance is never durable success — but while a window is open
+     * the stash baseline is refreshed to the published state so the owning
+     * window cannot later overwrite it with an older intended manifest (the
+     * store monitor serializes the whole chain).
+     */
+    internal fun publishDestructiveManifest(
+        manifest: ChapterArtifactManifest,
+        syncToDisk: Boolean = false,
+    ): DestructiveManifestReceipt {
+        if (readManifestDocument(layout.manifestFileName)?.schemaVersion
+                ?.let { it > ChapterArtifactManifest.SCHEMA_VERSION } == true
+        ) {
+            return DestructiveManifestReceipt.NotPublished(
+                "future-schema primary preserved: chapter=${layout.chapterKey}",
+            )
+        }
+        if (futureBackupPresent()) {
+            return DestructiveManifestReceipt.NotPublished(
+                "future-schema backup preserved: chapter=${layout.chapterKey}",
+            )
+        }
+        val stamped = stampChapterKey(manifest)
+        if (manifestCoalescingDepth > 0) {
+            coalescedManifest = stamped
+            if (syncToDisk) coalescedSyncToDisk = true
+        }
+        return when (val verified = documents.publishVerifiedJson(layout.manifestFileName, stamped, syncToDisk)) {
+            is AtomicChapterDocuments.VerifiedPublishReceipt.Complete ->
+                DestructiveManifestReceipt.Complete(stamped)
+            is AtomicChapterDocuments.VerifiedPublishReceipt.BackupNotVerified ->
+                DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete(stamped, verified.reason)
+            AtomicChapterDocuments.VerifiedPublishReceipt.NotPublished ->
+                DestructiveManifestReceipt.NotPublished(
+                    "manifest publication failed; prior manifest remains authoritative",
+                )
+        }
+    }
+
+    /**
+     * P3A: re-presents a recorded [IncompletePublicationReceipt] for one
+     * checked retry. The hard guarantee is the store's stale-manifest CAS in
+     * whatever ordinary transaction [retry] runs; this entry adds the honest
+     * fast path — when the durable manifest has moved past the receipt's
+     * [IncompletePublicationReceipt.actualAdvancedManifest], a NEWER state
+     * owns the chapter and the older receipt is retired WITHOUT any write,
+     * because finishing it would overwrite that newer state. The retry
+     * receives the receipt's durably restored candidate manifest when one
+     * exists, else the actually-advanced manifest, so the CAS baseline it
+     * presents is the one the receipt left behind.
+     */
+    fun finishIncompletePublication(
+        receipt: IncompletePublicationReceipt,
+        retry: (ChapterArtifactManifest) -> TransactionOutcome,
+    ): TransactionOutcome {
+        val durable = readManifest()
+        if (durable == null) {
+            return TransactionOutcome.Rejected("manifest is not durable: chapter=${layout.chapterKey}")
+        }
+        val presented = receipt.recoverableCandidateManifest ?: receipt.actualAdvancedManifest
+        if (receipt.actualAdvancedManifest != null && durable != receipt.actualAdvancedManifest) {
+            return TransactionOutcome.Rejected(
+                "newer artifact state owns the chapter; older publication receipt retired without write: " +
+                    "chapter=${layout.chapterKey}",
+            )
+        }
+        return retry(presented ?: durable)
+    }
 
     /**
      * Reads the chapter's durable attempt-ledger document.
@@ -787,6 +889,12 @@ class ChapterArtifactEngine(
             val generationId: String? = null,
             val deletedFiles: List<String> = emptyList(),
             val candidateOpenState: CandidateOpenState? = null,
+            /**
+             * P3A destructive-checked publications only: set when the manifest
+             * publication physically succeeded but the same-state backup copy
+             * could not be verified. Null keeps the plain Committed contract.
+             */
+            val unverifiedBackupReason: String? = null,
         ) : TransactionOutcome
 
         data class Rejected(
@@ -794,8 +902,38 @@ class ChapterArtifactEngine(
             val candidateOpenState: CandidateOpenState? = null,
             /** Candidate state durably restored when an immediate terminal publication failed. */
             val recoverableCandidateManifest: ChapterArtifactManifest? = null,
+            /**
+             * P3A: typed primary-advanced/replica-failed evidence when durable
+             * sidecar artifacts exist without the checked manifest commit
+             * (null = unchanged rejection: nothing advanced).
+             */
+            val incompletePublication: IncompletePublicationReceipt? = null,
         ) : TransactionOutcome
     }
+
+    /**
+     * P3A typed evidence for the P1 three-way outcome's incomplete branch:
+     * durable sidecar files (or a durably restored candidate manifest)
+     * advanced while the checked manifest commit for the intended state did
+     * not complete. Never a rollback and never a success — orphan sidecar
+     * files remain until retention reclaims them, and a caller may re-present
+     * the receipt through [finishIncompletePublication]. [baselineManifest]
+     * is the CAS baseline the failed attempt ran against and
+     * [actualAdvancedManifest] is the manifest actually durable when the
+     * receipt was produced (may be a candidate-restored state, not the
+     * intended one); finishing after the durable state moved past
+     * [actualAdvancedManifest] is refused — a newer state is never
+     * overwritten to finish an older receipt.
+     */
+    data class IncompletePublicationReceipt(
+        val baselineManifest: ChapterArtifactManifest?,
+        val actualAdvancedManifest: ChapterArtifactManifest?,
+        /** Sidecar files durably written by the attempt without their pointers. */
+        val advancedFiles: List<String>,
+        val failureReason: String,
+        /** Durably restored candidate state a retry may re-present, when one exists. */
+        val recoverableCandidateManifest: ChapterArtifactManifest? = null,
+    )
 
     /** Neutral outcome details for opening an artifact candidate. */
     sealed interface CandidateOpenState {
@@ -857,14 +995,40 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("sidecar outside the managed tree: file=${sidecar.fileName}")
             }
         }
+        // P3A: every durably written sidecar is recorded so a later failure
+        // carries the actual orphan evidence, not a bare rejection.
+        val advancedFiles = mutableListOf<String>()
         sidecars.forEach { sidecar ->
             if (!sidecar.publish()) {
-                return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
+                val reason = "sidecar publication failed: file=${sidecar.fileName}"
+                return if (advancedFiles.isEmpty()) {
+                    TransactionOutcome.Rejected(reason)
+                } else {
+                    TransactionOutcome.Rejected(
+                        reason,
+                        incompletePublication = IncompletePublicationReceipt(
+                            baselineManifest = manifest,
+                            actualAdvancedManifest = readManifest(),
+                            advancedFiles = advancedFiles.toList(),
+                            failureReason = reason,
+                        ),
+                    )
+                }
             }
+            advancedFiles += sidecar.fileName
         }
         val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
         if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
+            val reason = "manifest publication failed; prior manifest remains authoritative"
+            return TransactionOutcome.Rejected(
+                reason,
+                incompletePublication = IncompletePublicationReceipt(
+                    baselineManifest = manifest,
+                    actualAdvancedManifest = readManifest(),
+                    advancedFiles = advancedFiles.toList(),
+                    failureReason = reason,
+                ),
+            )
         }
         return TransactionOutcome.Committed(updated)
     }
@@ -1391,7 +1555,16 @@ class ChapterArtifactEngine(
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; candidate snapshot pointer unchanged")
+            val reason = "manifest publication failed; candidate snapshot pointer unchanged"
+            return TransactionOutcome.Rejected(
+                reason,
+                incompletePublication = IncompletePublicationReceipt(
+                    baselineManifest = manifest,
+                    actualAdvancedManifest = readManifest(),
+                    advancedFiles = listOf(fileName),
+                    failureReason = reason,
+                ),
+            )
         }
         return TransactionOutcome.Committed(updated, generationId)
     }
@@ -1571,8 +1744,19 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
         }
+        // P3A: files durably written by this attempt, carried as orphan
+        // evidence when the checked manifest commit does not complete.
+        val advancedFiles = mutableListOf<String>()
+        fun incompleteReceipt(failureReason: String): IncompletePublicationReceipt = IncompletePublicationReceipt(
+            baselineManifest = manifest,
+            actualAdvancedManifest = readManifest(),
+            advancedFiles = advancedFiles.toList(),
+            failureReason = failureReason,
+        )
         fun rejectAndRestoreCandidate(reason: String): TransactionOutcome.Rejected {
-            if (persistCandidateSnapshot) return TransactionOutcome.Rejected(reason)
+            if (persistCandidateSnapshot) {
+                return TransactionOutcome.Rejected(reason, incompletePublication = incompleteReceipt(reason))
+            }
 
             val candidateFile = candidate.pageSnapshotFileName
                 ?: layout.candidatePageSnapshotFile(pageKey, generationId)
@@ -1580,8 +1764,12 @@ class ChapterArtifactEngine(
             if (!documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
                 return TransactionOutcome.Rejected(
                     "$reason; recovery candidate snapshot publication failed: pageKey=$pageKey",
+                    incompletePublication = incompleteReceipt(
+                        "$reason; recovery candidate snapshot publication failed",
+                    ),
                 )
             }
+            advancedFiles += candidateFile
             val recoverablePage = page.copy(
                 source = resolvedPage.source,
                 candidate = candidate.copy(
@@ -1597,11 +1785,16 @@ class ChapterArtifactEngine(
             if (!publishManifestInternal(recoverableManifest)) {
                 return TransactionOutcome.Rejected(
                     "$reason; recovery candidate manifest publication failed: pageKey=$pageKey",
+                    incompletePublication = incompleteReceipt(reason),
                 )
             }
             return TransactionOutcome.Rejected(
                 reason = reason,
                 recoverableCandidateManifest = recoverableManifest,
+                incompletePublication = incompleteReceipt(reason).copy(
+                    actualAdvancedManifest = recoverableManifest,
+                    recoverableCandidateManifest = recoverableManifest,
+                ),
             )
         }
         if (persistCandidateSnapshot) {
@@ -1613,11 +1806,13 @@ class ChapterArtifactEngine(
             if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
                 return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
             }
+            advancedFiles += candidateFile
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {
             return rejectAndRestoreCandidate("committed page snapshot publication failed: pageKey=$pageKey")
         }
+        advancedFiles += committedFile
         val pageSnapshotFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
         val displayBase = DisplayBaseReference(
             kind = if (pageSnapshot.cleanedImageName != null) DisplayBaseKind.CLEANED_IMAGE else DisplayBaseKind.ORIGINAL_SOURCE,
@@ -1652,6 +1847,7 @@ class ChapterArtifactEngine(
         if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
             return rejectAndRestoreCandidate("generation record publication failed: generationId=$generationId")
         }
+        advancedFiles += layout.generationFile(generationId)
         val promotedTranslation = resolvedPage.translation?.copy(
             status = if (pageSnapshot.isTextlessTerminal) {
                 ArtifactStageStatus.TEXTLESS
@@ -1749,10 +1945,33 @@ class ChapterArtifactEngine(
             durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; reset pointers remain authoritative")
+        // P3A: a user reset is destructive — its completion must leave a
+        // verified same-state backup so a later backup recovery cannot
+        // resurrect the removed committed/candidate pointers.
+        val advancedFiles = listOfNotNull(
+            generationRecord?.let { layout.generationFile(it.generationId) },
+        )
+        return when (val receipt = publishDestructiveManifest(updated)) {
+            is DestructiveManifestReceipt.Complete ->
+                TransactionOutcome.Committed(updated, candidateGenerationId)
+            is DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete ->
+                TransactionOutcome.Committed(
+                    updated,
+                    candidateGenerationId,
+                    unverifiedBackupReason = receipt.reason,
+                )
+            is DestructiveManifestReceipt.NotPublished -> TransactionOutcome.Rejected(
+                "manifest publication failed; reset pointers remain authoritative",
+                incompletePublication = advancedFiles.takeIf { it.isNotEmpty() }?.let {
+                    IncompletePublicationReceipt(
+                        baselineManifest = manifest,
+                        actualAdvancedManifest = readManifest(),
+                        advancedFiles = it,
+                        failureReason = receipt.reason,
+                    )
+                },
+            )
         }
-        return TransactionOutcome.Committed(updated, candidateGenerationId)
     }
 
     /** Removes one page from the artifact-authoritative live manifest. */
@@ -1770,10 +1989,18 @@ class ChapterArtifactEngine(
             durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; page remains authoritative: pageKey=$pageKey")
+        // P3A: page removal is destructive — same-state backup requirement
+        // mirrors [demoteLivePage]. Nothing file-level advances before the
+        // manifest publication here, so a refusal is an unchanged rejection.
+        return when (val receipt = publishDestructiveManifest(updated)) {
+            is DestructiveManifestReceipt.Complete ->
+                TransactionOutcome.Committed(updated)
+            is DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete ->
+                TransactionOutcome.Committed(updated, unverifiedBackupReason = receipt.reason)
+            is DestructiveManifestReceipt.NotPublished -> TransactionOutcome.Rejected(
+                "manifest publication failed; page remains authoritative: pageKey=$pageKey",
+            )
         }
-        return TransactionOutcome.Committed(updated)
     }
 
     /**
@@ -1910,9 +2137,16 @@ class ChapterArtifactEngine(
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
+            val reason = "manifest publication failed; prior manifest remains authoritative"
             return TransactionOutcome.Rejected(
-                "manifest publication failed; prior manifest remains authoritative",
+                reason,
                 candidateOpenState = candidateOpenState,
+                incompletePublication = IncompletePublicationReceipt(
+                    baselineManifest = manifest,
+                    actualAdvancedManifest = readManifest(),
+                    advancedFiles = listOf(layout.generationFile(generationId)),
+                    failureReason = reason,
+                ),
             )
         }
         return TransactionOutcome.Committed(
@@ -1982,7 +2216,16 @@ class ChapterArtifactEngine(
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; candidate remains recorded")
+            val reason = "manifest publication failed; candidate remains recorded"
+            return TransactionOutcome.Rejected(
+                reason,
+                incompletePublication = IncompletePublicationReceipt(
+                    baselineManifest = manifest,
+                    actualAdvancedManifest = readManifest(),
+                    advancedFiles = listOf(layout.generationFile(generationId)),
+                    failureReason = reason,
+                ),
+            )
         }
         // Delete only the known files unlinked by this cancellation. A full
         // SAF tree sweep per page made relaunch slow on large chapters;

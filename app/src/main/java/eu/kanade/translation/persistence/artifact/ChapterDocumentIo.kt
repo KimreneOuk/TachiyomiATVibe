@@ -355,6 +355,74 @@ class AtomicChapterDocuments(
         syncToDisk: Boolean = false,
         validate: (ByteArray) -> Boolean,
     ): Boolean = synchronized(lockFor(name)) {
+        publishLocked(name, bytes, syncToDisk, validate)
+    }
+
+    /**
+     * Receipt of [publishVerified]: a checked publication that additionally
+     * must leave a VERIFIED SAME-STATE backup beside the new primary —
+     * required by destructive and initialization completions, where restoring
+     * a stale previous generation from the backup after a later primary
+     * corruption would resurrect state the destructive operation removed.
+     */
+    sealed interface VerifiedPublishReceipt {
+        /** Primary and backup both hold the validated bytes. */
+        data class Complete(val bytes: Int) : VerifiedPublishReceipt
+
+        /**
+         * Primary advanced to the validated bytes but the same-state backup
+         * copy could NOT be verified (write failed or readback mismatch). The
+         * previous generation may still occupy the backup name; the failure
+         * stays visible to the caller as a typed reason — it is never
+         * silently dropped.
+         */
+        data class BackupNotVerified(val bytes: Int, val reason: String) : VerifiedPublishReceipt
+
+        /** The primary was not advanced; the prior document remains authoritative. */
+        data object NotPublished : VerifiedPublishReceipt
+    }
+
+    /**
+     * [publish] plus a verified same-state backup copy. The publish sequence
+     * (temp, readback validate, rotation, promote) is IDENTICAL; after a
+     * successful promote the validated bytes are written to the backup name
+     * and read back — [VerifiedPublishReceipt.Complete] only when that copy
+     * verifies. A backup-copy failure never rolls the primary back and never
+     * deletes anything; it surfaces as
+     * [VerifiedPublishReceipt.BackupNotVerified].
+     * Same per-document lock, and no nesting: this never calls [publish].
+     */
+    fun publishVerified(
+        name: String,
+        bytes: ByteArray,
+        syncToDisk: Boolean = false,
+        validate: (ByteArray) -> Boolean,
+    ): VerifiedPublishReceipt = synchronized(lockFor(name)) {
+        if (!publishLocked(name, bytes, syncToDisk, validate)) {
+            return VerifiedPublishReceipt.NotPublished
+        }
+        val backupName = backupNameFor(name)
+        val backupCopied = runCatching {
+            io.write(backupName, bytes, syncToDisk = syncToDisk) &&
+                io.read(backupName)?.contentEquals(bytes) == true
+        }.getOrDefault(false)
+        if (!backupCopied) {
+            recordPhysicalWrite(success = false, bytes = bytes.size)
+            return VerifiedPublishReceipt.BackupNotVerified(
+                bytes.size,
+                "same-state backup copy failed write/readback: name=$name",
+            )
+        }
+        recordPhysicalWrite(success = true, bytes = bytes.size)
+        VerifiedPublishReceipt.Complete(bytes.size)
+    }
+
+    private fun publishLocked(
+        name: String,
+        bytes: ByteArray,
+        syncToDisk: Boolean,
+        validate: (ByteArray) -> Boolean,
+    ): Boolean {
         val tempName = tempNameFor(name)
         val backupName = backupNameFor(name)
         val writeSucceeded = try {
@@ -394,7 +462,7 @@ class AtomicChapterDocuments(
             }
             return false
         }
-        true
+        return true
     }
 
     private fun recordPhysicalWrite(success: Boolean, bytes: Int) {
@@ -418,6 +486,17 @@ class AtomicChapterDocuments(
         value: T,
         syncToDisk: Boolean = false,
     ): Boolean = publish(
+        name,
+        json.encodeToString(value).toByteArray(Charsets.UTF_8),
+        syncToDisk = syncToDisk,
+    ) { bytes -> runCatching { json.decodeFromStream<T>(bytes.inputStream()) }.isSuccess }
+
+    /** [publishVerified] over the shared durable-document Json, mirroring [publishJson]. */
+    inline fun <reified T> publishVerifiedJson(
+        name: String,
+        value: T,
+        syncToDisk: Boolean = false,
+    ): VerifiedPublishReceipt = publishVerified(
         name,
         json.encodeToString(value).toByteArray(Charsets.UTF_8),
         syncToDisk = syncToDisk,
