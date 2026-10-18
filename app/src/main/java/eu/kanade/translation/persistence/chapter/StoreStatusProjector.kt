@@ -14,8 +14,10 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
 import eu.kanade.translation.persistence.journal.ChapterJournalPageOutcome
 import kotlinx.coroutines.flow.StateFlow
@@ -48,31 +50,47 @@ internal class StoreStatusInputs(
     val journalStatus: StoreStatusSnapshot? = null,
 )
 
-// Durable status and failure views are projected from one store snapshot.
-internal class StoreStatusProjector(private val store: ChapterTranslationStore) {
+/**
+ * Plain-data status projection inputs. The live store captures its flows into
+ * this shape once per projection; the publication-free durable read builds it
+ * directly, so one pure projection serves both authorities.
+ */
+internal data class StoreStatusProjectionData(
+    val manifest: ChapterArtifactManifest?,
+    val pagesSnapshot: Map<String, PageTranslationView>,
+    val displaySnapshot: Map<String, PageTranslationView>,
+    val journalStatus: StoreStatusSnapshot?,
+)
+
+/**
+ * Pure durable status projection (P3D). The decision rules read only the
+ * plain-data inputs plus one run-record lookup, so the live store and the
+ * opener's file-only durable read project IDENTICAL statuses from identical
+ * durable truth. No store, flow, or journal bridge participates.
+ */
+internal object ChapterStatusProjection {
 
     /** Current durable stage failure, if the artifact manifest owns one. */
     fun durableFailure(
+        data: StoreStatusProjectionData,
         pageKey: String,
         stage: ArtifactStage = ArtifactStage.TRANSLATION,
     ): DurableFailureMetadata? {
-        val inputs = store.statusProjectionInputs()
-        val journalStatus = inputs.journalStatus
+        val journalStatus = data.journalStatus
         return if (journalStatus != null) {
             journalStatus.durableFailures["$pageKey:${stage.name}"]
         } else {
-            inputs.manifest?.durableFailures?.get("$pageKey:${stage.name}")
+            data.manifest?.durableFailures?.get("$pageKey:${stage.name}")
         }
     }
 
     /** Immutable view used by queue restoration and planner admission. */
-    fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> {
-        val inputs = store.statusProjectionInputs()
-        val journalStatus = inputs.journalStatus
+    fun durableFailuresSnapshot(data: StoreStatusProjectionData): Map<String, DurableFailureMetadata> {
+        val journalStatus = data.journalStatus
         return if (journalStatus != null) {
             journalStatus.durableFailures
         } else {
-            inputs.manifest?.durableFailures?.toMap().orEmpty()
+            data.manifest?.durableFailures?.toMap().orEmpty()
         }
     }
 
@@ -87,19 +105,24 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      * being reported stranded at the display tail without restoring
      * artifact-first authority. If the run record cannot be verified, ordinary
      * live-page reconciliation remains in force.
+     *
+     * [readRunRecord] is deferred: it runs only when a manifest carries an
+     * active-run pointer, and receives that captured pointer.
      */
-    fun artifactStatus(): Translation.State? {
-        val inputs = store.statusProjectionInputs()
-        val manifest = inputs.manifest ?: return null
-        val journalStatus = inputs.journalStatus
-        val pagesSnapshot = inputs.state.value
+    fun artifactStatus(
+        data: StoreStatusProjectionData,
+        readRunRecord: (SidecarPointer) -> ChapterRunRecord?,
+    ): Translation.State? {
+        val manifest = data.manifest ?: return null
+        val journalStatus = data.journalStatus
+        val pagesSnapshot = data.pagesSnapshot
         if (manifest.activeRun != null) {
-            completedRunRecordStatus(manifest, pagesSnapshot, journalStatus)?.let { return it }
+            completedRunRecordStatus(manifest, pagesSnapshot, journalStatus, readRunRecord)?.let { return it }
         }
         // The recovered prefix seeds the store's opening state. From then on,
         // display and status use the active store snapshot, including accepted
         // mutations that have not reached the journal writer yet.
-        val visiblePages = inputs.display.value
+        val visiblePages = data.displaySnapshot
         val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
             pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
         val hasPartialArtifact = pagesSnapshot.isNotEmpty() ||
@@ -248,8 +271,9 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         manifest: ChapterArtifactManifest,
         pagesSnapshot: Map<String, PageTranslationView>,
         journalStatus: StoreStatusSnapshot?,
+        readRunRecord: (SidecarPointer) -> ChapterRunRecord?,
     ): Translation.State? {
-        val record = store.readRunRecord(manifest.activeRun) ?: return null
+        val record = readRunRecord(manifest.activeRun ?: return null) ?: return null
         if (record.state != ChapterRunState.COMPLETE) return null
         if (journalStatus != null) {
             return completedJournalRunRecordStatus(journalStatus, pagesSnapshot)
@@ -326,4 +350,39 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
             Translation.State.TRANSLATED
         }
     }
+}
+
+// Durable status and failure views are projected from one store snapshot. The
+// store-bound class stays a thin adapter: it captures its flows into plain
+// [StoreStatusProjectionData] once per projection and delegates every rule to
+// the pure [ChapterStatusProjection].
+internal class StoreStatusProjector(private val store: ChapterTranslationStore) {
+
+    private fun projectionData(): StoreStatusProjectionData {
+        val inputs = store.statusProjectionInputs()
+        return StoreStatusProjectionData(
+            manifest = inputs.manifest,
+            pagesSnapshot = inputs.state.value,
+            displaySnapshot = inputs.display.value,
+            journalStatus = inputs.journalStatus,
+        )
+    }
+
+    /** Current durable stage failure, if the artifact manifest owns one. */
+    fun durableFailure(
+        pageKey: String,
+        stage: ArtifactStage = ArtifactStage.TRANSLATION,
+    ): DurableFailureMetadata? = ChapterStatusProjection.durableFailure(projectionData(), pageKey, stage)
+
+    /** Immutable view used by queue restoration and planner admission. */
+    fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
+        ChapterStatusProjection.durableFailuresSnapshot(projectionData())
+
+    /**
+     * Derives durable artifact status without consulting the flat-file summary sidecar.
+     */
+    fun artifactStatus(): Translation.State? =
+        ChapterStatusProjection.artifactStatus(projectionData()) { pointer ->
+            store.readRunRecord(pointer)
+        }
 }

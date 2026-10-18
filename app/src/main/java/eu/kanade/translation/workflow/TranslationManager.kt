@@ -18,7 +18,9 @@ import eu.kanade.translation.persistence.chapter.ArtifactManifestProbe
 import eu.kanade.translation.persistence.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterResetPreflight
+import eu.kanade.translation.persistence.chapter.ChapterStoreOpener
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.DurableChapterRead
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
@@ -1210,10 +1212,11 @@ class TranslationManager private constructor(
      * Read-through terminal reconstruction.
      * When the bounded tracker registry misses (process death, 20-entry
      * eviction) and no queue owner exists, the projection rebuilds a
-     * completed/failed chapter's terminal snapshot from the durable store and
-     * artifacts. Read-only by design: it never creates an active store and
-     * adds no new cache — the bounded probe registry and the existing
-     * durable-status cache are the only intermediaries.
+     * completed/failed chapter's terminal snapshot from the durable read —
+     * active store first, otherwise the opener's publication-free durable
+     * read through the pure projector. Read-only by design: it never creates
+     * an active store and adds no new cache — the existing durable-status
+     * cache is the only intermediary.
      *
      * [resolveTranslation] is injectable so focused unit tests can drive the
      * gate without the database.
@@ -1233,23 +1236,19 @@ class TranslationManager private constructor(
             sourceId,
         ) ?: return null
         if (!isReconstructibleDurableState(state)) return null
-        return durableStatusResolver.withDurableStore(
+        return durableStatusResolver.withDurableRead(
             chapterId = chapterId,
             chapterName = chapter.name,
             chapterScanlator = chapter.scanlator,
             mangaTitle = translation.manga.title,
             sourceId = sourceId,
-        ) { store ->
-            TranslationBatchProgressTracker.computeSnapshot(
-                chapterId = chapterId,
-                chapterState = state,
-                pageMap = store.state.value,
-                displayPageMap = store.display.value,
-                // Trusted totals come from the manifest;
-                // a partial download's available pages are never "all pages".
-                expectedPageCountTrusted =
-                store.artifactManifest?.expectedPageCountTrusted == true,
-            ).withDurablePause(store)
+        ) { access ->
+            when (access) {
+                is DurableChapterAccess.ActiveStore ->
+                    access.store.terminalProgressSnapshot(chapterId, state)
+                is DurableChapterAccess.DurableRead ->
+                    access.read.terminalProgressSnapshot(chapterId, state)
+            }
         }
     }
 
@@ -1264,19 +1263,25 @@ class TranslationManager private constructor(
             return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
                 val parent = provider.findMangaDir(title, source) ?: return@runBlocking emptyMap()
                 val fileName = provider.getTranslationFileName(chapterName, scanlator)
-                val manifestProbe = ChapterTranslationStore.probeArtifactManifest(parent, fileName)
-                if (!manifestProbe.exists) return@runBlocking emptyMap()
-                val registryKey = "${parent.filePath ?: parent.uri}:$fileName"
-                val store = activeStores.getOrCreateFile(registryKey) {
-                    ChapterTranslationStore.openArtifactSuspend(
+                // File-only fallback reads are publication-free: the opener's
+                // durable read supplies the verified page truth and no writer
+                // store, registry entry, or journal bridge is created. No
+                // durable truth can advance here, so no status-cache clear
+                // fires; an active chapter keeps its live store semantics.
+                when (
+                    val read = ChapterStoreOpener.readDurableChapter(
                         parent,
                         fileName,
                         provider.privateJournalRoot,
                         provider.privateJournalIdentity(source, title, fileName),
                     )
+                ) {
+                    is DurableChapterRead.Supported -> read.state.pages
+                    is DurableChapterRead.Missing,
+                    is DurableChapterRead.Unsupported,
+                    is DurableChapterRead.Corrupt,
+                    -> emptyMap()
                 }
-                durableStatusResolver.clearDurableStatusCache()
-                store?.state?.value.orEmpty()
             }
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) {

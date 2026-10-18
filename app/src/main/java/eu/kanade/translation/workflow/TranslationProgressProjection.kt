@@ -18,6 +18,7 @@ import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.toUiPauseReason
 import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.chapter.DurableChapterState
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
@@ -64,13 +65,13 @@ internal fun ChapterTranslationStore.progressSnapshot(
 
 /** Adds the durable retry details that explain a paused chapter. */
 internal fun TranslationProgressSnapshot.withDurablePause(
-    store: ChapterTranslationStore,
+    durableFailures: Map<String, DurableFailureMetadata>,
 ): TranslationProgressSnapshot {
     if (state != Translation.State.PAUSED) return this
     // A protocol rejection can happen before translation, such as an OCR
     // checkpoint arriving before page registration. Preserve its retry details
     // so the UI does not misreport a store failure as provider unavailability.
-    val failure = store.durableFailuresSnapshot().values
+    val failure = durableFailures.values
         .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
         .minWithOrNull(
             compareBy<DurableFailureMetadata>(
@@ -86,6 +87,47 @@ internal fun TranslationProgressSnapshot.withDurablePause(
         nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
     )
 }
+
+/** Store-backed pause projection; delegates to the pure failure-map overload. */
+internal fun TranslationProgressSnapshot.withDurablePause(
+    store: ChapterTranslationStore,
+): TranslationProgressSnapshot = withDurablePause(store.durableFailuresSnapshot())
+
+/**
+ * Terminal snapshot truth for a live store (the registry-hit branch of durable
+ * terminal reconstruction): totals from the manifest, pause details from the
+ * store's accepted status snapshot.
+ */
+internal fun ChapterTranslationStore.terminalProgressSnapshot(
+    chapterId: Long,
+    chapterState: Translation.State,
+): TranslationProgressSnapshot = TranslationBatchProgressTracker.computeSnapshot(
+    chapterId = chapterId,
+    chapterState = chapterState,
+    pageMap = state.value,
+    displayPageMap = display.value,
+    // Trusted totals come from the manifest;
+    // a partial download's available pages are never "all pages".
+    expectedPageCountTrusted = artifactManifest?.expectedPageCountTrusted == true,
+).withDurablePause(durableFailuresSnapshot())
+
+/**
+ * Terminal snapshot truth for a publication-free durable read (the registry-
+ * miss branch): the same totals and pause rules projected from the opener's
+ * verified hydration — no store is constructed for the projection.
+ */
+internal fun DurableChapterState.terminalProgressSnapshot(
+    chapterId: Long,
+    chapterState: Translation.State,
+): TranslationProgressSnapshot = TranslationBatchProgressTracker.computeSnapshot(
+    chapterId = chapterId,
+    chapterState = chapterState,
+    pageMap = pages,
+    displayPageMap = display,
+    // Trusted totals come from the manifest;
+    // a partial download's available pages are never "all pages".
+    expectedPageCountTrusted = manifest.expectedPageCountTrusted,
+).withDurablePause(durableFailures)
 
 /** Projects a queue state onto a progress snapshot without changing its page truth. */
 internal fun TranslationProgressSnapshot.projectQueueStatus(
