@@ -162,3 +162,47 @@ internal class ChapterAttemptLedger(private val store: ChapterTranslationStore) 
         return published
     }
 }
+
+
+/** Bounded scalar record of an attempt's own verified artifact drain progress. */
+internal data class CertifiedArtifactProgress(
+    val pageKey: String,
+    val generation: Long,
+    val livePageVersion: Long,
+    val artifactPageVersion: Long?,
+    val candidateGenerationId: String?,
+    val dependencyFingerprint: String?,
+)
+
+/** Binds one attempt's authority to its own lazy-drain artifact progressions on a specific page. */
+internal class AttemptArtifactLease internal constructor(
+    private val store: ChapterTranslationStore,
+    val pageKey: String,
+) {
+    internal fun belongsTo(store: ChapterTranslationStore, pageKey: String): Boolean =
+        this.store === store && this.pageKey == pageKey
+
+    @Volatile
+    internal var certifiedProgress: CertifiedArtifactProgress? = null
+
+    internal fun stamp(
+        store: ChapterTranslationStore,
+        stampedPageKey: String,
+        snapshot: ChapterTranslationStore.PageSnapshot,
+    ) {
+        if (!belongsTo(store, stampedPageKey)) return
+        val manifestRecord = store.artifactManifest?.pages?.get(pageKey)
+        val manifestArtifactPageVersion = manifestRecord?.pageVersion
+        val manifestCandidateGen = manifestRecord?.candidate?.generationId
+        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
+            ?: snapshot.dependencyFingerprint
+        certifiedProgress = CertifiedArtifactProgress(
+            pageKey = pageKey,
+            generation = snapshot.generation,
+            livePageVersion = snapshot.pageVersion,
+            artifactPageVersion = manifestArtifactPageVersion,
+            candidateGenerationId = manifestCandidateGen,
+            dependencyFingerprint = manifestDepFingerprint,
+        )
+    }
+}

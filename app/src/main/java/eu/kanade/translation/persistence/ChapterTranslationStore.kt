@@ -48,49 +48,6 @@ import tachiyomi.core.common.util.system.logcat
 
 
 /** Bounded scalar record of an attempt's own verified artifact drain progress. */
-internal data class CertifiedArtifactProgress(
-    val pageKey: String,
-    val generation: Long,
-    val livePageVersion: Long,
-    val artifactPageVersion: Long?,
-    val candidateGenerationId: String?,
-    val dependencyFingerprint: String?,
-)
-
-/** Binds one attempt's authority to its own lazy-drain artifact progressions on a specific page. */
-internal class AttemptArtifactLease internal constructor(
-    private val store: ChapterTranslationStore,
-    val pageKey: String,
-) {
-    internal fun belongsTo(store: ChapterTranslationStore, pageKey: String): Boolean =
-        this.store === store && this.pageKey == pageKey
-
-    @Volatile
-    internal var certifiedProgress: CertifiedArtifactProgress? = null
-
-    internal fun stamp(
-        store: ChapterTranslationStore,
-        stampedPageKey: String,
-        snapshot: ChapterTranslationStore.PageSnapshot,
-    ) {
-        if (!belongsTo(store, stampedPageKey)) return
-        val manifestRecord = store.artifactManifest?.pages?.get(pageKey)
-        val manifestArtifactPageVersion = manifestRecord?.pageVersion
-        val manifestCandidateGen = manifestRecord?.candidate?.generationId
-        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
-            ?: snapshot.dependencyFingerprint
-        certifiedProgress = CertifiedArtifactProgress(
-            pageKey = pageKey,
-            generation = snapshot.generation,
-            livePageVersion = snapshot.pageVersion,
-            artifactPageVersion = manifestArtifactPageVersion,
-            candidateGenerationId = manifestCandidateGen,
-            dependencyFingerprint = manifestDepFingerprint,
-        )
-    }
-}
-
-/** Durable outcome of the [ChapterTranslationStore.checkpointOcr] transaction. */
 sealed interface CheckpointOcrResult {
     data class Committed(
         val snapshot: ChapterTranslationStore.PageSnapshot,
@@ -269,7 +226,7 @@ class ChapterTranslationStore internal constructor(
     internal val retiredCleanedImages = ConcurrentHashMap<String, MutableSet<String>>()
     internal val pendingArtifactPageRegistrations = LinkedHashSet<String>()
 
-    private val _display = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
+    internal val _display = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
 
     // Lease ownership stays in one table so the store and lease APIs share the
     // same map and synchronization boundary.
@@ -321,7 +278,17 @@ class ChapterTranslationStore internal constructor(
         val candidateGenerationId: String? = null,
         /** Candidate dependency fingerprint observed with this snapshot. */
         val dependencyFingerprint: String? = null,
-    )
+    ) {
+        fun toPrecondition() = PatchPrecondition(
+            generation = generation,
+            pageVersion = pageVersion,
+            blockFingerprints = blockFingerprints,
+            leaseToken = leaseToken,
+            candidateGenerationId = candidateGenerationId,
+            dependencyFingerprint = dependencyFingerprint,
+            artifactPageVersion = artifactPageVersion,
+        )
+    }
 
     data class PatchPrecondition(
         val generation: Long,
@@ -372,7 +339,7 @@ class ChapterTranslationStore internal constructor(
         data class PublicationFailed(val reason: String) : TranslationPublicationReconciliation
     }
 
-    private class GenerationContext(
+    internal class GenerationContext(
         val store: ChapterTranslationStore,
         val generation: Long,
     ) : AbstractCoroutineContextElement(Key) {
@@ -406,6 +373,19 @@ class ChapterTranslationStore internal constructor(
      */
     private val bulkMutator = ChapterBulkMutator(this)
 
+    internal val displayPublication = ChapterDisplayPublication(this)
+
+    internal fun displaySnapshotLocked(changedPageKeys: Iterable<String> = emptyList()) {
+        displayPublication.displaySnapshotLocked(changedPageKeys)
+    }
+
+    internal fun promoteDisplayIfReadyLocked(pageKey: String, updated: PageTranslation) {
+        displayPublication.promoteDisplayIfReadyLocked(pageKey, updated)
+    }
+    internal val pageMutations = ChapterPageMutations(this)
+    internal val stageMerges = ChapterStageMerges(this)
+
+
     /**
      * Typed result of [rekeyPages]. [Moved] with [Moved.skippedCollisions] > 0 is
      * explicitly partial: the caller must not treat it as a complete handoff.
@@ -430,35 +410,22 @@ class ChapterTranslationStore internal constructor(
      * this mode when registering the live chapter store.
      */
     @Volatile
-    private var lazyPersistenceEnabled = false
+    internal var lazyPersistenceEnabled = false
 
     /** Latest guarded page-write identity rejection, retained for failure diagnostics. */
     @Volatile
     internal var lastGuardedWriteRejectionDiagnostic: String? = null
-        private set
+        internal set
 
     @Volatile
     internal var lastBatchWriteGateRejectionDiagnostic: String? = null
-        private set
+        internal set
 
     internal fun recordBatchWriteGateRejectionDiagnostic(diagnostic: String) {
         lastBatchWriteGateRejectionDiagnostic = diagnostic
     }
 
-    internal data class PendingLazyMutation(
-        val pageKey: String,
-        val previous: PageTranslation?,
-        val updated: PageTranslation,
-        val expected: PatchPrecondition,
-        val generation: Long,
-        val artifactLease: AttemptArtifactLease? = null,
-    )
 
-    internal data class LazyPersistenceTask(
-        val generation: Long,
-        val work: suspend () -> Boolean,
-        val result: CompletableDeferred<Boolean>,
-    )
 
     /** Enables memory-first publication for a registered production chapter. */
     internal fun enableLazyPersistence() {
@@ -494,77 +461,13 @@ class ChapterTranslationStore internal constructor(
         expectedGeneration: Long,
         receipt: CompletableDeferred<Boolean>,
         work: suspend () -> Boolean,
-    ): Deferred<Boolean> {
-        var queued = false
-        try {
-            mutex.withLock {
-                val rejected = defunct ||
-                    generation != expectedGeneration ||
-                    !hasArtifactPersistenceTarget() ||
-                    !writeDrain.isDrainScopeActive()
-                if (rejected) {
-                    receipt.complete(false)
-                } else {
-                    writeDrain.pendingLazyTasks.addLast(
-                        LazyPersistenceTask(
-                            generation = expectedGeneration,
-                            work = work,
-                            result = receipt,
-                        ),
-                    )
-                    queued = true
-                }
-                // Keep the drain-job handoff under the same mutex as the queue
-                // mutation so it shares the queue's single-writer boundary.
-                writeDrain.scheduleDrain()
-            }
-        } finally {
-            // Not queued (rejected above, or the caller was cancelled before
-            // acquiring the lock) means no borrower exists: complete the
-            // receipt false so no owner ever awaits a signal the store will
-            // never send.
-            if (!queued) receipt.complete(false)
-        }
-        return receipt
-    }
+    ): Deferred<Boolean> = writeDrain.enqueueLazyPersistence(expectedGeneration, receipt, work)
 
-    /** Caller holds [mutex]; the drain calls this only from mutex.withLock. */
-    internal fun takeLazyPersistenceTaskLocked(): LazyPersistenceTask? =
-        writeDrain.pendingLazyTasks.pollFirst()
+    internal fun takeLazyPersistenceTaskLocked(): LazyPersistenceTask? = writeDrain.takeLazyPersistenceTaskLocked()
 
-    /** Caller holds [mutex]; the drain uses this to decide whether to reschedule. */
-    internal fun hasPendingLazyPersistenceLocked(): Boolean =
-        writeDrain.pendingLazyTasks.isNotEmpty() || writeDrain.pendingLazyMutations.isNotEmpty()
+    internal fun hasPendingLazyPersistenceLocked(): Boolean = writeDrain.hasPendingLazyPersistenceLocked()
 
-    internal suspend fun flushPendingLazyMutations(): Boolean {
-        val pendingLazyMutations = writeDrain.pendingLazyMutations
-        return mutex.withLock {
-            if (pendingLazyMutations.isEmpty()) return@withLock true
-            val pending = pendingLazyMutations.values.toList()
-            pendingLazyMutations.clear()
-            var allAccepted = true
-            pending.forEach { mutation ->
-                if (!isLazyGenerationCurrent(mutation.generation)) {
-                    return@forEach
-                }
-                if (!publicationBridge.persistArtifactMutation(
-                        pageKey = mutation.pageKey,
-                        previous = mutation.previous,
-                        updated = mutation.updated,
-                        expected = mutation.expected,
-                    )
-                ) {
-                    allAccepted = false
-                    if (isLazyGenerationCurrent(mutation.generation)) {
-                        pendingLazyMutations[mutation.pageKey] = mutation
-                    }
-                } else {
-                    mutation.artifactLease?.stamp(this, mutation.pageKey, snapshotLocked(mutation.pageKey))
-                }
-            }
-            allAccepted
-        }
-    }
+    internal suspend fun flushPendingLazyMutations(): Boolean = writeDrain.flushPendingLazyMutations()
 
     @Volatile
     internal var defunct = false
@@ -607,7 +510,7 @@ class ChapterTranslationStore internal constructor(
                 CommittedPageDisplay(
                     page = publishPage(page),
                     pageVersion = page.pageVersion,
-                    displayFingerprint = displayFingerprintOf(page),
+                    displayFingerprint = displayPublication.displayFingerprintOf(page),
                     promotedAtEpochMs = page.updatedAt,
                 ),
             )
@@ -623,14 +526,14 @@ class ChapterTranslationStore internal constructor(
                     CommittedPageDisplay(
                         page = page,
                         pageVersion = page.pageVersion,
-                        displayFingerprint = displayFingerprintOf(page),
+                        displayFingerprint = displayPublication.displayFingerprintOf(page),
                         promotedAtEpochMs = page.updatedAt,
                     ),
                 )
             }
         }
         stateFlow.value = snapshotPages()
-        displaySnapshotLocked(pages.keys + committedDisplay.keys)
+        displayPublication.displaySnapshotLocked(pages.keys + committedDisplay.keys)
     }
 
     suspend fun snapshot(pageKey: String): PageSnapshot = mutex.withLock {
@@ -773,7 +676,7 @@ class ChapterTranslationStore internal constructor(
         if (artifact.publishManifest(updated)) {
             artifactManifest = updated
             stateFlow.value = snapshotPages()
-            displaySnapshotLocked(emptyList())
+            displayPublication.displaySnapshotLocked(emptyList<String>())
         } else {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT D9: cap-failure clear publish failed (fail-open): pageKey=$pageKey"
@@ -863,12 +766,15 @@ class ChapterTranslationStore internal constructor(
     suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
         withContext(GenerationContext(this, generation)) { block() }
 
+
+
+
     suspend fun patchPage(
         pageKey: String,
         expected: PatchPrecondition,
         description: String,
         patch: (PageTranslation?) -> PageTranslation,
-    ): PatchResult = patchPage(pageKey, expected, description, artifactLease = null, patch = patch)
+    ): PatchResult = pageMutations.patchPage(pageKey, expected, description, patch)
 
     internal suspend fun patchPage(
         pageKey: String,
@@ -876,438 +782,43 @@ class ChapterTranslationStore internal constructor(
         description: String,
         artifactLease: AttemptArtifactLease?,
         patch: (PageTranslation?) -> PageTranslation,
-    ): PatchResult {
-        if (defunct) return rejected(pageKey, description, "store is defunct")
-        return mutex.withLock {
-                    when (val admission = publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                        )
-                    }
-                    val current = pages[pageKey]?.toDraft()
-                    if (expected.generation != generation) {
-                        return@withLock rejected(pageKey, description, "generation expected=${expected.generation} actual=$generation")
-                    }
-                    val currentLiveVersion = current?.pageVersion ?: 0L
-                    if (expected.pageVersion != currentLiveVersion) {
-                        return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
-                    }
+    ): PatchResult = pageMutations.patchPage(pageKey, expected, description, artifactLease, patch)
 
-                    val drained = artifactLease?.takeIf { it.belongsTo(this, pageKey) }?.certifiedProgress
-                    val effective = if (
-                        drained != null &&
-                        expected.generation == drained.generation &&
-                        expected.pageVersion == drained.livePageVersion &&
-                        currentLiveVersion == drained.livePageVersion
-                    ) {
-                        val manifestRecord = artifactManifest?.pages?.get(pageKey)
-                        val manifestArtifactPageVersion = manifestRecord?.pageVersion
-                        val manifestCandidateGen = manifestRecord?.candidate?.generationId
-                        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
-                            ?: pages[pageKey]?.let(StageFingerprints::pageSnapshot)
-                        if (
-                            manifestArtifactPageVersion == drained.artifactPageVersion &&
-                            manifestCandidateGen == drained.candidateGenerationId &&
-                            manifestDepFingerprint == drained.dependencyFingerprint
-                        ) {
-                            expected.copy(
-                                artifactPageVersion = drained.artifactPageVersion,
-                                candidateGenerationId = drained.candidateGenerationId,
-                                dependencyFingerprint = drained.dependencyFingerprint,
-                            )
-                        } else {
-                            expected
-                        }
-                    } else {
-                        expected
-                    }
+    suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) =
+        pageMutations.updatePage(pageKey, update)
 
-                    val rejection = when {
-                        effective.artifactPageVersion != null &&
-                            effective.artifactPageVersion != artifactManifest?.pages?.get(pageKey)?.pageVersion ->
-                            "artifact pageVersion changed"
-                        effective.candidateGenerationId != null &&
-                            effective.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
-                            "candidate generation changed"
-                        // The same candidate-grace rule as persistArtifactMutation
-                        // applies: `candidate != null` grace
-                        // applies — a dependency fingerprint expected against a
-                        // candidate-LESS record (candidate never opened, cleared by an
-                        // abort, or the candidate-less registration a batch start
-                        // performs for a held page) has nothing real to compare
-                        // against, so the mismatch must not reject. Snapshot captures
-                        // arm this clause from the page-snapshot fallback even with no
-                        // candidate, which made every such manual commit a false
-                        // reject. Fail direction preserved: generation, pageVersion,
-                        // candidate generation, block fingerprints, and the lease
-                        // token fences stay fully armed.
-                        effective.dependencyFingerprint != null &&
-                            artifactManifest?.pages?.get(pageKey)?.candidate != null &&
-                            effective.dependencyFingerprint != artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
-                            "candidate dependency fingerprint changed"
-                        effective.blockFingerprints != null &&
-                            effective.blockFingerprints != current?.blockFingerprints().orEmpty() ->
-                            "block fingerprint changed"
-                        effective.leaseToken != null && pageLeases[pageKey]?.token != effective.leaseToken ->
-                            "page lease token changed"
-                        effective.leaseToken == null && pageLeases[pageKey] != null ->
-                            "page lease token required"
-                        else -> null
-                    }
-                    if (rejection != null) {
-                        rejected(pageKey, description, rejection)
-                    } else {
-                        val candidate = try {
-                            patch(current?.detachedCopy())
-                        } catch (failure: IllegalArgumentException) {
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                failure.message ?: failure::class.java.simpleName,
-                            )
-                        } catch (failure: IllegalStateException) {
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                failure.message ?: failure::class.java.simpleName,
-                            )
-                        }
-                        val updated = ownedPage(pageKey, candidate)
-                        pages = pages.put(pageKey, publishPage(updated))
-                        if (!publishLocked(current, updated, effective, artifactLease = artifactLease)) {
-                            restorePageLocked(pageKey, current)
-                            return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-                        }
-                        PatchResult.Accepted(snapshotLocked(pageKey))
-                    }
-        }
-    }
-
-    /**
-     * Guarded whole-page candidate mutation for production stage writers. The
-     * caller must carry the exact identity it observed before the asynchronous
-     * stage began; a released/reacquired lease, page mutation, generation reset,
-     * or artifact candidate replacement rejects the write before the candidate
-     * bridge can publish anything durable.
-     */
     suspend fun updatePageGuarded(
         pageKey: String,
         expected: PatchPrecondition,
         description: String,
         update: (PageTranslation?) -> PageTranslation,
-    ): PatchResult {
-        if (defunct) return rejected(pageKey, description, "store is defunct")
-        return mutex.withLock {
-                    when (val admission = publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                            detail = admission.toPatchRejectionDetail(),
-                        )
-                    }
-                    val rejection = pageWriteRejection(pageKey, expected)
-                    if (rejection != null) {
-                        val actual = snapshotLocked(pageKey)
-                        val actualLeaseToken = pageLeases[pageKey]?.token
-                        lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
-                            pageKey,
-                            "description" to description,
-                            "reason" to rejection.reason,
-                            "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                                "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
-                                "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
-                            "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                                "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
-                                "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
-                        )
-                        rejected(pageKey, description, rejection.reason, rejection.detail)
-                    } else {
-                        val previous = pages[pageKey]?.toDraft()
-                        val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
-                        pages = pages.put(pageKey, publishPage(updated))
-                        if (!publishLocked(previous, updated, expected)) {
-                            restorePageLocked(pageKey, previous)
-                            val actual = snapshotLocked(pageKey)
-                            lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
-                                pageKey,
-                                "description" to description,
-                                "reason" to "ARTIFACT_PUBLICATION_FAILED",
-                                "artifactPublication" to (publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
-                                "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                                    "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
-                                    "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
-                                "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                                    "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
-                                    "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
-                            )
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                "ARTIFACT_PUBLICATION_FAILED",
-                                PatchResult.Rejected.Detail.ArtifactPublicationFailed,
-                            )
-                        }
-                        PatchResult.Accepted(snapshotLocked(pageKey))
-                    }
-        }
-    }
+    ): PatchResult = pageMutations.updatePageGuarded(pageKey, expected, description, update)
 
-    /**
-     * Revalidates a BATCH translation result once after a strict page-version rejection. The
-     * gate remains authoritative: this method never repairs a token mismatch and only rebases
-     * translation-owned fields while the captured run, dependency, artifact version, and BATCH
-     * lease still match under the store mutex.
-     */
     internal suspend fun reconcileBatchTranslationPageVersionDrift(
         pageKey: String,
         expected: PatchPrecondition,
         candidate: PageTranslation,
-    ): TranslationPublicationReconciliation {
-        if (defunct) return TranslationPublicationReconciliation.Deferred("store is defunct")
-        return mutex.withLock {
-                    when (val admission = publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> {
-                            return@withLock TranslationPublicationReconciliation.Deferred(
-                                "${admission.code}: ${admission.message}",
-                            )
-                        }
-                    }
+    ): TranslationPublicationReconciliation =
+        pageMutations.reconcileBatchTranslationPageVersionDrift(pageKey, expected, candidate)
 
-                    val actual = snapshotLocked(pageKey)
-                    val lease = pageLeases[pageKey]
-                    val identityDrift = when {
-                        actual.generation != expected.generation || generation != expected.generation ->
-                            "generation changed"
-                        expected.leaseToken == null ||
-                            lease == null ||
-                            lease.origin != PageWriteOrigin.BATCH ||
-                            lease.token != expected.leaseToken ||
-                            lease.generation != expected.generation ->
-                            "active BATCH lease changed"
-                        actual.candidateGenerationId != expected.candidateGenerationId ->
-                            "candidate generation changed"
-                        actual.dependencyFingerprint != expected.dependencyFingerprint ->
-                            "dependency fingerprint changed"
-                        actual.artifactPageVersion != expected.artifactPageVersion ->
-                            "artifact page version changed"
-                        expected.blockFingerprints != null &&
-                            actual.blockFingerprints != expected.blockFingerprints ->
-                            "block fingerprint changed"
-                        actual.pageVersion == expected.pageVersion ->
-                            "page version no longer differs"
-                        candidate.sourceFileName != pageKey ->
-                            "candidate page identity changed"
-                        candidate.translationStatus != StageStatus.READY ->
-                            "candidate is not a completed translation"
-                        else -> null
-                    }
-                    if (identityDrift != null) {
-                        return@withLock TranslationPublicationReconciliation.Deferred(identityDrift)
-                    }
-
-                    val current = actual.page
-                        ?: return@withLock TranslationPublicationReconciliation.Deferred("page missing")
-                    if (sameTranslationOutput(current, candidate) && translationOutputIsDurableLocked(pageKey, current)) {
-                        val stamped = current.detachedCopy()
-                        if (stamped.stampRenderTerminalIfDisplayComplete()) {
-                            stamped.updatedAt = System.currentTimeMillis()
-                            val owned = ownedPage(pageKey, stamped)
-                            val expectedCurrent = actual.toPrecondition()
-                            pages = pages.put(pageKey, publishPage(owned))
-                            if (!publishLocked(current, owned, expectedCurrent)) {
-                                restorePageLocked(pageKey, current)
-                                return@withLock TranslationPublicationReconciliation.PublicationFailed(
-                                    publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
-                                )
-                            }
-                            return@withLock TranslationPublicationReconciliation.Rebased(snapshotLocked(pageKey))
-                        }
-                        return@withLock TranslationPublicationReconciliation.AlreadyDurable(actual)
-                    }
-                    val rebasedBlocks = rebaseTranslationBlocks(current, candidate)
-                        ?: return@withLock TranslationPublicationReconciliation.Deferred(
-                            "translation candidate block identity changed",
-                        )
-
-                    val updated = current.detachedCopy().apply {
-                        blocks = rebasedBlocks
-                        translationStatus = candidate.translationStatus
-                        translationError = candidate.translationError
-                        translationFingerprint = candidate.translationFingerprint
-                        translationOrigin = candidate.translationOrigin
-                        sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
-                        if (stampRenderTerminalIfDisplayComplete()) updatedAt = System.currentTimeMillis()
-                    }
-                    val owned = ownedPage(pageKey, updated)
-                    val expectedCurrent = actual.toPrecondition()
-                    pages = pages.put(pageKey, publishPage(owned))
-                    if (!publishLocked(current, owned, expectedCurrent)) {
-                        restorePageLocked(pageKey, current)
-                        TranslationPublicationReconciliation.PublicationFailed(
-                            publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
-                        )
-                    } else {
-                        TranslationPublicationReconciliation.Rebased(snapshotLocked(pageKey))
-                    }
-        }
-    }
-
-    private fun sameTranslationOutput(current: PageTranslation, candidate: PageTranslation): Boolean =
-        current.translationStatus == StageStatus.READY &&
-            candidate.translationStatus == StageStatus.READY &&
-            current.translationError == candidate.translationError &&
-            current.translationFingerprint == candidate.translationFingerprint &&
-            current.translationOrigin == candidate.translationOrigin &&
-            current.blocks.map { it.stableFingerprint() } == candidate.blocks.map { it.stableFingerprint() }
-
-    private fun rebaseTranslationBlocks(
-        current: PageTranslation,
-        candidate: PageTranslation,
-    ): MutableList<TranslationBlock>? {
-        if (current.blocks.size != candidate.blocks.size) return null
-        val rebased = mutableListOf<TranslationBlock>()
-        current.blocks.zip(candidate.blocks).forEach { (currentBlock, candidateBlock) ->
-            // TranslationBlock equality verifies every OCR/layout/edit field while we ignore only
-            // the translated string. Preserve the current block and overlay that one owned field.
-            if (candidateBlock.copy(translation = currentBlock.translation) != currentBlock) return null
-            rebased += currentBlock.detachedCopy().apply { translation = candidateBlock.translation }
-        }
-        return rebased
-    }
-
-    /** True only when the artifact manifest points at this exact semantic page snapshot. */
-    private fun translationOutputIsDurableLocked(pageKey: String, page: PageTranslation): Boolean {
-        val artifactPage = artifactManifest?.pages?.get(pageKey) ?: return false
-        val fingerprint = StageFingerprints.pageSnapshot(page)
-        // Candidate sidecars are persisted before their manifest pointer. The committed field's
-        // historical name is translationFingerprint, but it stores this same page-snapshot hash.
-        return artifactPage.candidate?.pageSnapshotFingerprint == fingerprint ||
-            artifactPage.committed?.translationFingerprint == fingerprint
-    }
-
-    /**
-     * Persists a retryable/terminal stage failure together with the current
-     * candidate snapshot. The page mutation and durable failure pointer share
-     * one artifact-manifest publication, so a restart cannot observe a page
-     * status without its failure metadata (or vice versa).
-     */
     suspend fun persistDurableStageFailure(
         pageKey: String,
         expected: PatchPrecondition,
         failure: DurableFailureMetadata,
         description: String = "durable stage failure",
         update: (PageTranslation?) -> PageTranslation,
-    ): PatchResult {
-        if (defunct) return rejected(pageKey, description, "store is defunct")
-        return mutex.withLock {
-                    when (val admission = publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                        )
-                    }
-                    val rejection = pageWriteRejection(pageKey, expected)
-                    if (rejection != null) {
-                        return@withLock rejected(pageKey, description, rejection.reason, rejection.detail)
-                    }
-                    val previous = pages[pageKey]?.toDraft()
-                    val updated = try {
-                        ownedPage(pageKey, update(previous?.detachedCopy()))
-                    } catch (error: IllegalArgumentException) {
-                        return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
-                    } catch (error: IllegalStateException) {
-                        return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
-                    }
-                    pages = pages.put(pageKey, publishPage(updated))
-                    val persisted = publicationBridge.persistArtifactMutation(
-                        pageKey = pageKey,
-                        previous = previous,
-                        updated = updated,
-                        expected = expected,
-                        durableFailure = failure,
-                    )
-                    if (!persisted) {
-                        restorePageLocked(pageKey, previous)
-                        return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-                    }
-                    // A retryable/terminal candidate is deliberately not promoted. The
-                    // prior committed display remains the reader authority.
-                    stateFlow.value = snapshotPages()
-                    displaySnapshotLocked(listOf(pageKey))
-                    PatchResult.Accepted(snapshotLocked(pageKey))
-        }
-    }
+    ): PatchResult = pageMutations.persistDurableStageFailure(pageKey, expected, failure, description, update)
 
-    /** Compatibility-shaped convenience for non-stage callers; still fenced by a snapshot. */
     suspend fun updatePageFromCurrentSnapshot(
         pageKey: String,
         description: String,
         update: (PageTranslation?) -> PageTranslation,
-    ): PatchResult = updatePageGuarded(pageKey, snapshot(pageKey).toPrecondition(), description, update)
+    ): PatchResult = pageMutations.updatePageFromCurrentSnapshot(pageKey, description, update)
 
-    /**
-     * TachiyomiAT: fast non-blocking cancellation of in-flight stages in memory.
-     * Synchronously flips pages with [isStageRunning] to CANCELLED in [stateFlow] and [_display]
-     * without acquiring [mutex] or performing disk I/O. This allows the reader UI (e.g.
-     * auto-translation drawer toggle) to clear spinners and dim overlays instantly on the current
-     * frame (<16ms) without blocking the Main thread. Durable persistence can follow
-     * asynchronously.
-     *
-     *   pages holding an ACTIVE BATCH-origin stage lease are SKIPPED —
-     * this method mutates in-memory state outside the mutex with no lease
-     * check, and flipping a batch-owned page desyncs the run's version
-     * expectations mid-stage (the flagged lane then fails `checkpointOcr`/
-     * `mergeTranslation` on a healthy page). The batch cancel path owns those
-     * pages until their leases release. The lease query only takes the lease
-     * table's own monitor, never [mutex], so the fast path stays lock-cheap.
-     */
     fun fastCancelInFlightStagesInMemory(
         origin: PageWriteOrigin? = null,
         cancellationReason: String = "Translation cancelled",
-    ): Int {
-        var flipped = 0
-        val current = pages
-        val hasRunning = current.values.any { it.isStageRunning }
-        if (!hasRunning) return 0
-        var updatedPages = current
-        val changedPageKeys = mutableSetOf<String>()
-        current.forEach { (pageKey, page) ->
-            if (page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
-                if (origin != null && pageLeaseOwner(pageKey)?.let { it != origin } == true) return@forEach
-                if (hasActiveBatchStageLease(pageKey)) {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
-                            "writer=fastCancelInFlightStagesInMemory pageKey=$pageKey"
-                    }
-                    // Preserve the page UNCHANGED — the batch owns its state.
-                } else {
-                    flipped++
-                    val updated = page.toDraft().apply {
-                        cancelInFlightStages()
-                        ocrError = cancellationReason
-                        updatedAt = System.currentTimeMillis()
-                    }
-                    updatedPages = updatedPages.put(pageKey, publishPage(updated))
-                    changedPageKeys += pageKey
-                }
-            }
-        }
-        // Every running page was batch-leased: nothing flipped, keep the
-        // current map/state as-is instead of republishing identical values.
-        if (flipped == 0) return 0
-        pages = updatedPages
-        stateFlow.value = snapshotPages()
-        displaySnapshotLocked(changedPageKeys)
-        return flipped
-    }
+    ): Int = pageMutations.fastCancelInFlightStagesInMemory(origin, cancellationReason)
 
     internal suspend fun patchBlock(
         pageKey: String,
@@ -1318,121 +829,26 @@ class ChapterTranslationStore internal constructor(
         expectedUserEditedAt: Long? = null,
         description: String,
         patch: (TranslationBlock) -> TranslationBlock,
-    ): PatchResult = patchPage(pageKey, expected, description) { page ->
-        requireNotNull(page) { "page missing" }
-        val current = page.blocks.getOrNull(blockIndex)
-            ?: throw IllegalStateException("block index $blockIndex missing")
-        check(current.stableFingerprint() == expectedBlockFingerprint) { "block fingerprint changed" }
-        if (expectedTranslation !=
-            null
-        ) {
-            check(current.translation == expectedTranslation) { "block translation changed" }
-        }
-        check(current.userEditedAt == expectedUserEditedAt) { "block edit timestamp changed" }
-        page.apply { blocks[blockIndex] = patch(current.detachedCopy()).detachedCopy() }
-    }
+    ): PatchResult = pageMutations.patchBlock(
+        pageKey, blockIndex, expected, expectedBlockFingerprint,
+        expectedTranslation, expectedUserEditedAt, description, patch,
+    )
 
-    /** Apply a stage patch while checking only the identities owned by that stage. */
-    private suspend fun applyStagePatch(
-        patch: StagePatch,
-        description: String,
-    ): StagePatchResult {
-        if (defunct) return rejectedStage(patch.pageKey, description, "store is defunct")
-        return mutex.withLock {
-            when (val admission = publicationBridge.admitMutation()) {
-                MutationAdmission.Granted -> Unit
-                is MutationAdmission.Rejected -> return@withLock rejectedStage(
-                    patch.pageKey,
-                    description,
-                    "${admission.code}: ${admission.message}",
-                )
-            }
-            val current = pages[patch.pageKey]?.toDraft()
-            when (patch) {
-                is StagePatch.Ocr -> mergeOcrLocked(current, patch.value, description)
-                is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description)
-                is StagePatch.Render -> mergeRenderLocked(current, patch.value, description)
-            }
-        }
-    }
-
-    /**
-     * Detection/OCR stage merge. The patch must carry the page
-     * version and prior OCR identity observed before the native recognition
-     * pass; anything that touched the page since makes the writer stale and
-     * the merge is rejected, so a late recognition result can never clobber
-     * newer work or drop translations merged in the meantime.
-     *
-     * Manual target edits are authoritative for their exact source block: a
-     * new block whose OCR identity matches an edited block inherits its
-     * translation and edit timestamp. On a failed recognition the merge keeps
-     * the existing blocks and only records the failure diagnostics.
-     */
     suspend fun mergeOcr(
         patch: OcrStagePatch,
-        description: String = "detection/ocr stage merge",
-    ): StagePatchResult = applyStagePatch(StagePatch.Ocr(patch), description)
-
-    private suspend fun mergeOcrLocked(
-        current: PageTranslation?,
-        patch: OcrStagePatch,
-        description: String,
-    ): StagePatchResult {
-        // Same identity fence as the translation/render merges
-        // (stageIdentityRejection); the OCR-specific prior-OCR check sits
-        // between the dependency fingerprint and the lease clauses, exactly
-        // where it sat in the previous inline chain. Reason strings and
-        // ordering are behavior.
-        val rejection = stageIdentityRejection(
-            current,
-            patch.generation,
-            patch.expectedPageVersion,
-            patch.expectedLeaseToken,
-            patch.pageKey,
-            patch.expectedCandidateGenerationId,
-            patch.expectedDependencyFingerprint,
-            patch.expectedArtifactPageVersion,
-        ) ?: if (patch.expectedPriorOcrFingerprints != current!!.ocrBlockFingerprints()) {
-            "prior OCR identity changed"
-        } else {
-            null
-        }
-        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
-
-        val updated = mergeOcrFields(current!!, patch.ocrResult, patch.errorMessage)
-        val owned = ownedPage(patch.pageKey, updated)
-        pages = pages.put(patch.pageKey, publishPage(owned))
-        if (!publishLocked(current, owned, patch.toPrecondition())) {
-            restorePageLocked(patch.pageKey, current)
-            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-        }
-        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
-    }
+        description: String = "stage:ocr",
+    ): StagePatchResult = stageMerges.mergeOcr(patch, description)
 
     suspend fun mergeTranslation(
         patch: TranslationStagePatch,
-        description: String = "translation stage merge",
-    ): StagePatchResult = applyStagePatch(StagePatch.Translation(patch), description)
+        description: String = "stage:translation",
+    ): StagePatchResult = stageMerges.mergeTranslation(patch, description)
 
     suspend fun mergeRender(
         patch: RenderStagePatch,
-        description: String = "render stage merge",
-    ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
+        description: String = "stage:render",
+    ): StagePatchResult = stageMerges.mergeRender(patch, description)
 
-    /**
-     * Checkpoints the page's current (already merged) OCR state while the
-     * caller still owns its writer lease. [expectedCandidateGenerationId]
-     * non-null selects the standard CLOSE/REBASE branch against the active
-     * BATCH candidate; null selects the.1 adopt-committed branch
-     * (no active candidate; the committed bundle's OCR content fingerprint
-     * must equal the live OCR state's). [sourceOrientation] and
-     * [sourceSha256] complete the checkpoint's [SourceIdentity] — the sha
-     * falls back to the live page's recorded source fingerprint; a checkpoint
-     * without a provably complete source identity is rejected (fail closed).
-     * Store generation, page version, and lease ownership are checked before
-     * durable publication. The checkpoint pointer is installed only after a
-     * committed artifact result; the caller releases its lease afterward.
-     */
     suspend fun checkpointOcr(
         pageKey: String,
         generation: Long,
@@ -1447,154 +863,22 @@ class ChapterTranslationStore internal constructor(
         mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
         nowEpochMs: Long = System.currentTimeMillis(),
         description: String = "ocr checkpoint",
-    ): CheckpointOcrResult {
-        if (defunct) return rejectedCheckpoint(description, "store is defunct")
-        return mutex.withLock {
-                    when (val admission = publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejectedCheckpoint(
-                            description,
-                            "${admission.code}: ${admission.message}",
-                        )
-                    }
-                    val artifact = artifactEngine
-                    val manifest = artifactManifest
-                    if (artifact == null || manifest == null) {
-                        return@withLock rejectedCheckpoint(description, "artifact store was not established")
-                    }
-                    val current = pages[pageKey]
-                    val artifactPage = manifest.pages[pageKey]
-                    val rejection = when {
-                        generation != this.generation -> "generation expected=$generation actual=${this.generation}"
-                        current == null -> "page missing"
-                        expectedPageVersion != current.pageVersion ->
-                            "pageVersion expected=$expectedPageVersion actual=${current.pageVersion}"
-                        // 02.1: the lease token is mandatory and must still
-                        // fence this page — a released or stolen lease rejects.
-                        pageLeases[pageKey] == null -> "page lease required for checkpoint"
-                        pageLeases[pageKey]?.token != expectedLeaseToken -> "page lease token changed"
-                        expectedArtifactPageVersion != null &&
-                            expectedArtifactPageVersion != artifactPage?.pageVersion ->
-                            "artifact pageVersion changed"
-                        expectedCandidateGenerationId != null &&
-                            expectedCandidateGenerationId != artifactPage?.candidate?.generationId ->
-                            "candidate generation changed"
-                        // 02.1 / C2: no grace clause on the checkpoint path —
-                        // a missing dependency fingerprint is a programmer error.
-                        expectedCandidateGenerationId != null && expectedDependencyFingerprint == null ->
-                            "dependency fingerprint required for checkpoint"
-                        expectedCandidateGenerationId != null &&
-                            artifactPage?.candidate?.dependencyFingerprint != expectedDependencyFingerprint ->
-                            "candidate dependency fingerprint changed"
-                        expectedCandidateGenerationId == null && artifactPage?.candidate != null ->
-                            "active candidate present; standard checkpoint branch required"
-                        expectedPriorOcrFingerprints != null &&
-                            expectedPriorOcrFingerprints != current.ocrBlockFingerprints() ->
-                            "prior OCR identity changed"
-                        else -> null
-                    }
-                    if (rejection != null) return@withLock rejectedCheckpoint(description, rejection)
-                    val live = current?.toDraft() ?: return@withLock rejectedCheckpoint(description, "page missing")
-                    // The checkpoint records which mask basis produced the OCR
-                    // masks. It must not promote the cleaned-output revision:
-                    // that revision is stamped only when inpaint publishes the
-                    // corresponding cleaned image, and display readiness relies
-                    // on it to reject stale cleaned bytes.
-                    val inpaintMaskRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    val resolvedSourceSha256 = sourceSha256 ?: live.sourceFingerprint
-                    val sourceIdentity = SourceIdentity(
-                        pageKey = pageKey,
-                        sha256 = resolvedSourceSha256,
-                        width = live.imgWidth.takeIf { it > 0f }?.toInt(),
-                        height = live.imgHeight.takeIf { it > 0f }?.toInt(),
-                        orientation = sourceOrientation,
-                    )
-                    if (!sourceIdentity.isComplete) {
-                        return@withLock rejectedCheckpoint(description, "incomplete source identity for checkpoint")
-                    }
-                    val snapshotFingerprint = StageFingerprints.pageSnapshot(live)
-                    val snapshotFileName = artifact.progress.ocrStageSnapshotName(pageKey, snapshotFingerprint)
-                    val naturalPageIndex = artifactPage?.naturalPageIndex
-                    val checkpoint = PageOcrCheckpoint(
-                        pageKey = pageKey,
-                        naturalPageIndex = naturalPageIndex,
-                        sourceIdentity = sourceIdentity,
-                        detectionFingerprint = live.detectionFingerprint,
-                        ocrFingerprint = live.ocrFingerprint.orEmpty(),
-                        ocrContentFingerprint = pageOcrContentFingerprint(
-                            pageKey,
-                            live,
-                            naturalPageIndex,
-                            sourceOrientation,
-                            inpaintMaskRevision,
-                        ),
-                        ocrPageSnapshotPointer = SidecarPointer(
-                            fileName = snapshotFileName,
-                            schemaVersion = 1,
-                            contentFingerprint = snapshotFingerprint,
-                        ),
-                        inpaintMaskRevision = inpaintMaskRevision,
-                        priorCommittedDisplay = artifactPage?.committed?.let { committed ->
-                            CommittedDisplayRef(
-                                generationId = committed.generationId,
-                                bundleFingerprint = committed.bundleFingerprint,
-                                pageSnapshotFileName = committed.pageSnapshotFileName,
-                            )
-                        },
-                        producedByOrigin = pageLeases.getValue(pageKey).origin.toArtifactOrigin(),
-                        producerGenerationId = expectedCandidateGenerationId,
-                        checkpointedAtEpochMs = nowEpochMs,
-                    )
-                    val outcome = artifact.progress.checkpointOcr(
-                        manifest = manifest,
-                        pageKey = pageKey,
-                        expectedPageVersion = artifactPage?.pageVersion ?: 0L,
-                        expectedDependencyFingerprint = expectedDependencyFingerprint,
-                        ocrSnapshot = live,
-                        checkpoint = checkpoint,
-                        mode = mode,
-                        nowEpochMs = nowEpochMs,
-                    )
-                    when (outcome) {
-                        is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                            artifactManifest = outcome.manifest
-                            stateFlow.value = snapshotPages()
-                            displaySnapshotLocked(listOf(pageKey))
-                            CheckpointOcrResult.Committed(
-                                snapshot = snapshotLocked(pageKey),
-                                manifest = outcome.manifest,
-                                ocrContentFingerprint = checkpoint.ocrContentFingerprint,
-                            )
-                        }
-                        is ChapterArtifactEngine.TransactionOutcome.Rejected ->
-                            rejectedCheckpoint(description, outcome.reason)
-                    }
-        }
-    }
+    ): CheckpointOcrResult = stageMerges.checkpointOcr(
+        pageKey = pageKey,
+        generation = generation,
+        expectedPageVersion = expectedPageVersion,
+        expectedLeaseToken = expectedLeaseToken,
+        expectedCandidateGenerationId = expectedCandidateGenerationId,
+        expectedArtifactPageVersion = expectedArtifactPageVersion,
+        expectedDependencyFingerprint = expectedDependencyFingerprint,
+        sourceOrientation = sourceOrientation,
+        sourceSha256 = sourceSha256,
+        expectedPriorOcrFingerprints = expectedPriorOcrFingerprints,
+        mode = mode,
+        nowEpochMs = nowEpochMs,
+        description = description,
+    )
 
-    /**
-     * Restores a page's saved OCR from its durable checkpoint into live
-     * memory WITHOUT republishing: the checkpoint and its page-snapshot
-     * sidecar are already manifest-referenced, so rebuilding the in-memory
-     * blocks writes no new checkpoint or page payload and no manifest solely
-     * for this operation. The checkpoint remains the durable recovery
-     * authority; the first REAL mutation after hydration opens/binds the
-     * candidate through the existing publication bridge.
-     *
-     * Shared by the single-page preflight reuse path and the chapter-resume
-     * envelope rebuild. Fences (no grace, mirroring the checkpoint path):
-     * store generation, page version, a HELD OCR lease whose token equals
-     * [expectedLeaseToken], the observed candidate generation / dependency
-     * fingerprint / artifact page version, and the CURRENT manifest
-     * checkpoint pointer — plus the checkpoint's own provenance: a complete
-     * source identity matching [observedSourceSha256], a readable snapshot
-     * bundle whose page-snapshot fingerprint AND OCR content fingerprint both
-     * equal the checkpoint's records. A live page that already carries
-     * different OCR blocks (newer work or user edits) is never overwritten;
-     * identical blocks short-circuit to an idempotent Accepted (repeated
-     * adoption is a no-op). A non-READY checkpointed outcome is refused as
-     * stale; every rejection leaves memory and durable state untouched.
-     */
     suspend fun hydrateOcrFromCheckpoint(
         pageKey: String,
         generation: Long,
@@ -1605,432 +889,58 @@ class ChapterTranslationStore internal constructor(
         expectedArtifactPageVersion: Long?,
         checkpointPointer: SidecarPointer,
         observedSourceSha256: String?,
-        description: String,
-    ): StagePatchResult = mutex.withLock {
-        if (defunct) return@withLock rejectedStage(pageKey, description, "store is defunct")
-        val manifest = artifactManifest
-        val artifact = artifactEngine
-        if (manifest == null || artifact == null) {
-            return@withLock rejectedStage(pageKey, description, "artifact store was not established")
-        }
-        // Current-snapshot fence: only the checkpoint the manifest still
-        // references may back live state — never a stale file handle.
-        if (manifest.ocrCheckpoints[pageKey] != checkpointPointer) {
-            return@withLock rejectedStage(pageKey, description, "checkpoint pointer changed")
-        }
-        // The provenance verification (both fingerprints, complete source
-        // identity, observed sha, READY state) is the ONE classified recovery
-        // read shared with the opener's publication-free reader fallback.
-        val recovery = when (val read = artifact.progress.readRecoveryCheckpoint(checkpointPointer, observedSourceSha256)) {
-            is ChapterProgressRecords.CheckpointRecoveryRead.Usable -> read
-            is ChapterProgressRecords.CheckpointRecoveryRead.Unusable ->
-                return@withLock rejectedStage(pageKey, description, read.reason)
-        }
-        val checkpoint = recovery.checkpoint
-        val ocrSnapshot = recovery.ocrSnapshot
-        if (pageLeases[pageKey] == null) {
-            return@withLock rejectedStage(pageKey, description, "page lease required for hydration")
-        }
-        if (expectedCandidateGenerationId != null && expectedDependencyFingerprint == null) {
-            return@withLock rejectedStage(pageKey, description, "dependency fingerprint required for hydration")
-        }
-        val current = pages[pageKey]?.toDraft()
-        val rejection = stageIdentityRejection(
-            current,
-            generation,
-            expectedPageVersion,
-            expectedLeaseToken,
-            pageKey,
-            expectedCandidateGenerationId,
-            expectedDependencyFingerprint,
-            expectedArtifactPageVersion,
-        )
-        if (rejection != null) return@withLock rejectedStage(pageKey, description, rejection)
-        val currentBlockFingerprints = current!!.ocrBlockFingerprints()
-        if (currentBlockFingerprints.isNotEmpty()) {
-            if (currentBlockFingerprints == ocrSnapshot.ocrBlockFingerprints()) {
-                // Already hydrated with identical content: repeated adoption
-                // is a no-op — no version bump, no state churn, no writes.
-                return@withLock StagePatchResult.Accepted(snapshotLocked(pageKey))
-            }
-            return@withLock rejectedStage(pageKey, description, "prior OCR identity changed")
-        }
-        // The OCR merge field semantics (including edited-block inheritance
-        // and the textless SKIPPED propagation) stay owned by mergeOcrFields.
-        val updated = mergeOcrFields(current, ocrSnapshot)
-        // mergeOcrFields does not own the source identity. A synthesized
-        // placeholder carries none, and the checkpoint's source identity was
-        // just proven against the observed source bytes above — restore it so
-        // planning/revalidation see the same identity the OCR was built from.
-        updated.sourceFingerprint = checkpoint.sourceIdentity.sha256
-        val owned = ownedPage(pageKey, updated)
-        pages = pages.put(pageKey, publishPage(owned))
-        stateFlow.value = snapshotPages()
-        displaySnapshotLocked(listOf(pageKey))
-        promoteDisplayIfReadyLocked(pageKey, owned)
-        StagePatchResult.Accepted(snapshotLocked(pageKey))
-    }
-
-    /**
-     * The semantic `PageOcrContentFingerprint` of the page's current OCR
-     * state (  encoding). Transaction identities
-     * (versions, generations, timestamps, file names) are excluded by the
-     * builder.
-     *
-     * 1: [pageKey] MUST be the transaction pageKey, never
-     * [PageTranslation.sourceFileName] — the.1 adopt side
-     * ([ChapterArtifactEngine.committedOcrContentFingerprint]) canonicalizes
-     * with `checkpoint.sourceIdentity.pageKey` (the transaction pageKey), so
-     * both sides of the drift comparison must share one pageKey source.
-     */
-    private fun pageOcrContentFingerprint(
-        pageKey: String,
-        page: PageTranslationView,
-        naturalPageIndex: Int?,
-        sourceOrientation: String?,
-        inpaintMaskRevision: Int,
-    ): String = StageFingerprints.pageOcrContentFingerprint(
-        pageKey = pageKey,
-        naturalPageIndex = naturalPageIndex,
-        sourceSha256 = page.sourceFingerprint.orEmpty(),
-        sourceWidth = page.imgWidth.toInt(),
-        sourceHeight = page.imgHeight.toInt(),
-        sourceOrientation = sourceOrientation.orEmpty(),
-        detectionFingerprint = page.detectionFingerprint,
-        ocrFingerprint = page.ocrFingerprint.orEmpty(),
-        textless = page.isTextlessTerminal,
-        inpaintMaskRevision = inpaintMaskRevision,
-        blocks = StageFingerprints.pageOcrContentBlocks(page),
-        inpaintMaskBoxes = page.inpaintMaskBoxes,
+        description: String = "checkpoint:hydrate:ocr",
+    ): StagePatchResult = stageMerges.hydrateOcrFromCheckpoint(
+        pageKey,
+        generation,
+        expectedPageVersion,
+        expectedLeaseToken,
+        expectedCandidateGenerationId,
+        expectedDependencyFingerprint,
+        expectedArtifactPageVersion,
+        checkpointPointer,
+        observedSourceSha256,
+        description,
     )
 
-    private fun rejectedCheckpoint(description: String, reason: String): CheckpointOcrResult.Rejected {
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT ocr checkpoint rejected: generation=$generation " +
-                "operation=$description reason=$reason"
-        }
-        return CheckpointOcrResult.Rejected(reason)
-    }
+    fun resolveDisplayPage(pageKey: String): PageTranslationView? =
+        displayPublication.resolveDisplayPage(pageKey)
 
-    private suspend fun mergeTranslationLocked(
-        current: PageTranslation?,
-        patch: TranslationStagePatch,
-        description: String,
-    ): StagePatchResult {
-        if (patch.sourceFingerprint != null && !patch.sourceFingerprint.isSha256Hex()) {
-            return rejectedStage(patch.pageKey, description, "invalid observed source fingerprint")
-        }
-        val identityRejection = stageIdentityRejection(
-            current,
-            patch.generation,
-            patch.expectedPageVersion,
-            patch.expectedLeaseToken,
-            patch.pageKey,
-            patch.expectedCandidateGenerationId,
-            patch.expectedDependencyFingerprint,
-            patch.expectedArtifactPageVersion,
-        )
-            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
-            // Provenance preconditions are opt-in. Both fields default to null,
-            // so older patches keep byte-identical behavior (no extra manifest
-            // reads or new
-            // rejection class). Non-null fields are validated against the
-            // manifest's CURRENTLY frozen profile / envelope-plan pointers;
-            // a mismatch rejects the WHOLE page patch (stale-profile and
-            // stale-plan protection; a rejected commit never advances any
-            // frontier or page state).
-            ?: translationProvenanceRejection(patch)
-        if (identityRejection != null) {
-            return rejectedStage(patch.pageKey, description, identityRejection)
-        }
-        val page = current!!.detachedCopy()
-        val applied = mutableListOf<Int>()
-        val rejectedTargets = mutableListOf<String>()
-        patch.blocks.forEach { target ->
-            val block = page.blocks.getOrNull(target.blockIndex)
-            val rejection = when {
-                block == null -> "block index ${target.blockIndex} missing"
-                block.ocrFingerprint() != target.expectedOcrFingerprint ->
-                    "block ${target.blockIndex} OCR identity changed"
-                block.text != target.expectedSourceText ->
-                    "block ${target.blockIndex} source changed"
-                block.translation != target.expectedTranslation ->
-                    "block ${target.blockIndex} translation changed"
-                block.userEditedAt != target.expectedUserEditedAt ->
-                    "block ${target.blockIndex} user edit changed"
-                else -> null
-            }
-            if (rejection != null) {
-                rejectedTargets += rejection
-            } else {
-                block!!.translation = target.translation
-                applied += target.blockIndex
-            }
-        }
-        if (applied.isEmpty()) {
-            return rejectedStage(
-                patch.pageKey,
-                description,
-                rejectedTargets.firstOrNull() ?: "no translation targets",
-            )
-        }
-        page.translationStatus = patch.translationStatus
-        page.sourceFingerprint = patch.sourceFingerprint ?: page.sourceFingerprint
-        page.errorMessage = patch.errorMessage
-        if (page.stampRenderTerminalIfDisplayComplete()) page.updatedAt = System.currentTimeMillis()
-        val updated = ownedPage(patch.pageKey, page)
-        pages = pages.put(patch.pageKey, publishPage(updated))
-        if (!publishLocked(current, updated, patch.toPrecondition())) {
-            restorePageLocked(patch.pageKey, current)
-            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-        }
-        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), applied)
-    }
+    suspend fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? =
+        displayPublication.getOrLoadPageSnapshot(pageKey)
 
-    /**
-     * The envelope-plan precondition is active only when the patch carries its
-     * nullable plan fingerprint;
-     * a fully-null patch returns `null` before touching the manifest, so
-     * every caller without the fingerprint keeps byte-identical merge behavior.
-     *
-     *  - `envelopePlanFingerprint` must equal the manifest's current
-     *    `envelopePlan` pointer content fingerprint  — a commit
-     *    built from a superseded plan is rejected.
-     *
-     * A rejected patch never mutates page state or advances a frontier.
-     */
-    private fun translationProvenanceRejection(patch: TranslationStagePatch): String? {
-        if (patch.envelopePlanFingerprint == null) return null
-        val manifest = artifactManifest
-        patch.envelopePlanFingerprint?.let { expected ->
-            val plan = manifest?.envelopePlan?.contentFingerprint
-            if (plan != expected) {
-                return "translation provenance rejected: envelope plan changed " +
-                    "(expected=$expected current=${plan ?: "<absent>"})"
-            }
-        }
-        return null
-    }
+    internal fun committedDisplayPage(pageKey: String): PageTranslationView? =
+        displayPublication.committedDisplayPage(pageKey)
 
-    private suspend fun mergeRenderLocked(
-        current: PageTranslation?,
-        patch: RenderStagePatch,
-        description: String,
-    ): StagePatchResult {
-        val rejection = stageIdentityRejection(
-            current,
-            patch.generation,
-            patch.expectedPageVersion,
-            patch.expectedLeaseToken,
-            patch.pageKey,
-            patch.expectedCandidateGenerationId,
-            patch.expectedDependencyFingerprint,
-            patch.expectedArtifactPageVersion,
-        )
-            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
-            ?: current?.takeUnless { it.cleanedImageName == patch.expectedCleanedImageName }
-                ?.let { "cleaned image identity changed" }
-            ?: current?.takeUnless { it.inpaintRevision == patch.expectedInpaintRevision }
-                ?.let { "inpaint revision changed" }
-            ?: current?.takeIf {
-                patch.renderStatus == StageStatus.READY &&
-                    !it.isCleanedImageReady &&
-                    !it.originalImageFallback
-            }
-                ?.let { "cleaned image is not current for render completion" }
-        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+    fun mayDeleteCleanedImage(pageKey: String, name: String): Boolean =
+        displayPublication.mayDeleteCleanedImage(pageKey, name)
 
-        val page = current!!.detachedCopy()
-        patch.blocks.forEach { target ->
-            val block = page.blocks.getOrNull(target.blockIndex)
-            if (block == null) {
-                return rejectedStage(patch.pageKey, description, "block index ${target.blockIndex} missing")
-            }
-            if (block.stableFingerprint() != target.expectedBlockFingerprint) {
-                return rejectedStage(patch.pageKey, description, "render block identity changed")
-            }
-        }
-        patch.blocks.forEach { target ->
-            val block = page.blocks[target.blockIndex]
-            block.textColor = target.textColor
-            block.strokeColor = target.strokeColor
-            block.strokeWidth = target.strokeWidth
-        }
-        page.renderStatus = patch.renderStatus
-        patch.layoutFingerprint?.let { page.layoutFingerprint = it }
-        page.errorMessage = patch.errorMessage
-        val updated = ownedPage(patch.pageKey, page)
-        pages = pages.put(patch.pageKey, publishPage(updated))
-        if (!publishLocked(current, updated, patch.toPrecondition())) {
-            restorePageLocked(patch.pageKey, current)
-            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-        }
-        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), patch.blocks.map { it.blockIndex })
-    }
+    suspend fun authorizeCleanedImageDeletion(pageKey: String, name: String): Boolean =
+        displayPublication.authorizeCleanedImageDeletion(pageKey, name)
 
-    private fun stageIdentityRejection(
-        page: PageTranslation?,
-        expectedGeneration: Long,
-        expectedPageVersion: Long? = null,
-        expectedLeaseToken: Long? = null,
-        pageKey: String? = null,
-        expectedCandidateGenerationId: String? = null,
-        expectedDependencyFingerprint: String? = null,
-        expectedArtifactPageVersion: Long? = null,
-    ): String? = when {
-        expectedGeneration != generation -> "generation expected=$expectedGeneration actual=$generation"
-        page == null -> "page missing"
-        expectedPageVersion != null && expectedPageVersion != page.pageVersion ->
-            "pageVersion expected=$expectedPageVersion actual=${page.pageVersion}"
-        expectedArtifactPageVersion != null &&
-            pageKey != null &&
-            expectedArtifactPageVersion != artifactManifest?.pages?.get(pageKey)?.pageVersion ->
-            "artifact pageVersion changed"
-        expectedCandidateGenerationId != null &&
-            pageKey != null &&
-            expectedCandidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
-            "candidate generation changed"
-        expectedDependencyFingerprint != null &&
-            pageKey != null &&
-            artifactManifest?.pages?.get(pageKey)?.candidate?.let { candidate ->
-                expectedDependencyFingerprint != candidate.dependencyFingerprint
-            } == true ->
-            "candidate dependency fingerprint changed"
-        expectedLeaseToken != null && pageKey != null && pageLeases[pageKey]?.token != expectedLeaseToken ->
-            "page lease token changed"
-        expectedLeaseToken == null && pageKey != null && pageLeases[pageKey] != null ->
-            "page lease token required"
-        else -> null
-    }
+    fun isCleanedImageReferencedByAnotherPage(pageKey: String, name: String): Boolean =
+        displayPublication.isCleanedImageReferencedByAnotherPage(pageKey, name)
 
-    private fun OcrStagePatch.toPrecondition() = PatchPrecondition(
-        generation = generation,
-        pageVersion = expectedPageVersion,
-        blockFingerprints = expectedPriorOcrFingerprints,
-        leaseToken = expectedLeaseToken,
-        candidateGenerationId = expectedCandidateGenerationId,
-        dependencyFingerprint = expectedDependencyFingerprint,
-        artifactPageVersion = expectedArtifactPageVersion,
-    )
+    fun referencedCleanedImageNames(): Set<String> =
+        displayPublication.referencedCleanedImageNames()
 
-    private fun TranslationStagePatch.toPrecondition() = PatchPrecondition(
-        generation = generation,
-        pageVersion = expectedPageVersion ?: 0L,
-        leaseToken = expectedLeaseToken,
-        candidateGenerationId = expectedCandidateGenerationId,
-        dependencyFingerprint = expectedDependencyFingerprint,
-        artifactPageVersion = expectedArtifactPageVersion,
-    )
+    fun drainRetiredCleanedImages(pageKey: String): List<String> =
+        displayPublication.drainRetiredCleanedImages(pageKey)
 
-    private fun RenderStagePatch.toPrecondition() = PatchPrecondition(
-        generation = generation,
-        pageVersion = expectedPageVersion ?: 0L,
-        leaseToken = expectedLeaseToken,
-        candidateGenerationId = expectedCandidateGenerationId,
-        dependencyFingerprint = expectedDependencyFingerprint,
-        artifactPageVersion = expectedArtifactPageVersion,
-    )
+    suspend fun demoteCommittedDisplay(pageKey: String, reason: String): String? =
+        displayPublication.demoteCommittedDisplay(pageKey, reason)
 
-    private data class PageWriteRejection(
-        val reason: String,
-        val detail: PatchResult.Rejected.Detail? = null,
-    )
+    suspend fun retireActiveRun(reason: String): Boolean =
+        displayPublication.retireActiveRun(reason)
 
-    private fun pageWriteRejection(pageKey: String, expected: PatchPrecondition): PageWriteRejection? {
-        val current = pages[pageKey]
-        val artifactPage = artifactManifest?.pages?.get(pageKey)
-        return when {
-            expected.generation != generation ->
-                PageWriteRejection("generation expected=${expected.generation} actual=$generation")
-            expected.pageVersion != (current?.pageVersion ?: 0L) -> {
-                val actualVersion = current?.pageVersion ?: 0L
-                PageWriteRejection(
-                    reason = "pageVersion expected=${expected.pageVersion} actual=$actualVersion",
-                    detail = PatchResult.Rejected.Detail.PageVersionMismatch(expected.pageVersion, actualVersion),
-                )
-            }
-            expected.artifactPageVersion != null && expected.artifactPageVersion != artifactPage?.pageVersion ->
-                PageWriteRejection("artifact pageVersion expected=${expected.artifactPageVersion} actual=${artifactPage?.pageVersion}")
-            expected.candidateGenerationId != null &&
-                expected.candidateGenerationId != artifactPage?.candidate?.generationId ->
-                PageWriteRejection(
-                    "candidate generation expected=${expected.candidateGenerationId} " +
-                        "actual=${artifactPage?.candidate?.generationId}",
-                )
-            expected.dependencyFingerprint != null &&
-                artifactPage?.candidate?.let { candidate ->
-                    expected.dependencyFingerprint != candidate.dependencyFingerprint
-                } == true ->
-                PageWriteRejection(
-                    "candidate dependency fingerprint expected=${expected.dependencyFingerprint} " +
-                        "actual=${artifactPage?.candidate?.dependencyFingerprint}",
-                )
-            expected.blockFingerprints != null &&
-                expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
-                PageWriteRejection("block fingerprint changed")
-            expected.leaseToken != null && pageLeases[pageKey]?.token != expected.leaseToken -> {
-                val actualToken = pageLeases[pageKey]?.token
-                PageWriteRejection(
-                    reason = "page lease token expected=${expected.leaseToken} actual=$actualToken",
-                    detail = PatchResult.Rejected.Detail.PageLeaseTokenMismatch(expected.leaseToken, actualToken),
-                )
-            }
-            expected.leaseToken == null && pageLeases[pageKey] != null ->
-                PageWriteRejection("page lease token required")
-            else -> null
-        }
-    }
+    internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean =
+        displayPublication.cancelArtifactCandidateLocked(pageKey)
 
-    private fun ocrIdentityRejection(
-        page: PageTranslation?,
-        expectedFingerprints: List<String>,
-        expectedSources: List<String>?,
-    ): String? = when {
-        page == null -> "page missing"
-        page.ocrBlockFingerprints() != expectedFingerprints -> "OCR block identity changed"
-        expectedSources != null && page.blocks.map { it.text } != expectedSources -> "OCR source changed"
-        else -> null
-    }
+    internal fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean =
+        pageMutations.shouldPersistUpdate(previous, updated)
 
-    private fun rejectedStage(pageKey: String, description: String, reason: String): StagePatchResult.Rejected {
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT stage patch rejected: pageKey=$pageKey generation=$generation " +
-                "operation=$description reason=$reason"
-        }
-        return StagePatchResult.Rejected(reason)
-    }
-
-    internal suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
-        if (defunct) {
-            rejected(pageKey, "updatePage", "store is defunct")
-            return
-        }
-        val context = currentCoroutineContext()[GenerationContext]
-        val expected = mutex.withLock {
-            if (context?.store === this && context.generation != generation) {
-                null
-            } else if (artifactManifest != null && pageLeases[pageKey] != null) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT compatibility updatePage rejected while a page lease is active: pageKey=$pageKey"
-                }
-                null
-            } else {
-                snapshotLocked(pageKey).toPrecondition()
-            }
-        }
-        if (expected == null) {
-            if (context?.store === this && context.generation != generation) {
-                rejected(
-                    pageKey,
-                    "updatePage",
-                    "generation expected=${context.generation} actual=$generation",
-                )
-            }
-            return
-        }
-        updatePageGuarded(pageKey, expected, "updatePage", update)
-    }
-
+    internal fun pageWriteRejection(pageKey: String, expected: PatchPrecondition): PageWriteRejection? =
+        pageMutations.pageWriteRejection(pageKey, expected)
     suspend fun deletePage(pageKey: String) = bulkMutator.deletePage(pageKey)
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) =
         bulkMutator.replaceAll(updatedPages)
@@ -2094,7 +1004,7 @@ class ChapterTranslationStore internal constructor(
      */
     suspend fun clearTransientQueuePages(reason: String? = null) =
         bulkMutator.clearTransientQueuePages(reason)
-    private fun nextVersion(): Long = ++nextPageVersion
+    internal fun nextVersion(): Long = ++nextPageVersion
 
     internal fun ownedPage(pageKey: String, candidate: PageTranslation): PageTranslation =
         candidate.detachedCopy().apply {
@@ -2103,368 +1013,6 @@ class ChapterTranslationStore internal constructor(
             runGeneration = generation
             pageVersion = nextVersion()
         }
-
-    private suspend fun publishLocked(
-        previous: PageTranslation?,
-        updated: PageTranslation,
-        expected: PatchPrecondition? = null,
-        durableFailure: DurableFailureMetadata? = null,
-        artifactLease: AttemptArtifactLease? = null,
-    ): Boolean {
-        val pageKey = updated.sourceFileName ?: ""
-        // Active reader stores are display-first: publish the complete live
-        // snapshot and enqueue the artifact transaction for the IO worker.
-        // Durable failure records remain synchronous so cancellation/retry
-        // semantics never report a failure before its ledger is recorded.
-        if (lazyPersistenceEnabled && durableFailure == null) {
-            return publishLazyLocked(pageKey, previous, updated, expected, artifactLease)
-        }
-        val isDurable = shouldPersistUpdate(previous, updated)
-        var actuallyPersisted = false
-        val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
-            val ok = publicationBridge.persistArtifactMutation(
-                pageKey = pageKey,
-                previous = previous,
-                updated = updated,
-                expected = expected,
-                durableFailure = durableFailure,
-            )
-            if (ok) actuallyPersisted = true
-            ok
-        } else {
-            true
-        }
-        if (!artifactAccepted) return false
-        if (actuallyPersisted) {
-            artifactLease?.stamp(this, pageKey, snapshotLocked(pageKey))
-        }
-        promoteDisplayIfReadyLocked(pageKey, updated)
-        stateFlow.value = snapshotPages()
-        displaySnapshotLocked(listOf(pageKey))
-        return true
-    }
-
-    private fun publishLazyLocked(
-        pageKey: String,
-        previous: PageTranslation?,
-        updated: PageTranslation,
-        expected: PatchPrecondition?,
-        artifactLease: AttemptArtifactLease? = null,
-    ): Boolean {
-        val snapshot = snapshotLocked(pageKey)
-        val shouldQueueArtifact = shouldPersistUpdate(previous, updated) ||
-            artifactManifest?.pages?.containsKey(pageKey) != true
-        if (shouldQueueArtifact) {
-            writeDrain.pendingLazyMutations[pageKey] = PendingLazyMutation(
-                pageKey = pageKey,
-                previous = previous?.detachedCopy(),
-                updated = updated.detachedCopy(),
-                expected = PatchPrecondition(
-                    generation = snapshot.generation,
-                    pageVersion = snapshot.pageVersion,
-                    blockFingerprints = snapshot.blockFingerprints,
-                    leaseToken = snapshot.leaseToken ?: expected?.leaseToken,
-                    candidateGenerationId = snapshot.candidateGenerationId,
-                    dependencyFingerprint = snapshot.dependencyFingerprint,
-                    artifactPageVersion = snapshot.artifactPageVersion,
-                ),
-                generation = snapshot.generation,
-                artifactLease = artifactLease,
-            )
-        }
-        promoteDisplayIfReadyLocked(pageKey, updated)
-        stateFlow.value = snapshotPages()
-        displaySnapshotLocked(listOf(pageKey))
-        if (shouldQueueArtifact) writeDrain.scheduleDrain()
-        return true
-    }
-
-    private fun restorePageLocked(pageKey: String, previous: PageTranslation?) {
-        pages = if (previous == null) pages.remove(pageKey) else pages.put(pageKey, publishPage(previous))
-        stateFlow.value = snapshotPages()
-        displaySnapshotLocked(listOf(pageKey))
-    }
-
-    /**
-     * Atomic committed-display promotion: when the page just reached a fully
-     * displayable state (cleaned image file published and verified upstream by
-     * [CleanedImagePublisher], translation READY/PARTIAL, render READY, some
-     * translated text), the committed pointer swaps to a frozen snapshot of
-     * exactly that state. A superseded bundle's cleaned file is retained until
-     * the pipeline drains it, never deleted under a live committed pointer.
-     */
-    internal fun promoteDisplayIfReadyLocked(pageKey: String, updated: PageTranslation) {
-        val published = pages[pageKey] ?: return
-        if (pageKey.isEmpty() || (!published.hasRenderedResult && !published.isTextlessTerminal)) return
-        val fingerprint = displayFingerprintOf(published)
-        val existing = committedDisplay[pageKey]
-        if (existing != null && existing.displayFingerprint == fingerprint) return
-        if (existing != null) {
-            existing.page.cleanedImageName
-                ?.takeIf { it != published.cleanedImageName && it.isNotEmpty() }
-                ?.let {
-                    retiredCleanedImages
-                        .computeIfAbsent(pageKey) { ConcurrentHashMap.newKeySet() }
-                        .add(it)
-                }
-        }
-        committedDisplay = committedDisplay.put(
-            pageKey,
-            CommittedPageDisplay(
-                page = published,
-                pageVersion = published.pageVersion,
-                displayFingerprint = fingerprint,
-                promotedAtEpochMs = published.updatedAt,
-            ),
-        )
-    }
-
-    /**
-     * Atomically updates only changed display keys; all other immutable values are shared.
-     * The fast-cancel path also calls this off-mutex, so the flow update must stay retry-safe.
-     */
-    internal fun displaySnapshotLocked(
-        changedPageKeys: Iterable<String>,
-    ) {
-        val keys = changedPageKeys.toList()
-        _display.update { current ->
-            var updated = current
-            keys.forEach { pageKey ->
-                val page = pages[pageKey]
-                updated = if (page == null) {
-                    updated.remove(pageKey)
-                } else {
-                    updated.put(pageKey, committedDisplay[pageKey]?.page ?: page)
-                }
-            }
-            updated
-        }
-    }
-
-    private fun displayFingerprintOf(page: PageTranslationView): String =
-        StageFingerprints.canonicalFingerprint(
-            buildList {
-                add(page.cleanedImageName)
-                add(page.inpaintRevision)
-                addAll(page.blockFingerprints())
-            },
-        )
-
-    /** Resolves the reader-facing page state: committed bundle first, live candidate otherwise. */
-    fun resolveDisplayPage(pageKey: String): PageTranslationView? =
-        committedDisplay[pageKey]?.page ?: pages[pageKey]
-
-    /**
-     * Lazily loads full page snapshot (including text blocks) from durable storage
-     * if the page is currently backed by a synthesized or empty placeholder.
-     */
-    suspend fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? =
-        mutex.withLock {
-            val current = pages[pageKey]
-            if (current != null && current.blocks.isNotEmpty()) {
-                return@withLock current.toDraft()
-            }
-            val record = artifactManifest?.pages?.get(pageKey)
-            val snapshotFileName = record?.candidate?.pageSnapshotFileName
-                ?: record?.committed?.pageSnapshotFileName
-            val store = artifactEngine
-            if (snapshotFileName != null && store != null) {
-                val loaded = store.readPageSnapshot(snapshotFileName)
-                if (loaded != null) {
-                    val published = publishPage(loaded)
-                    pages = pages.put(pageKey, published)
-                    stateFlow.value = snapshotPages()
-                    if (record?.committed != null) {
-                        committedDisplay = committedDisplay.put(
-                            pageKey,
-                            CommittedPageDisplay(
-                                page = published,
-                                pageVersion = loaded.pageVersion,
-                                displayFingerprint = displayFingerprintOf(loaded),
-                                promotedAtEpochMs = loaded.updatedAt,
-                            ),
-                        )
-                    }
-                    displaySnapshotLocked(listOf(pageKey))
-                    return@withLock loaded
-                }
-            }
-            current?.toDraft()
-        }
-
-    /** The frozen committed display bundle for [pageKey], if one exists. */
-    internal fun committedDisplayPage(pageKey: String): PageTranslationView? =
-        committedDisplay[pageKey]?.page
-
-    /**
-     * True while [name] still backs the committed display bundle (or its
-     * retained predecessor) for [pageKey]; such files must not be deleted
-     * before a newer bundle promotes.
-     */
-    fun mayDeleteCleanedImage(pageKey: String, name: String): Boolean {
-        if (pages[pageKey]?.cleanedImageName == name || committedDisplay[pageKey]?.page?.cleanedImageName == name) {
-            return false
-        }
-        // Rekey can leave an already-queued retirement callback carrying the old
-        // pageKey after ownership has moved. Check every live/committed/retained
-        // reference before deleting the shared image or its identity sidecar.
-        return name !in referencedCleanedImageNames()
-    }
-
-    /**
-     * Point-in-time store authorization to physically delete a cleaned image
-     * name: the same predicate as [mayDeleteCleanedImage], evaluated under
-     * [mutex]. The mutex protects ONLY this decision — the caller performs
-     * the physical delete AFTER this returns, outside the store lock, so the
-     * delete can interleave with later mutations that make [name] reachable.
-     * An authorized delete is therefore safe only for names with INDEPENDENT
-     * never-accepted provenance (a fresh private versioned name whose single
-     * possible acceptance just returned Rejected); for any name whose
-     * acceptance history is uncertain the caller must retain it regardless of
-     * this answer.
-     */
-    suspend fun authorizeCleanedImageDeletion(pageKey: String, name: String): Boolean = mutex.withLock {
-        mayDeleteCleanedImage(pageKey, name)
-    }
-
-    /** Protect a companion image still owned by a different page after page reset/deletion. */
-    fun isCleanedImageReferencedByAnotherPage(pageKey: String, name: String): Boolean =
-        pages.any { (owner, page) -> owner != pageKey && page.cleanedImageName == name } ||
-            committedDisplay.any { (owner, page) -> owner != pageKey && page.page.cleanedImageName == name } ||
-            retiredCleanedImages.any { (owner, names) -> owner != pageKey && name in names } ||
-            artifactManifest?.pages?.any { (owner, record) ->
-                owner != pageKey &&
-                    (record.committed?.displayBase?.fileName == name || record.previousCommitted?.displayBase?.fileName == name)
-            } == true
-
-    /** All cleaned-image names still reachable from live, committed, or retired state. */
-    fun referencedCleanedImageNames(): Set<String> = buildSet {
-        pages.values.mapNotNullTo(this) { it.cleanedImageName }
-        committedDisplay.values.mapNotNullTo(this) { it.page.cleanedImageName }
-        retiredCleanedImages.values.forEach { addAll(it) }
-        artifactManifest?.pages?.values?.forEach { record ->
-            record.committed?.displayBase?.fileName?.let(::add)
-            record.previousCommitted?.displayBase?.fileName?.let(::add)
-        }
-    }
-
-    /** Atomically takes every superseded cleaned-image name for [pageKey]. */
-    fun drainRetiredCleanedImages(pageKey: String): List<String> =
-        retiredCleanedImages.remove(pageKey)?.toList().orEmpty()
-
-    /**
-     * Explicitly drops the committed display pointer — reserved for user
-     * resets (reset translation/inpaint data), never for candidate retries:
-     * pause/cancel/failure keep the committed bundle visible.
-     *
-     * P3B typed reset receipt: null when the durable pointer removal is
-     * committed (or there was nothing to demote); a non-null reason when the
-     * destructive publication completed WITHOUT a verified same-state backup
-     * or was rejected — typed incomplete, never a silent success.
-     */
-    suspend fun demoteCommittedDisplay(pageKey: String, reason: String): String? {
-        if (defunct) return null
-        return mutex.withLock {
-            if (committedDisplay.containsKey(pageKey)) {
-                committedDisplay = committedDisplay.remove(pageKey)
-                retiredCleanedImages.remove(pageKey)
-                val demotion = demoteArtifactPageLocked(pageKey)
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT committed display demoted: pageKey=$pageKey reason=$reason"
-                }
-                displaySnapshotLocked(listOf(pageKey))
-                demotion
-            } else {
-                null
-            }
-        }
-    }
-
-    /**
-     *   retires the artifact manifest's `activeRun` pointer under the
-     * store mutex (the store-side façade over
-     * [ChapterArtifactEngine.retireActiveRun], mirroring the
-     * [demoteCommittedDisplay] transaction idiom: CAS against the durable
-     * manifest, façade snapshot refreshed only on Committed). Reserved for user
-     * resets — a reset must retire the recorded run so a future dispatch can
-     * never short-circuit on its COMPLETE record. Returns true when the pointer
-     * is durably gone (or was never set); a rejected transaction keeps the run
-     * record owned and returns false.
-     */
-    suspend fun retireActiveRun(reason: String): Boolean {
-        if (defunct) return false
-        return mutex.withLock {
-            val artifact = artifactEngine ?: return@withLock false
-            val manifest = artifactManifest ?: return@withLock false
-            when (val outcome = artifact.progress.retireActiveRun(manifest, reason)) {
-                is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                    artifactManifest = outcome.manifest
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT artifact active run retired: chapter=${manifest.chapterKey} reason=$reason"
-                    }
-                    true
-                }
-                is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact active run retirement rejected: " +
-                            "chapter=${manifest.chapterKey} reject=${outcome.reason} resetReason=$reason"
-                    }
-                    false
-                }
-            }
-        }
-    }
-
-    internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
-        val store = artifactEngine ?: return true
-        val manifest = artifactManifest ?: return true
-        val candidate = manifest.pages[pageKey]?.candidate ?: return true
-        val outcome = store.candidates.cancelLiveCandidate(manifest, pageKey, candidate.generationId)
-        if (outcome is ChapterArtifactEngine.TransactionOutcome.Committed) {
-            artifactManifest = outcome.manifest
-            return true
-        } else if (outcome is ChapterArtifactEngine.TransactionOutcome.Rejected) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact candidate cancel rejected: pageKey=$pageKey reason=${outcome.reason}"
-            }
-        }
-        return false
-    }
-
-    /** Caller holds [mutex]; null when the destructive demotion is durably complete. */
-    private fun demoteArtifactPageLocked(pageKey: String): String? {
-        val store = artifactEngine ?: return null
-        val manifest = artifactManifest ?: return null
-        val outcome = store.candidates.demoteLivePage(manifest, pageKey)
-        return when (outcome) {
-            is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                artifactManifest = outcome.manifest
-                // P3A/P3B typed incomplete: the pointers were durably removed
-                // but the same-state backup could not be verified. Never a
-                // rollback — the next manifest rotation replaces the backup.
-                outcome.unverifiedBackupReason?.let { reason ->
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact display demotion published without a verified backup: " +
-                            "pageKey=$pageKey reason=$reason"
-                    }
-                    return "unverified backup after demotion: $reason"
-                }
-                return null
-            }
-            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                outcome.incompletePublication?.let { receipt ->
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact display demotion incomplete: pageKey=$pageKey " +
-                            "orphanFiles=${receipt.advancedFiles.size} reason=${receipt.failureReason}"
-                    }
-                }
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT artifact display demotion rejected: pageKey=$pageKey reason=${outcome.reason}"
-                }
-                return outcome.reason
-            }
-        }
-    }
 
     internal fun snapshotLocked(pageKey: String): PageSnapshot {
         val page = pages[pageKey]
@@ -2482,39 +1030,6 @@ class ChapterTranslationStore internal constructor(
         )
     }
 
-    private fun PageSnapshot.toPrecondition() = PatchPrecondition(
-        generation = generation,
-        pageVersion = pageVersion,
-        blockFingerprints = blockFingerprints,
-        leaseToken = leaseToken,
-        candidateGenerationId = candidateGenerationId,
-        dependencyFingerprint = dependencyFingerprint,
-        artifactPageVersion = artifactPageVersion,
-    )
-
-    private fun rejected(
-        pageKey: String,
-        description: String,
-        reason: String,
-        detail: PatchResult.Rejected.Detail? = null,
-    ): PatchResult.Rejected {
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT store patch rejected: pageKey=$pageKey generation=$generation " +
-                "operation=$description reason=$reason"
-        }
-        return PatchResult.Rejected(reason, detail)
-    }
-
-    private fun MutationAdmission.Rejected.toPatchRejectionDetail(): PatchResult.Rejected.Detail? =
-        when (code) {
-            MutationAdmission.Rejected.Code.ARTIFACT_PUBLICATION_FAILED ->
-                PatchResult.Rejected.Detail.ArtifactPublicationFailed
-            MutationAdmission.Rejected.Code.STORE_DEFUNCT,
-            MutationAdmission.Rejected.Code.FENCE_REJECTED,
-            -> null
-        }
-
-    /** The authoritative values are immutable, so StateFlow snapshots share the persistent map. */
     internal fun snapshotPages(): PersistentMap<String, PublishedPageTranslation> = pages
 
     internal fun publishPage(draft: PageTranslation): PublishedPageTranslation {
@@ -2524,38 +1039,6 @@ class ChapterTranslationStore internal constructor(
 
     /** Durable translation status derived from the committed artifact state. */
     fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
-
-    internal fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
-        // Persist only DURABLE progress worth surviving a chapter reopen, not
-        // transient placeholders; transient bookkeeping stays in-memory (the
-        // reader observes the live StateFlow). Critical because the stranded-page
-        // sweep (ReaderViewModel.sweepStrandedPageStatus) writes exactly the
-        // placeholder shape — CANCELLED stages + errorMessage, no blocks, no
-        // image — via updatePage. The old logic (errorMessage != null -> persist,
-        // and `!isStageRunning` -> persist) saved those placeholders to JSON,
-        // where under the old pages.isNotEmpty() check a single such entry made
-        // the chapter falsely read TRANSLATED forever. clearTransientQueuePages()
-        // publishes durable cancellation through the artifact bridge.
-        // 1. Completed display output, including textless pages using the source image.
-        if (updated.hasRenderedResult || updated.isTextlessTerminal) return true
-        // 2. Recognized text blocks (real OCR work).
-        if (updated.blocks.isNotEmpty()) return true
-        // 3. Cleaned image; lets a later render resume without redoing the neural pass.
-        if (updated.cleanedImageName != null) return true
-        // 4. Stage failures so retry-exhaustion (hasExhaustedRetries) survives
-        //    reopen and the scheduler can skip permanently-failing pages.
-        if (updated.isStageFailed) return true
-        // 5. Transition away from a previously-rendered result (e.g. forced retry
-        //    cleared the image) so the reader stops showing the stale one.
-        if (previous?.hasRenderedResult == true && !updated.hasRenderedResult) return true
-        // Transient placeholder (RUNNING/PENDING/CANCELLED with no content and no
-        // failure): keep it in memory only.
-        return false
-    }
-
-    // These lifecycle methods preserve a single persistence boundary for
-    // reset, resolver, and batch callers. The drain owns queued lazy image
-    // writes; artifact snapshots are published by the artifact engine inline.
 
     suspend fun flush() = writeDrain.flush()
 
@@ -2657,75 +1140,6 @@ class ChapterTranslationStore internal constructor(
 }
 
 /** Shared OCR merge for fenced and attempt writes. */
-internal fun mergeOcrFields(
-    current: PageTranslation,
-    result: PageTranslation,
-    errorMessage: String? = null,
-): PageTranslation {
-    val updated = current.detachedCopy()
-    if (result.ocrStatus == StageStatus.FAILED) {
-        // Failure updates diagnostics only; preserve reusable page data.
-        updated.ocrStatus = StageStatus.FAILED
-        updated.errorMessage = errorMessage ?: result.activeError
-    } else {
-        val preserveReusableInpaint =
-            result.inpaintStatus == StageStatus.PENDING &&
-                result.sourceFingerprint != null &&
-                result.sourceFingerprint == current.sourceFingerprint &&
-                result.detectionFingerprint != null &&
-                result.detectionFingerprint == current.detectionFingerprint &&
-                current.isCleanedImageReady
-        val editedByIdentity = current.blocks
-            .filter { it.userEditedAt != null }
-            .associateBy { it.ocrFingerprint() }
-        updated.blocks = result.blocks.map { block ->
-            editedByIdentity[block.ocrFingerprint()]?.let { edited ->
-                block.copy(translation = edited.translation, userEditedAt = edited.userEditedAt)
-            } ?: block
-        }.toMutableList()
-        updated.inpaintMaskBoxes = result.inpaintMaskBoxes
-        updated.allTextDetections = result.allTextDetections
-        updated.ocrStatus = result.ocrStatus
-        updated.inpaintStatus = result.inpaintStatus
-        updated.renderStatus = result.renderStatus
-        if (result.ocrStatus == StageStatus.READY &&
-            result.blocks.isEmpty() &&
-            result.translationStatus == StageStatus.SKIPPED
-        ) {
-            updated.translationStatus = StageStatus.SKIPPED
-        }
-        updated.detectionCount = result.detectionCount
-        updated.ocrBlockCount = result.ocrBlockCount
-        updated.recognitionEngine = result.recognitionEngine
-        updated.decodeSampleSize = result.decodeSampleSize
-        updated.imgWidth = result.imgWidth
-        updated.imgHeight = result.imgHeight
-        updated.originalImgWidth = result.originalImgWidth
-        updated.originalImgHeight = result.originalImgHeight
-        if (result.cleanedImageName != null) {
-            updated.cleanedImageName = result.cleanedImageName
-            updated.cleanedImageContentHash = result.cleanedImageContentHash
-        }
-        updated.inpaintRevision = result.inpaintRevision
-        updated.inpaintingModeUsed = result.inpaintingModeUsed
-        updated.detectionFingerprint = result.detectionFingerprint
-        updated.ocrFingerprint = result.ocrFingerprint
-        if (preserveReusableInpaint) {
-            // OCR-only updates retain cleaned data when source and detector match.
-            updated.inpaintMaskBoxes = current.inpaintMaskBoxes
-            updated.inpaintStatus = current.inpaintStatus
-            updated.inpaintError = current.inpaintError
-            updated.inpaintRevision = current.inpaintRevision
-            updated.inpaintingModeUsed = current.inpaintingModeUsed
-            updated.inpaintFingerprint = current.inpaintFingerprint
-            updated.cleanedImageName = current.cleanedImageName
-            updated.cleanedImageContentHash = current.cleanedImageContentHash
-        }
-        errorMessage?.let { updated.errorMessage = it }
-    }
-    return updated
-}
-
 
 /**
  * Explicit storage configuration for a chapter store.
@@ -2749,3 +1163,4 @@ internal sealed interface ChapterStoreEngineMode {
     /** Eagerly opened artifact engine owned by the facade. */
     data class Durable(val artifact: ChapterArtifactEngine) : ChapterStoreEngineMode
 }
+

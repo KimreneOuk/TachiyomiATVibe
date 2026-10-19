@@ -1,6 +1,9 @@
 package eu.kanade.translation.persistence
 
+import eu.kanade.translation.model.PageTranslation
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -48,8 +51,8 @@ internal class StoreWriteDrainCoordinator(
     // Mutated only while holding store.mutex. The delayed worker re-enters the
     // same mutex before touching either collection or the owning store.
     internal var drainJob: Job? = null
-    internal val pendingLazyMutations = LinkedHashMap<String, ChapterTranslationStore.PendingLazyMutation>()
-    internal val pendingLazyTasks = java.util.ArrayDeque<ChapterTranslationStore.LazyPersistenceTask>()
+    internal val pendingLazyMutations = LinkedHashMap<String, PendingLazyMutation>()
+    internal val pendingLazyTasks = java.util.ArrayDeque<LazyPersistenceTask>()
 
     /**
      * Runs lazy image writes first, then transfers their accepted page state
@@ -58,7 +61,7 @@ internal class StoreWriteDrainCoordinator(
      */
     suspend fun flush() = flushMutex.withLock {
         while (true) {
-            val task = mutex.withLock { store.takeLazyPersistenceTaskLocked() }
+            val task = mutex.withLock { takeLazyPersistenceTaskLocked() }
             if (task == null) break
             try {
                 val generationIsCurrent = mutex.withLock {
@@ -88,7 +91,7 @@ internal class StoreWriteDrainCoordinator(
                 task.result.complete(false)
             }
         }
-        store.flushPendingLazyMutations()
+        flushPendingLazyMutations()
     }
 
     /** Flushes accepted work and joins every child before returning. */
@@ -174,4 +177,94 @@ internal class StoreWriteDrainCoordinator(
         pendingLazyTasks.forEach { it.result.complete(false) }
         pendingLazyTasks.clear()
     }
+
+    /**
+     * Queues disk work behind the store's persistence worker. The returned
+     * handle is a durability result, not display admission.
+     */
+    internal suspend fun enqueueLazyPersistence(
+        expectedGeneration: Long,
+        receipt: CompletableDeferred<Boolean>,
+        work: suspend () -> Boolean,
+    ): Deferred<Boolean> {
+        var queued = false
+        try {
+            mutex.withLock {
+                val rejected = store.isDefunct ||
+                    store.generation != expectedGeneration ||
+                    !store.hasArtifactPersistenceTarget() ||
+                    !isDrainScopeActive()
+                if (rejected) {
+                    receipt.complete(false)
+                } else {
+                    pendingLazyTasks.addLast(
+                        LazyPersistenceTask(
+                            generation = expectedGeneration,
+                            work = work,
+                            result = receipt,
+                        ),
+                    )
+                    queued = true
+                }
+                // Keep the drain-job handoff under the same mutex as the queue
+                // mutation so it shares the queue's single-writer boundary.
+                scheduleDrain()
+            }
+        } finally {
+            if (!queued) receipt.complete(false)
+        }
+        return receipt
+    }
+
+    /** Caller holds [mutex]; the drain calls this only from mutex.withLock. */
+    internal fun takeLazyPersistenceTaskLocked(): LazyPersistenceTask? =
+        pendingLazyTasks.pollFirst()
+
+    /** Caller holds [mutex]; the drain uses this to decide whether to reschedule. */
+    internal fun hasPendingLazyPersistenceLocked(): Boolean =
+        pendingLazyTasks.isNotEmpty() || pendingLazyMutations.isNotEmpty()
+
+    internal suspend fun flushPendingLazyMutations(): Boolean {
+        return mutex.withLock {
+            if (pendingLazyMutations.isEmpty()) return@withLock true
+            val pending = pendingLazyMutations.values.toList()
+            pendingLazyMutations.clear()
+            var allAccepted = true
+            pending.forEach { mutation ->
+                if (!store.isLazyGenerationCurrent(mutation.generation)) {
+                    return@forEach
+                }
+                if (!store.publicationBridge.persistArtifactMutation(
+                        pageKey = mutation.pageKey,
+                        previous = mutation.previous,
+                        updated = mutation.updated,
+                        expected = mutation.expected,
+                    )
+                ) {
+                    allAccepted = false
+                    if (store.isLazyGenerationCurrent(mutation.generation)) {
+                        pendingLazyMutations[mutation.pageKey] = mutation
+                    }
+                } else {
+                    mutation.artifactLease?.stamp(store, mutation.pageKey, store.snapshotLocked(mutation.pageKey))
+                }
+            }
+            allAccepted
+        }
+    }
 }
+
+internal data class LazyPersistenceTask(
+    val generation: Long,
+    val work: suspend () -> Boolean,
+    val result: CompletableDeferred<Boolean>,
+)
+
+internal data class PendingLazyMutation(
+    val pageKey: String,
+    val previous: PageTranslation?,
+    val updated: PageTranslation,
+    val expected: ChapterTranslationStore.PatchPrecondition?,
+    val generation: Long,
+    val artifactLease: AttemptArtifactLease? = null,
+)
