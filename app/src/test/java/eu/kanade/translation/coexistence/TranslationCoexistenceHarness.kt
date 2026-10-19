@@ -467,13 +467,11 @@ internal class TranslationCoexistenceHarness private constructor(
                 engineRebuildMutex = engineRebuildMutex,
             )
 
-            val devicePagePermitGate = DevicePagePermitGate()
             val httpRenderPhase = SinglePageHttpRenderPhase(
                 translationPreferences = preferences,
                 provider = provider,
                 streamRegistry = streamRegistry,
                 engines = engineLane,
-                devicePagePermitGate = devicePagePermitGate,
                 cleanedPublication = cleanedPublicationMock,
                 expectedBatchFingerprints = expectedFingerprints,
                 retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation, _, _ ->
@@ -657,6 +655,7 @@ internal class TranslationCoexistenceHarness private constructor(
             )
 
             // ---- Pipeline: real class with its runtime graph injected ------
+            val devicePagePermitGate = DevicePagePermitGate()
             val pipeline = TranslationPipeline.createForTesting(
                 context = context,
                 provider = provider,

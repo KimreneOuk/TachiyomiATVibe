@@ -1,14 +1,9 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.context.*
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.TranslationProvenancePage
 import eu.kanade.translation.model.OcrBlockContent
 import eu.kanade.translation.model.EnvelopePlanInputPage
-
-
-import eu.kanade.translation.context.ChapterTranslationProfile
-import eu.kanade.translation.context.AnalyzerProvenance
 
 
 import eu.kanade.translation.model.InpaintMaskBox
@@ -23,8 +18,8 @@ import java.text.Normalizer
  * 09 determinism and equivalence gate for the semantic fingerprint
  * builders: repeated computation over equal semantic
  * inputs is identical;  exclusions do not affect values;
- * length-prefix collision fixtures pass; golden fixtures for a 200-page
- * synthetic corpus and a frozen profile are byte-stable.
+ * length-prefix collision fixtures pass; a golden fixture for a 200-page
+ * synthetic corpus is byte-stable.
  */
 class SemanticFingerprintTest {
 
@@ -103,47 +98,6 @@ class SemanticFingerprintTest {
 
     private fun snapshotPage(blocks: List<TranslationBlock>, masks: List<InpaintMaskBox>) =
         PageTranslation(blocks = blocks.toMutableList(), inpaintMaskBoxes = masks)
-
-    private fun profile(
-        version: Int = 1,
-        frozenAtEpochMs: Long = 1_757_050_800_000,
-        sourceRunId: String = "run-1757050000000-a1b2c3d4",
-        entitySourceForm: String = "レイナ",
-        sceneToneFlags: Set<ToneFlag> = setOf(ToneFlag.EXPLICIT, ToneFlag.SERIOUS),
-    ) = ChapterTranslationProfile(
-        version = version,
-        contentFingerprint = hex('0'),
-        profileInputFingerprint = hex('1'),
-        sourceRunId = sourceRunId,
-        analyzerProvenance = AnalyzerProvenance("gemini", "gemini-2.5", 3, 1),
-        entities = listOf(
-            ProfileFact(
-                factId = "f-1",
-                type = FactType.ENTITY_IDENTITY,
-                canonicalSourceForm = entitySourceForm,
-                canonicalTargetForm = "Reina Alstella",
-                aliases = listOf("レイナ・アルステラ", "Raina"),
-                confidence = 0.93f,
-                evidenceStrength = EvidenceStrength.EXPLICIT,
-                scope = FactScope.CANONICAL_CHAPTER_WIDE,
-                evidenceRefs = listOf(EvidenceRef("0180.jpg", "p180_b4", hex('2'))),
-                provenance = FactProvenance.CHAPTER_ANALYSIS,
-                conflictState = FactConflictState.RESOLVED,
-                note = "weak male cue on p12 rejected",
-            ),
-        ),
-        scenes = listOf(
-            ProfileScene(
-                sceneId = "s-3",
-                pageRange = PageRange(40, 44),
-                participants = listOf("f-1"),
-                toneFlags = sceneToneFlags,
-                register = SceneRegister.ROUGH,
-                narrativeContext = "confrontation in the archive",
-            ),
-        ),
-        frozenAtEpochMs = frozenAtEpochMs,
-    )
 
     private fun provenance(
         profileContentFingerprint: String = hex('d'),
@@ -499,55 +453,6 @@ class SemanticFingerprintTest {
         ) shouldNotBe StageFingerprints.profileInputFingerprint(
             corpus(), "enen", "-US", 1, 3, "gemini", "gemini-2.5", "cred-sig", hex('6'), hex('7'), null,
         )
-    }
-
-    // ------------------------------------------------------------------
-    // 05: ProfileContentFingerprint
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `profile content ignores operational fields`() {
-        val base = StageFingerprints.profileContentFingerprint(profile())
-        // Monotonic version is operational ordering ONLY.
-        StageFingerprints.profileContentFingerprint(profile(version = 2)) shouldBe base
-        StageFingerprints.profileContentFingerprint(profile(frozenAtEpochMs = 1L)) shouldBe base
-        StageFingerprints.profileContentFingerprint(profile(sourceRunId = "run-other")) shouldBe base
-    }
-
-    @Test
-    fun `profile content is sensitive to every hashed field`() {
-        val base = StageFingerprints.profileContentFingerprint(profile())
-        StageFingerprints.profileContentFingerprint(profile(entitySourceForm = "レイナ2")) shouldNotBe base
-        StageFingerprints.profileContentFingerprint(
-            profile(sceneToneFlags = setOf(ToneFlag.SERIOUS)),
-        ) shouldNotBe base
-        StageFingerprints.profileContentFingerprint(
-            profile().copy(analyzerProvenance = AnalyzerProvenance("gemini", "gemini-2.5", 4, 1)),
-        ) shouldNotBe base
-        StageFingerprints.profileContentFingerprint(
-            profile().copy(profileInputFingerprint = hex('b')),
-        ) shouldNotBe base
-    }
-
-    @Test
-    fun `profile content survives canonical decode-reencode round trip`() {
-        val original = profile()
-        val encoded = ArtifactDocumentJson.encodeToString(
-            ChapterTranslationProfile.serializer(),
-            original,
-        )
-        val decoded = ArtifactDocumentJson.decodeFromString(
-            ChapterTranslationProfile.serializer(),
-            encoded,
-        )
-        StageFingerprints.profileContentFingerprint(decoded) shouldBe
-            StageFingerprints.profileContentFingerprint(original)
-    }
-
-    @Test
-    fun `profile content matches the golden byte-stable fixture`() {
-        StageFingerprints.profileContentFingerprint(profile()) shouldBe
-            "e18be544e838bf4c59b29cf996b6816cb5382284f3efac4dac79568a54b667e9"
     }
 
     // ------------------------------------------------------------------

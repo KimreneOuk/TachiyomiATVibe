@@ -3,6 +3,7 @@ package eu.kanade.translation.coexistence
 import eu.kanade.translation.model.BatchPhase
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -105,11 +106,11 @@ class StandardLaneMultiPageCompletionTest {
                 val page = withTimeout(AWAIT_TIMEOUT_MS) {
                     harness.store.state.first { s ->
                         s[pageKey]?.translationStatus == StageStatus.READY &&
-                            s[pageKey]?.renderStatus == StageStatus.READY
+                            s[pageKey]?.hasRenderedResult == true
                     }.getValue(pageKey)
                 }
                 page.translationStatus shouldBe StageStatus.READY
-                page.renderStatus shouldBe StageStatus.READY
+                page.hasRenderedResult shouldBe true
             }
             //  : the shell's COMPLETED path settles every
             // expected page's RENDER phase as skipped terminal work

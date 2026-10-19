@@ -33,6 +33,9 @@ object TranslationContextChunkPlanner {
     const val BATCH_RESPONSE_BLOCK_OVERHEAD_TOKENS = 8
     const val BATCH_RESPONSE_WHITESPACE_OVERHEAD_TOKENS = 2
 
+    const val PER_BLOCK_ENVELOPE_TOKENS = 12
+    const val PER_PAGE_ENVELOPE_TOKENS = 12
+
     // Token budget for the rolling-history section.
     const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
 

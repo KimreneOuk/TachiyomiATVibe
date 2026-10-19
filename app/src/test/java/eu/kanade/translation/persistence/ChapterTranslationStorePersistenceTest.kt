@@ -125,6 +125,7 @@ class ChapterTranslationStorePersistenceTest {
             expected = store.snapshot("p1").toPrecondition(),
             description = "gate 1.5 manual commit",
         ) { committedPage("p1") }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.flush()
         val committedBefore = artifactStore().readManifest().shouldNotBeNull()
             .pages.getValue("p1").committed.shouldNotBeNull()
         assertUserEditIntact(artifactStore(), committedBefore)
@@ -145,6 +146,7 @@ class ChapterTranslationStorePersistenceTest {
             ),
             description = "gate 1.5 close merge",
         ).shouldBeInstanceOf<StagePatchResult.Accepted>()
+        store.flush()
         val after = store.snapshot("p1")
         store.checkpointOcr(
             pageKey = "p1",

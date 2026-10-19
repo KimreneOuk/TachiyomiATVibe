@@ -20,12 +20,10 @@ abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
     open val inputAccountingContract: InputAccountingContract? get() = null
 
     // ------------------------------------------------------------------
-    // Typed structured-analysis transport.
+    // Typed structured-completion transport.
     // Engines that expose a raw text completion opt in by overriding these
-    // members; [AnalysisEngineTransport] adapts them to the
-    // [eu.kanade.translation.engines.translator.analysis.AnalysisTextTransport] seam
-    // Typed failures are preserved. `promptText` is unsuitable because it
-    // swallows every failure into an empty string.
+    // members. Typed failures are preserved. `promptText` is unsuitable
+    // because it swallows every failure into an empty string.
     // ------------------------------------------------------------------
 
     /** The governor backend spelling for Batch admission keys, or null when the engine has no analysis transport. */

@@ -22,11 +22,6 @@ import eu.kanade.translation.diagnostics.TranslationTraceMode
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTracePlan
 import eu.kanade.translation.diagnostics.TranslationTraceSite
-import eu.kanade.translation.engines.rendering.HydratedLayout
-import eu.kanade.translation.engines.rendering.LayoutPlanPublication
-import eu.kanade.translation.engines.rendering.PersistedLayoutHydrator
-import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
-import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
@@ -42,7 +37,6 @@ import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass
@@ -1421,7 +1415,6 @@ internal class ReaderTranslationController(
         storeStage.end()
         if (store == null) return
         currentTranslationStore = store
-        installPersistedLayoutChapterSource(store)
         val storeState = store.state
         translationStoreJob = viewModelScope.launchIO {
             // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a
@@ -1647,85 +1640,5 @@ internal class ReaderTranslationController(
             .distinctUntilChanged()
     }
 
-    /**
-     * Stage 7: the persisted-layout reader install.
-     * Installs the chapter hydration source on the process-wide
-     * [PersistedLayoutReaderBridge] so Pager and Webtoon holder binds can
-     * hydrate the page's durable draw plan ([PersistedLayoutHydrator] typed
-     * outcomes) instead of running the async planner. EVERY non-Resolved
-     * outcome (feature flag OFF, no pointer, corrupt, incompatible, lossy,
-     * unsupported version) returns null from the source — the mandatory async
-     * planner fallback; Manual/Auto behavior with the feature flag OFF is
-     * byte-identical because nothing is installed. Plans are vector draw DTOs
-     * only — the overlay keeps drawing text (R041, no rasterized output).
-     */
-    internal fun installPersistedLayoutChapterSource(store: ChapterTranslationStore) {
-        if (!PersistedLayoutRuntime.flagEnabled()) {
-            PersistedLayoutReaderBridge.installChapterSource(null)
-            return
-        }
-        val artifact = store.artifactEngine
-        if (artifact == null) {
-            PersistedLayoutReaderBridge.installChapterSource(null)
-            return
-        }
-        PersistedLayoutReaderBridge.installChapterSource(
-            PersistedLayoutReaderBridge.PageKeyedSource { pageKey, blocks, width, height ->
-                val manifest = store.artifactManifest ?: return@PageKeyedSource null
-                val page = store.state.value[pageKey] ?: return@PageKeyedSource null
-                if (page.imgWidth <= 0f || page.imgHeight <= 0f) return@PageKeyedSource null
-                // Fresh manifest read per consult: the pointer/compat identity is
-                // compared against the DURABLE state, never a stale snapshot.
-                val currentManifest = store.artifactManifest ?: return@PageKeyedSource null
-                val hydrated = PersistedLayoutHydrator(
-                    resolve = { key ->
-                        currentManifest.layoutPlans[key]?.let { pointer ->
-                            PersistedLayoutHydrator.PersistedPlanRef(
-                                pointer = pointer,
-                                compatibilityFingerprint = currentManifest.pages[key]?.layout?.fingerprint,
-                            )
-                        }
-                    },
-                    readDocument = { pointer ->
-                        artifact.readSidecarDocument(
-                            pointer = pointer,
-                            serializer = PageLayoutDrawPlan.serializer(),
-                            currentSchemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
-                            expectedKind = PageLayoutDrawPlan.KIND,
-                            schemaVersionOf = { it.schemaVersion },
-                            kindOf = { it.kind },
-                            isValid = { it.validationError() == null },
-                        )
-                    },
-                    fontSha256 = { PersistedLayoutRuntime.productionFontSha256() },
-                ).hydrate(
-                    pageKey = pageKey,
-                    blocks = blocks,
-                    pageWidth = page.imgWidth,
-                    pageHeight = page.imgHeight,
-                    bindPageWidth = width,
-                    bindPageHeight = height,
-                    decodeSampleSize = page.decodeSampleSize,
-                    expectedCompatibilityFingerprint = persistedLayoutExpectedFingerprint(page),
-                )
-                (hydrated as? HydratedLayout.Resolved)?.layouts
-            },
-        )
-    }
 
-    /** Reader-side FP-07 recompute for the stored-fingerprint comparison; null skips it. */
-    private fun persistedLayoutExpectedFingerprint(page: PageTranslationView): String? {
-        val fontDigest = PersistedLayoutRuntime.productionFontSha256() ?: return null
-        return LayoutPlanPublication.compatibilityFingerprint(
-            compatInputs = LayoutPlanPublication.CompatInputs(
-                translationArtifactId = page.ocrArtifactId.orEmpty(),
-                cleanedImageArtifactIdOrOriginalSourceId = page.cleanedImageName
-                    ?: "original:${page.sourceFingerprint.orEmpty()}",
-            ),
-            fontAssetSha256 = fontDigest,
-            decodeSampleSize = page.decodeSampleSize,
-            pageWidth = page.imgWidth,
-            pageHeight = page.imgHeight,
-        )
-    }
 }

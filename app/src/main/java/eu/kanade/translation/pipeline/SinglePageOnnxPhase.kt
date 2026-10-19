@@ -414,7 +414,10 @@ internal class SinglePageOnnxPhase(
                             owner?.produce(cleanedBitmap, CleanedProvenance.INPAINT)
                         }
                         if (force) clearAttemptCapForManualRetry(store, pageKey)
-                        if (force) adjustedResume.prepareForcedRetry()
+                        if (force) {
+                            adjustedResume.prepareForcedRetry()
+                            if (!workPlan.runOcr) adjustedResume.ocrStatus = StageStatus.READY
+                        }
                         adjustedResume.resetAttemptCharge()
                         adjustedResume.translationStatus = StageStatus.PENDING
                         updatePageFromCurrentSnapshot(store, pageKey, "single-page resume translation reset", attempt = attempt) { adjustedResume }
@@ -522,7 +525,10 @@ internal class SinglePageOnnxPhase(
                             "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
                         }
                         if (force) clearAttemptCapForManualRetry(store, pageKey)
-                        if (force) adjustedResume!!.prepareForcedRetry()
+                        if (force) {
+                            adjustedResume!!.prepareForcedRetry()
+                            if (!workPlan.runOcr) adjustedResume.ocrStatus = StageStatus.READY
+                        }
                         adjustedResume!!.resetAttemptCharge()
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
                         resumeInpaintAndRender(
@@ -545,7 +551,10 @@ internal class SinglePageOnnxPhase(
                             "TachiyomiAT single-page resume: inpaint + translate + render pageKey=$pageKey"
                         }
                         if (force) clearAttemptCapForManualRetry(store, pageKey)
-                        if (force) adjustedResume!!.prepareForcedRetry()
+                        if (force) {
+                            adjustedResume!!.prepareForcedRetry()
+                            if (!workPlan.runOcr) adjustedResume.ocrStatus = StageStatus.READY
+                        }
                         adjustedResume!!.resetAttemptCharge()
                         adjustedResume.inpaintStatus = StageStatus.RUNNING
                         updatePageFromCurrentSnapshot(store, pageKey, "single-page inpaint resume start", attempt = attempt) { adjustedResume }
@@ -561,6 +570,11 @@ internal class SinglePageOnnxPhase(
                         if (cleaned != null) {
                             owner?.produce(cleaned, CleanedProvenance.INPAINT)
                             adjustedResume.cleanedBitmap = cleaned
+                            adjustedResume.inpaintStatus = StageStatus.READY
+                        } else {
+                            adjustedResume.inpaintStatus = StageStatus.FAILED
+                            adjustedResume.recordAttemptFailure()
+                            adjustedResume.errorMessage = "Inpainting unavailable"
                         }
 
                         needsHttpRender = true

@@ -1,6 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.persistence.PageWriteOrigin
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
@@ -94,7 +95,7 @@ class PipelineStallWatchdogTest {
                 TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
             )
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                h.store.state.first { it["p1"]?.renderStatus == StageStatus.READY }
+                h.store.state.first { it["p1"]?.hasRenderedResult == true }
             }
             h.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p1") shouldBe 1
         } catch (e: NoSuchFieldException) {

@@ -84,7 +84,6 @@ internal class PreflightWorkerContext(
         String,
         ChapterTranslationStore.PageSnapshot,
     ) -> CheckpointAdoption,
-    val stampAdoptedRenderTerminal: suspend (String) -> Unit,
 )
 
 internal class PreflightWorker(
@@ -175,9 +174,6 @@ internal class PreflightWorker(
         pageKey: String,
         before: ChapterTranslationStore.PageSnapshot,
     ): CheckpointAdoption = context.adoptCheckpointSnapshot(artifact, pageKey, before)
-
-    private suspend fun stampAdoptedRenderTerminal(pageKey: String) =
-        context.stampAdoptedRenderTerminal(pageKey)
 
     private suspend fun existingActiveRecord(
         artifact: ChapterArtifactEngine,
@@ -459,7 +455,6 @@ internal class PreflightWorker(
                         // the tracker publishes updated resumed counts in the drawer.
                         listener.ocrStarted(pageKey)
                         listener.ocrPublished(pageKey)
-                        stampAdoptedRenderTerminal(pageKey)
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT t924 preflight reused checkpoint pageHash=${ShortHash.hash(pageKey)}"
                         }

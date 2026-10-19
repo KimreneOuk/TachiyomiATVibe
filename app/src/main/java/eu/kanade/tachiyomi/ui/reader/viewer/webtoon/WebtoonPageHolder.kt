@@ -315,7 +315,7 @@ class WebtoonPageHolder(
         val streamFn = boundPage.stream ?: return
         frame.prepareTranslationImage(boundPage.showTranslatedImage)
         selectReaderTranslationOverlayBinding(boundPage.showTranslatedImage, boundPage.translation).let { overlay ->
-            frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight, overlay.pageKey)
+            frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
         }
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
@@ -437,7 +437,7 @@ class WebtoonPageHolder(
         syncTranslateButtonState()
 
         val overlay = selectReaderTranslationOverlayBinding(currentPage.showTranslatedImage, currentPage.translation)
-        frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight, overlay.pageKey)
+        frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {

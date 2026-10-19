@@ -484,7 +484,7 @@ class ChapterArtifactEngine(
     internal fun layoutPlanSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.layoutPlanFile(pageKey, contentFingerprint)
 
-    /** Content-addressed `AnalysisChunkResult` sidecar name under `analysis/`. */
+    /** Content-addressed chapter analysis sidecar name under `analysis/`. */
     internal fun analysisChunkSidecarName(contentFingerprint: String): String =
         layout.analysisChunkFile(contentFingerprint)
 

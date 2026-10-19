@@ -7,8 +7,6 @@ import eu.kanade.translation.engines.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.TranslationOutputSemantics
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.engines.translator.analysis.AnalysisRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlanResult
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerBlock
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPage
@@ -193,12 +191,6 @@ internal class ChapterProfileBatchCoordinator(
     private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
         { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
     /**
-     * Dormant test/migration seam retained for callers compiled against the
-     * former analysis stage. The translation flow never reads or invokes it.
-     */
-    @Suppress("UNUSED_PARAMETER")
-    analysisChunkRunner: AnalysisChunkRunner? = null,
-    /**
      * Optional translator for the AI envelope path. If absent, or if the AI
      * path receives a plain translator without contextual support, the run
      * pauses at TRANSLATE with a CONFIGURATION outcome. The standard lane may
@@ -218,11 +210,7 @@ internal class ChapterProfileBatchCoordinator(
      * planner fallback and the pre-overlap completion semantics.
      */
     private val overlapScheduler: OverlapScheduler? = null,
-    /**
-     * Optional render join for persisted-layout publication. Inpaint-committed
-     * pages publish their draw plan through it, and FINALIZE sweeps pages the
-     * overlap hook missed. `null` keeps the async planner fallback.
-     */
+    /** Releases held inpaint buffers once translation artifacts are committed. */
     private val renderJoin: BatchRenderJoin? = null,
     /**
      * STANDARD-engine lane discriminator. `false` (default) selects the AI
@@ -353,9 +341,6 @@ internal class ChapterProfileBatchCoordinator(
             adoptCheckpointSnapshot = { recordArtifact, pageKey, before ->
                 adoptCheckpointSnapshot(recordArtifact, pageKey, before)
             },
-            stampAdoptedRenderTerminal = { pageKey ->
-                stampAdoptedRenderTerminal(pageKey)
-            },
         ),
     )
 
@@ -409,9 +394,6 @@ internal class ChapterProfileBatchCoordinator(
             providerChunkProfile = {
                 providerChunkProfile()
             },
-            drainDisplayTailAfterCommit = { pageKeys ->
-                drainDisplayTailAfterCommit(pageKeys)
-            },
             runFinalizeAndComplete = { recordArtifact, id, pages, fingerprint, counters ->
                 runFinalizeAndComplete(recordArtifact, id, pages, fingerprint, counters)
             },
@@ -426,11 +408,9 @@ internal class ChapterProfileBatchCoordinator(
 
     /**
      * Builds the recovery/finalization worker used after translation drains.
-     * Finalization records its phase, drains overlap inpaint and pending
-     * display work, publishes any missing layout plans, reconciles stranded
-     * pages into durable failures, flushes under NonCancellable, and publishes
-     * the single COMPLETE run record. Display-ready semantics remain separate
-     * from translation-terminal completion.
+     * Finalization records its phase, drains overlap inpaint, reconciles
+     * stranded pages into durable failures, flushes under NonCancellable, and
+     * publishes the single COMPLETE run record.
      */
     private fun recoveryWorker() = RecoveryWorker(
         RecoveryWorkerContext(
@@ -449,15 +429,11 @@ internal class ChapterProfileBatchCoordinator(
             frozenConfig = frozenConfig,
             freshSourcePairsForPages = { pages -> freshSourcePairsForPages(pages) },
             overlapScheduler = overlapScheduler,
-            renderJoin = renderJoin,
             publishRecord = { recordArtifact, runRecord ->
                 publishRecord(recordArtifact, runRecord)
             },
             record = { id, state, fingerprint, digest, counters, ocrFingerprint ->
                 record(id, state, fingerprint, digest, counters, ocrFingerprint)
-            },
-            drainDisplayTailBeforeComplete = { pageKeys ->
-                drainDisplayTailBeforeComplete(pageKeys)
             },
             t924PageTerminalAtFinalize = { page, generation ->
                 t924PageTerminalAtFinalize(page, generation)
@@ -593,9 +569,6 @@ internal class ChapterProfileBatchCoordinator(
         page: PageTranslationView?,
         activeGeneration: Long,
     ): Boolean = recoveryWorker().t924PageTerminalAtFinalize(page, activeGeneration)
-
-    private suspend fun stampAdoptedRenderTerminal(pageKey: String) =
-        recoveryWorker().stampAdoptedRenderTerminal(pageKey)
 
     private suspend fun rebuildDispatchWork(
         artifact: ChapterArtifactEngine,
@@ -1087,14 +1060,6 @@ internal class ChapterProfileBatchCoordinator(
      * the durable failure (and the progress sheet's failure groups) carries
      * something actionable instead of a bare stage status.
      */
-    private suspend fun drainDisplayTailBeforeComplete(
-        orderedPageKeys: List<String>,
-    ): RecoveryWorker.DisplayTailDrain = recoveryWorker().drainDisplayTailBeforeComplete(orderedPageKeys)
-
-    private suspend fun drainDisplayTailAfterCommit(pageKeys: List<String>) {
-        recoveryWorker().drainDisplayTailAfterCommit(pageKeys)
-    }
-
     private fun strandedPageReason(page: PageTranslationView?): String =
         recoveryWorker().strandedPageReason(page)
 
@@ -1149,8 +1114,8 @@ internal class ChapterProfileBatchCoordinator(
                 // raw OCR text so the envelope plan reserves its wire overhead.
                 estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(
                     blocks.joinToString("\n") { it.text },
-                ) + blocks.size * AnalysisRequestBuilder.PER_BLOCK_ENVELOPE_TOKENS +
-                    AnalysisRequestBuilder.PER_PAGE_ENVELOPE_TOKENS,
+                ) + blocks.size * TranslationContextChunkPlanner.PER_BLOCK_ENVELOPE_TOKENS +
+                    TranslationContextChunkPlanner.PER_PAGE_ENVELOPE_TOKENS,
             )
         }
         val corpusManifest = OcrCorpusManifest.assemble(
@@ -1410,46 +1375,9 @@ internal class ChapterProfileBatchCoordinator(
         /** Operational counters; these are not part of a fingerprint. */
         const val COUNTER_FINALIZE = "finalizeEntered"
         const val COUNTER_RUN_COMPLETE = "runComplete"
-        const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
         const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
-
-        /**
-         * Display-tail drain counters: pages whose committed display was
-         * produced by the FINALIZE drain, and pages left without one (typed
-         * terminal, run completes as a warning). Pages left pending on
-         * publication rejections count in neither bucket.
-         */
-        const val COUNTER_DISPLAY_TAIL_DRAINED = "displayTailDrained"
-        const val COUNTER_DISPLAY_TAIL_FAILED = "displayTailFailed"
         const val COUNTER_PROTOCOL_PARKED_RETRYABLE = "protocolParkedRetryable"
         const val COUNTER_PROTOCOL_PARKED_TERMINAL = "protocolParkedTerminal"
-
-        /**
-         * Display-tail drain bound: the first pass retries the overlap
-         * scheduler's single orphan sweep (a stale-write rejection heals on a
-         * fresh snapshot); the third exists so one transient rejection never
-         * typed-fails a healthy page. A MANUAL Render owner persists across
-         * all passes by design — that page takes the typed terminal.
-         */
-        const val MAX_DISPLAY_TAIL_DRAIN_PASSES = 3
-
-        /**
-         * The guarded page write's generic whole-publication rejection reason
-         * ([ChapterTranslationStore.updatePageGuarded] maps every internal
-         * publish failure to it). The drain's classification boundary: a stamp
-         * rejected with it is a HEALTHY page left pending, never a typed
-         * failure.
-         */
-        internal const val REJECTED_ARTIFACT_PUBLICATION = "ARTIFACT_PUBLICATION_FAILED"
-
-        /**
-         * Analysis output budget (`outputBudget`): free-form
-         * chunk summaries are ~120 words, so the reservation is small and
-         * the input side keeps the 8k window. Mirrors
-         * [eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
-         * .ANALYSIS_MAX_OUTPUT_TOKENS].
-         */
-        const val ANALYSIS_MAX_OUTPUT_TOKENS = 512
 
         /** Feature-flag state, frozen as an operational (never fingerprinted) counter. */
         const val COUNTER_FLAG = "flagProfilePipeline"

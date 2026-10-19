@@ -6,19 +6,9 @@ import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
-import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.providers.AiTranslator
 import eu.kanade.translation.model.InpaintMaskBox
@@ -35,7 +25,6 @@ import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.ChapterRunRecord
 import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.EnvelopePolicySnapshot
-import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.SidecarPointer
 import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.ChapterTranslationStore
@@ -56,7 +45,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Pins resume behavior for durable records past translation. A FINALIZE record
@@ -233,39 +221,6 @@ class Stage7FinalizeResumeCoordinatorTest {
         }
     }
 
-    private inner class CountingAnalyzer : AnalysisChunkRunner {
-        val chunks = AtomicInteger(0)
-
-        override suspend fun executeChunk(
-            chunk: PlannedAnalysisChunk,
-            identity: AnalysisRunIdentity,
-            evidence: AnalysisEvidenceTexts,
-        ): AnalysisChunkRunOutcome {
-            chunks.incrementAndGet()
-            val firstStoragePage = chunk.contributingPageKeys.first()
-            val wirePage = evidence.wirePageKeyByStorageKey[firstStoragePage].shouldNotBeNull()
-            val wireBlock = evidence.blockIdsByPage[wirePage].shouldNotBeNull().first()
-            val sourceText = evidence.textByBlockId[wireBlock].shouldNotBeNull()
-            val response = AnalysisResponseValidator.ValidatedAnalysisResponse(
-                chunkId = chunk.chunkId,
-                terms = listOf(ValidatedTerm("t001", "剣", "sword", emptyList(), "TERM")),
-                entities = listOf(
-                    ValidatedEntity("e001", listOf("カイル"), "カイル", "Kail", emptyList(), emptyList()),
-                ),
-                scenes = emptyList(),
-                narrativeSummary = "An opening journey.",
-                conflictNotes = emptyList(),
-                evidenceRefs = listOf(EvidenceRef(wirePage, wireBlock, hex64(sourceText))),
-            )
-            return AnalysisChunkRunOutcome.Completed(
-                response = response,
-                coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
-                droppedAuthorityKeys = emptyList(),
-                provenance = eu.kanade.translation.context.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
-            )
-        }
-    }
-
     private class FakeTranslator(
         private val responder: suspend (callIndex: Int, chunk: TranslationContextChunk) -> ContextualTranslationBatch,
     ) : AiTranslator() {
@@ -317,7 +272,6 @@ class Stage7FinalizeResumeCoordinatorTest {
         store: ChapterTranslationStore,
         worker: NativeLaneWorker,
         pages: List<PageKey>,
-        runner: AnalysisChunkRunner,
         translator: FakeTranslator,
         overlapScheduler: OverlapScheduler,
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
@@ -335,7 +289,6 @@ class Stage7FinalizeResumeCoordinatorTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         freshSourceShaByPageKey = { pageKey -> hex64("source-$pageKey") },
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        analysisChunkRunner = runner,
         textTranslator = translator,
         translationSublimitGate = BatchRequestSublimitGate(),
         overlapScheduler = overlapScheduler,
@@ -377,7 +330,6 @@ class Stage7FinalizeResumeCoordinatorTest {
                     store,
                     FakePreflightOcrWorker(store),
                     pages,
-                    CountingAnalyzer(),
                     firstTranslator,
                     newScheduler(store, pageKeys, killIdentities, killLane),
                 ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -396,13 +348,11 @@ class Stage7FinalizeResumeCoordinatorTest {
             val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             val resumeLane = FakeOverlapInpaintLane(store, resumeIdentities)
             val resumeOcrWorker = FakePreflightOcrWorker(store)
-            val resumeAnalyzer = CountingAnalyzer()
             val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
             val resumeOutcome = coordinator(
                 store,
                 resumeOcrWorker,
                 pages,
-                resumeAnalyzer,
                 resumeTranslator,
                 newScheduler(store, pageKeys, resumeIdentities, resumeLane),
             ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -415,9 +365,8 @@ class Stage7FinalizeResumeCoordinatorTest {
             resumedRecord.runId shouldBe killedRunId
             resumedRecord.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
 
-            // Zero paid re-work: no re-OCR, no re-analysis, no re-translation.
+            // Zero paid re-work: no re-OCR and no re-translation.
             resumeOcrWorker.ocrPages shouldBe emptyList()
-            resumeAnalyzer.chunks.get() shouldBe 0
             resumeTranslator.requests shouldBe emptyList()
 
             // The finalize drain re-inpainted exactly the pages the killed
@@ -444,7 +393,6 @@ class Stage7FinalizeResumeCoordinatorTest {
                 store,
                 FakePreflightOcrWorker(store),
                 pages,
-                CountingAnalyzer(),
                 FakeTranslator { _, chunk -> responseFor(chunk) },
                 newScheduler(store, pageKeys, firstIdentities, FakeOverlapInpaintLane(store, firstIdentities)),
             ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -456,13 +404,11 @@ class Stage7FinalizeResumeCoordinatorTest {
             // ---- Pass 2: the flag-ON re-dispatch over the SAME store. ----
             val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             val resumeOcrWorker = FakePreflightOcrWorker(store)
-            val resumeAnalyzer = CountingAnalyzer()
             val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
             val resumeOutcome = coordinator(
                 store,
                 resumeOcrWorker,
                 pages,
-                resumeAnalyzer,
                 resumeTranslator,
                 newScheduler(store, pageKeys, resumeIdentities, FakeOverlapInpaintLane(store, resumeIdentities)),
             ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -472,7 +418,6 @@ class Stage7FinalizeResumeCoordinatorTest {
             resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
             resumeOutcome.completedPageKeys.shouldNotBeNull() shouldBe pageKeys.toSet()
             resumeOcrWorker.ocrPages shouldBe emptyList()
-            resumeAnalyzer.chunks.get() shouldBe 0
             resumeTranslator.requests shouldBe emptyList()
             activeRunPointer(store) shouldBe pointerAfterPass1
             durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
@@ -493,7 +438,6 @@ class Stage7FinalizeResumeCoordinatorTest {
                 store,
                 FakePreflightOcrWorker(store),
                 pages,
-                CountingAnalyzer(),
                 firstTranslator,
                 newScheduler(store, pageKeys, firstIdentities, FakeOverlapInpaintLane(store, firstIdentities)),
             ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -543,13 +487,11 @@ class Stage7FinalizeResumeCoordinatorTest {
             // ---- zero-work finished outcome; it starts a fresh run.  ----
             val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             val resumeOcrWorker = FakePreflightOcrWorker(store)
-            val resumeAnalyzer = CountingAnalyzer()
             val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
             val resumeOutcome = coordinator(
                 store,
                 resumeOcrWorker,
                 pages,
-                resumeAnalyzer,
                 resumeTranslator,
                 newScheduler(store, pageKeys, resumeIdentities, FakeOverlapInpaintLane(store, resumeIdentities)),
             ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)

@@ -211,10 +211,14 @@ class TranslationScheduler(
 
     /** Invalidates a chapter session and joins its physical workers before a destructive store action. */
     suspend fun cancelReaderQueueSession(chapterId: Long) {
-        val cancellation = beginReaderQueueCancellation(chapterId)
+        // Destructive reset/rekey must fence admission and drain the physical
+        // registry even when the scheduler token metadata is already gone
+        // (pre-invalidated session): the chapter epoch is acquired regardless
+        // of tokens and released only after the drain completes.
+        val cancellation = beginReaderQueueCancellation(chapterId, requireEpoch = true)
         try {
             cancellation?.let(::performReaderQueueCancellation)
-            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
+            awaitPhysicalDrain(queue.drainAllForChapter(chapterId))
         } finally {
             finishReaderQueueCancellation(cancellation)
         }
@@ -256,6 +260,25 @@ class TranslationScheduler(
             return
         }
         val chapterId = chapter.id ?: return
+        // Manual taps respect the same lifecycle fences as bound submissions:
+        // no new session may be created during a reader stop/global cancellation
+        // or while a chapter's cancellation epoch (destructive reset/rekey
+        // drain) is in flight. The tap is recorded as a typed rejection instead
+        // of silently starting work that the teardown is draining.
+        synchronized(sessionLifecycleLock) {
+            if (readerStopInFlight || globalReaderCancellationInFlight || chapterId in chapterCancellationEpochs) {
+                recordManualOutcome(
+                    chapterId,
+                    pageKey,
+                    SinglePageOutcome.Rejected(
+                        null,
+                        PageRejectionKind.SESSION_DENIED,
+                        "reader session cancellation in progress",
+                    ),
+                )
+                return
+            }
+        }
         // Resolve the admitted token: reuse the chapter's live binding, or bind
         // a manual-only session so a tap without an armed auto window still
         // dispatches through the queue (no second worker path).
@@ -424,7 +447,10 @@ class TranslationScheduler(
             cancellation?.let(::performReaderQueueCancellation)
             // Chapter teardown also drops the outcomes retained for its pages.
             manualOutcomes.keys.removeAll { it.startsWith("$chapterId:") }
-            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
+            // Registry-scoped drain: covers retired/invalidated bindings of the
+            // chapter even when the token list was already empty, while a
+            // current live binding of a different chapter stays untouched.
+            awaitPhysicalDrain(queue.drainRetiredForChapter(chapterId))
         } finally {
             finishReaderQueueCancellation(cancellation)
         }
@@ -439,7 +465,7 @@ class TranslationScheduler(
         try {
             cancellation?.let(::performReaderQueueCancellation)
             manualOutcomes.clear()
-            cancellation?.tokens.orEmpty().forEach { awaitPhysicalDrain(it) }
+            awaitPhysicalDrain(queue.drainAllRetained())
         } finally {
             finishReaderQueueCancellation(cancellation)
         }
@@ -460,14 +486,16 @@ class TranslationScheduler(
         }
         try {
             val cancellation = beginReaderQueueCancellation(null)
-            val tokensToDrain = cancellation?.tokens ?: emptyList()
             try {
                 cancellation?.let(::performReaderQueueCancellation)
                 manualOutcomes.clear()
             } finally {
                 finishReaderQueueCancellation(cancellation)
             }
-            tokensToDrain.forEach { awaitPhysicalDrain(it) }
+            // Drain the queue's physical registry unconditionally: the token
+            // list above can be empty (pre-invalidated sessions) while
+            // retained workers are still live — they must still be awaited.
+            awaitPhysicalDrain(queue.drainAllRetained())
         } finally {
             synchronized(sessionLifecycleLock) {
                 readerStopInFlight = false
@@ -475,19 +503,22 @@ class TranslationScheduler(
         }
     }
 
-    private suspend fun awaitPhysicalDrain(token: ReaderSessionToken) {
-        when (val drain = queue.cancelSession(token)) {
+    private suspend fun awaitPhysicalDrain(drain: ReaderDrainResult) {
+        when (drain) {
             ReaderDrainResult.Completed -> Unit
             is ReaderDrainResult.PendingNativeDrain -> drain.completion.await()
         }
     }
 
-    private fun beginReaderQueueCancellation(chapterId: Long?): QueueSessionCancellation? =
+    private fun beginReaderQueueCancellation(
+        chapterId: Long?,
+        requireEpoch: Boolean = false,
+    ): QueueSessionCancellation? =
         synchronized(sessionLifecycleLock) {
             val tokens = sessions.values
                 .filter { chapterId == null || it.chapterId == chapterId }
                 .map { it.token }
-            if (chapterId != null && tokens.isEmpty()) return@synchronized null
+            if (chapterId != null && tokens.isEmpty() && !requireEpoch) return@synchronized null
             val epoch = ++readerCancellationEpoch
             val ownsGlobal = chapterId == null && !globalReaderCancellationInFlight
             if (ownsGlobal) {

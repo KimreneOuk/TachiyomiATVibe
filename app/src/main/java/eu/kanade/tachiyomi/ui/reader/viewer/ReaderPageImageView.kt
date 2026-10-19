@@ -171,7 +171,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     pendingTranslationBlocks,
                     pendingPageWidth,
                     pendingPageHeight,
-                    pendingPageKey,
                 )
             }
         }
@@ -186,7 +185,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         pendingTranslationBlocks = emptyList()
         pendingPageWidth = 0
         pendingPageHeight = 0
-        pendingPageKey = null
         translationOverlay?.bind(null, emptyList(), 0, 0)
         translationOverlay?.isVisible = false
         onImageLoadError?.invoke()
@@ -278,9 +276,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
 
-    //  Stage 7: page key of the pending binding (see setTranslationBlocks).
-    private var pendingPageKey: String? = null
-
     // Keep the previous decoded view underneath a replacement until the new
     // image reaches its ready callback. This makes the translated result
     // crossfade in without a blank frame, while retaining only two bounded
@@ -314,20 +309,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
         blocks: List<eu.kanade.translation.model.TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
-        //  Stage 7: the translation page key, propagated to the
-        // overlay so the  chapter hydration source can resolve the
-        // page's persisted plan. Null keeps the legacy planner-only path.
-        pageKey: String? = null,
     ) {
         pendingTranslationBlocks = blocks
         pendingPageWidth = pageWidth
         pendingPageHeight = pageHeight
-        pendingPageKey = pageKey
         val imageView = pageView as? SubsamplingScaleImageView
         if (blocks.isNotEmpty() && imageView != null) {
             ensureTranslationOverlay()
             translationOverlay?.isVisible = true
-            translationOverlay?.bind(imageView, blocks, pageWidth, pageHeight, pageKey)
+            translationOverlay?.bind(imageView, blocks, pageWidth, pageHeight)
         } else {
             translationOverlay?.isVisible = false
             translationOverlay?.clear()
@@ -721,7 +711,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         pendingTranslationBlocks = emptyList()
         pendingPageWidth = 0
         pendingPageHeight = 0
-        pendingPageKey = null
         translationOverlay?.isVisible = false
         translationOverlay?.clear()
         clearTranslationDimScrim()

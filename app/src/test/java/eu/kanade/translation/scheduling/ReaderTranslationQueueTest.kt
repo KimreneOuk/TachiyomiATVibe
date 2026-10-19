@@ -24,6 +24,7 @@ import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.spyk
 import kotlinx.coroutines.CompletableDeferred
@@ -1450,6 +1451,117 @@ class ReaderTranslationQueueTest {
         } finally {
             diagnostics.sink = previousSink
             diagnostics.detailedTracingEnabled = previousGate
+        }
+    }
+
+    // ---- physical registry drains independent of scheduler token metadata ----
+
+    private fun chapterWithId(id: Long): Chapter = mockk<Chapter>(relaxed = true).also { every { it.id } returns id }
+
+    @Test
+    fun `session-level chapter drain retires old binding and preserves the current live binding`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        val tokenA = ReaderSessionToken("ch-identity-a", 1L)
+        val tokenB = ReaderSessionToken("ch-identity-b", 2L)
+        q.bindSession(tokenA, manga, chapterWithId(7L), source, translatorComputeClass)
+        try {
+            q.updateViewport(tokenA, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+            // Rebind to a different chapter: A(ch7) is retired but its paid worker stays live.
+            q.bindSession(tokenB, manga, chapterWithId(9L), source, translatorComputeClass)
+            testScheduler.runCurrent()
+            executor.jobs.getValue("p0").isCancelled shouldBe false
+
+            val drain = q.drainRetiredForChapter(7L)
+            drain.shouldBeInstanceOf<ReaderDrainResult.PendingNativeDrain>()
+            drain.completion.isCompleted shouldBe false
+
+            // The current live binding of chapter 9 is untouched and still admits work.
+            q.submitCurrent(tokenB, work("q0"), ReaderTrigger.MANUAL_TAP).shouldBeInstanceOf<ReaderSubmission.Queued>()
+            testScheduler.runCurrent()
+            executor.enteredFor("q0") shouldBe 1
+
+            executor.release("p0")
+            testScheduler.runCurrent()
+            executor.exitedFor("p0") shouldBe 1
+            drain.completion.isCompleted shouldBe true
+        } finally {
+            executor.release("p0")
+            executor.release("q0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `destructive chapter drain stops and drains the current same-chapter binding`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.hold("p0")
+        val q = newQueue(executor)
+        val tokenA = ReaderSessionToken("ch-identity-a", 1L)
+        q.bindSession(tokenA, manga, chapterWithId(7L), source, translatorComputeClass)
+        try {
+            q.updateViewport(tokenA, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+
+            val drain = q.drainAllForChapter(7L)
+            testScheduler.runCurrent()
+            // The current same-chapter binding is fenced: no further admission.
+            q.submitCurrent(tokenA, work("p1"), ReaderTrigger.MANUAL_TAP).shouldBeInstanceOf<ReaderSubmission.Rejected>()
+
+            drain.shouldBeInstanceOf<ReaderDrainResult.PendingNativeDrain>()
+            drain.completion.isCompleted shouldBe false
+            executor.release("p0")
+            testScheduler.runCurrent()
+            executor.exitedFor("p0") shouldBe 1
+            drain.completion.isCompleted shouldBe true
+        } finally {
+            executor.release("p0")
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `global registry drain awaits live workers of every binding`() = runTest(workerDispatcher) {
+        val executor = RecordingExecutor()
+        executor.paidPages += "p0"
+        executor.paidPages += "q0"
+        executor.hold("p0")
+        executor.hold("q0")
+        val q = newQueue(executor)
+        val tokenA = ReaderSessionToken("ch-identity-a", 1L)
+        val tokenB = ReaderSessionToken("ch-identity-b", 2L)
+        q.bindSession(tokenA, manga, chapterWithId(7L), source, translatorComputeClass)
+        try {
+            q.updateViewport(tokenA, 0, 1, true) { work("p0") }
+            testScheduler.runCurrent()
+            q.bindSession(tokenB, manga, chapterWithId(9L), source, translatorComputeClass)
+            q.updateViewport(tokenB, 0, 1, true) { work("q0") }
+            testScheduler.runCurrent()
+            executor.paidEntries["p0"] shouldBe true
+            executor.paidEntries["q0"] shouldBe true
+
+            val drain = q.drainAllRetained()
+            drain.shouldBeInstanceOf<ReaderDrainResult.PendingNativeDrain>()
+            drain.completion.isCompleted shouldBe false
+
+            executor.release("p0")
+            testScheduler.runCurrent()
+            executor.exitedFor("p0") shouldBe 1
+            drain.completion.isCompleted shouldBe false
+            executor.release("q0")
+            testScheduler.runCurrent()
+            executor.exitedFor("q0") shouldBe 1
+            drain.completion.isCompleted shouldBe true
+        } finally {
+            executor.release("p0")
+            executor.release("q0")
+            testScheduler.advanceUntilIdle()
         }
     }
 }

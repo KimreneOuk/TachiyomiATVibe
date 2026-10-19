@@ -1,6 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.Translation
 import io.kotest.assertions.withClue
 import io.kotest.matchers.maps.shouldBeEmpty
@@ -75,7 +76,7 @@ class NormalMangaIsolationTest {
                 // so hasRenderedResult fires and the page promotes to a
                 // committed display bundle instead of showing ORIGINALS.
                 harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p0").hasRenderedResult shouldBe true
             }
 
             // 1. No queue session: no reader session was ever bound for the

@@ -6,19 +6,9 @@ import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
-import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.providers.AiTranslator
 import eu.kanade.translation.model.InpaintMaskBox
@@ -37,7 +27,6 @@ import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.ChapterRunRecord
 import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.EnvelopePolicySnapshot
-import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.LeaseAcquisition
@@ -238,36 +227,6 @@ class StrandedPageTerminalRoutingTest {
         }
     }
 
-    private inner class FakeAnalyzer : AnalysisChunkRunner {
-        override suspend fun executeChunk(
-            chunk: PlannedAnalysisChunk,
-            identity: AnalysisRunIdentity,
-            evidence: AnalysisEvidenceTexts,
-        ): AnalysisChunkRunOutcome {
-            val firstStoragePage = chunk.contributingPageKeys.first()
-            val wirePage = evidence.wirePageKeyByStorageKey[firstStoragePage].shouldNotBeNull()
-            val wireBlock = evidence.blockIdsByPage[wirePage].shouldNotBeNull().first()
-            val sourceText = evidence.textByBlockId[wireBlock].shouldNotBeNull()
-            val response = AnalysisResponseValidator.ValidatedAnalysisResponse(
-                chunkId = chunk.chunkId,
-                terms = listOf(ValidatedTerm("t001", "剣", "sword", emptyList(), "TERM")),
-                entities = listOf(
-                    ValidatedEntity("e001", listOf("カイル"), "カイル", "Kail", emptyList(), emptyList()),
-                ),
-                scenes = emptyList(),
-                narrativeSummary = "An opening journey.",
-                conflictNotes = emptyList(),
-                evidenceRefs = listOf(EvidenceRef(wirePage, wireBlock, hex64(sourceText))),
-            )
-            return AnalysisChunkRunOutcome.Completed(
-                response = response,
-                coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
-                droppedAuthorityKeys = emptyList(),
-                provenance = eu.kanade.translation.context.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
-            )
-        }
-    }
-
     private class FakeTranslator(
         private val responder: suspend (callIndex: Int, chunk: TranslationContextChunk) -> ContextualTranslationBatch,
     ) : AiTranslator() {
@@ -343,7 +302,6 @@ class StrandedPageTerminalRoutingTest {
             detection = hex64("detection-run-v1"),
             ocr = hex64("ocr-run-v1"),
         ),
-        analysisChunkRunner = FakeAnalyzer(),
         textTranslator = translator,
         translationSublimitGate = BatchRequestSublimitGate(),
         overlapScheduler = overlapScheduler,
@@ -550,7 +508,6 @@ class StrandedPageTerminalRoutingTest {
                     pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") }
                 },
                 overlapScheduler = null,
-                renderJoin = null,
                 publishRecord = { artifact, record ->
                     val serialized = ArtifactDocumentJson.encodeToString(record)
                     val manifest = artifact.readManifest().shouldNotBeNull()
@@ -586,9 +543,6 @@ class StrandedPageTerminalRoutingTest {
                         createdAtEpochMs = nowEpochMs,
                         updatedAtEpochMs = nowEpochMs,
                     )
-                },
-                drainDisplayTailBeforeComplete = {
-                    RecoveryWorker.DisplayTailDrain(drained = 0, failed = emptyList())
                 },
                 t924PageTerminalAtFinalize = { _, _ -> false },
                 strandedPageReason = { page ->

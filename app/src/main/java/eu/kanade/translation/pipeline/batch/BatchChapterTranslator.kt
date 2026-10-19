@@ -601,22 +601,13 @@ internal class BatchChapterTranslator(
                     }
                 }
 
-                // Lane workers call tryRender at commit boundaries; the
-                // coordinator publishes persisted layouts for completed pages.
+                // Lane workers call tryRender at commit boundaries to release
+                // buffers after the page artifacts are committed.
                 val renderJoin = BatchRenderJoin(
-                    store = store,
-                    pageTraceRegistry = pageTraceRegistry,
-                    manga = manga,
-                    chapter = chapter,
-                    source = source,
                     tracker = tracker,
                     translationRegistry = translationRegistry,
                     heldBitmapRegistry = heldBitmapRegistry,
-                    resumePlanner = resumePlanner,
                     writeGate = batchWriteGate,
-                    expectedBatchFingerprints = expectedBatchFingerprints,
-                    loadPersistedCleanedBitmapFn = loadPersistedCleanedBitmap,
-                    deleteRetiredCleanedFileFn = deleteRetiredCleanedFile,
                     abortBatchCandidateFn = ::abortBatchCandidate,
                 )
 
@@ -871,9 +862,8 @@ internal class BatchChapterTranslator(
                             // per-page tail. The provider identity freezes as
                             // `standard:<engine>`; DeepL is the only credentialed
                             // standard engine (one-way signature, never a raw
-                            // key). NO AnalysisChunkExecutor and NO contextual
-                            // translator on this lane — AI envelope,
-                            // analysis work never runs here.
+                            // key). No contextual AI translator on this lane;
+                            // AI envelope translation never runs here.
                             val standardEngine = translationPreferences.translationStandardEngine().get()
                             val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
                                 translationPreferences.translationDeeplApiKey().get()

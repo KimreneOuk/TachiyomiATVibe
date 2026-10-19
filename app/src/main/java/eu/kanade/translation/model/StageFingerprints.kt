@@ -3,12 +3,10 @@ package eu.kanade.translation.model
 import eu.kanade.translation.persistence.SourceIdentity
 import eu.kanade.translation.persistence.DisplayBaseReference
 
-import eu.kanade.translation.context.ChapterTranslationProfile
 import eu.kanade.translation.persistence.SidecarPointer
 import eu.kanade.translation.persistence.DisplayBaseKind
 
 import eu.kanade.translation.persistence.ArtifactStage
-import eu.kanade.translation.persistence.ArtifactDocumentJson
 
 
 import eu.kanade.translation.model.InpaintMaskBox
@@ -310,29 +308,6 @@ object StageFingerprints {
         userAuthorityFingerprint ?: AUTHORITY_ABSENT,
         seriesAuthorityFingerprint ?: AUTHORITY_ABSENT,
     )
-
-    /**
-     * 05 /  (`ProfileContentFingerprint`): SHA-256 over the
-     * canonical re-encoded JSON of the validated profile (decode-then-encode
-     * under the shared [ArtifactDocumentJson] instance). Operational fields
-     * (`version`, `frozenAtEpochMs`, `sourceRunId`) are zeroed in the hashing
-     * copy only — stored bytes are never mutated. `contentFingerprint` itself
-     * is blanked (a value cannot contain its own hash);
-     * `profileInputFingerprint` stays a hashed field.
-     */
-    fun profileContentFingerprint(profile: ChapterTranslationProfile): String {
-        val hashingView = profile.copy(
-            version = 0,
-            contentFingerprint = "",
-            frozenAtEpochMs = 0L,
-            sourceRunId = "",
-        )
-        val canonical = ArtifactDocumentJson.encodeToString(
-            ChapterTranslationProfile.serializer(),
-            hashingView,
-        )
-        return sha256Hex(canonical.toByteArray(Charsets.UTF_8))
-    }
 
     /**
      * 06: translation provenance fingerprint (per page or per
@@ -644,7 +619,7 @@ object StageFingerprints {
 
     /**
      * Raw SHA-256 over [bytes], lowercase hex — the byte-level core under
-     * [profileContentFingerprint], [envelopePlanContentFingerprint] and
+     * [envelopePlanContentFingerprint] and
      * [sourceExcerptHash] (/SC-10).
      */
     fun sha256Hex(bytes: ByteArray): String =

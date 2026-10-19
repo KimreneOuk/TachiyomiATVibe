@@ -76,9 +76,8 @@ data class OcrCorpusGaps(
 /**
  * The assembled chapter OCR corpus summary (pure planning output).
  *
- * Downstream consumers: analysis chunk planning
- * ([AnalysisChunkPlanner]) and envelope planning ([GlobalEnvelopePlanner])
- * consume [orderedPages], [corpusFingerprint] and [gaps].
+ * Envelope planning ([GlobalEnvelopePlanner]) consumes [orderedPages],
+ * [corpusFingerprint], and [gaps].
  */
 data class OcrCorpusManifest(
     /** Whole-corpus identity ( [StageFingerprints.ocrCorpusFingerprint]). */

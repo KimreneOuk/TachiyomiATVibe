@@ -1,5 +1,6 @@
 package eu.kanade.translation.persistence
 
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.hasRenderedResult
@@ -401,7 +402,9 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                 store.artifactManifest = manifest
             }
             ArtifactMutation.Direct -> {
-                val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
+                val isOcrLeaseActive = store.pageLeases[pageKey]?.stage == PageStage.Ocr
+                val immediatelyPromotable = (updated.hasRenderedResult || updated.isTextlessTerminal) &&
+                    (!isOcrLeaseActive || updated.isTextlessTerminal)
                 fun persistDirect(manifest: ChapterArtifactManifest) =
                     if (immediatelyPromotable) {
                         engine.candidates.promoteLiveCandidateImmediately(

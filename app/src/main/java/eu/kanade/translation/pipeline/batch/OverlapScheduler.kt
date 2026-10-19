@@ -85,15 +85,6 @@ internal class OverlapScheduler(
 
     val counters = Counters()
 
-    /**
-     *  hook: invoked after a page's inpaint durably committed (READY) so the
-     * coordinator can publish the persisted layout for that page immediately
-     * (per page, never blocking the envelope loop). Failures inside the hook
-     * never affect the scheduler.
-     */
-    @Volatile
-    var onInpaintCommitted: (suspend (pageKey: String) -> Unit)? = null
-
     private val inpaintMutex = Mutex()
 
     /** Remote-window state: strictly alternating open/close from the gate wrapper. */
@@ -324,99 +315,6 @@ internal class OverlapScheduler(
                 // Deferred/failed/denied pages are reconciled at FINALIZE,
                 // not retried forever inside this drain.
                 else -> deferredByLeaseOwner += pageKey
-            }
-        }
-        //  track I round 3: settle the decoupling's order-inverted pages
-        // (see [stampRenderTerminalOrphans]).
-        stampRenderTerminalOrphans()
-    }
-
-    /**
-     *  track I round 3 — the drain-side render-terminal adoption sweep
-     * (the E2 stamp's post-translation twin). The decoupled candidacy
-     * inverts a page's own stage order: an OCR-final page can be inpainted
-     * while its translation is still PENDING (an earlier window of this
-     * pass, or a window of a previous cancelled run). The inpaint lane's
-     * render-terminal stamp (`NativeLaneWorker.runInpaintStage` → "batch
-     * render terminal stamp") is gated on the page's translation being
-     * ALREADY terminal, so an order-inverted page commits no stamp at
-     * inpaint time; and because the durable inpaint artifact REUSEs, no
-     * later run re-runs the inpaint — the stamp site is never visited again.
-     * The preflight adoption stamp (the coordinator's
-     * `stampAdoptedRenderTerminal`, E2) cannot heal it either: it runs at
-     * OCR-preflight adoption, BEFORE the translation. Left unhandled,
-     * renderStatus stays PENDING forever and the reader shows the original
-     * image — the exact field-report signature the stamp exists for.
-     *
-     * The drain is the pass's serial settle point (after the last window
-     * closed), so it owns the repair: every page that is durably
-     * display-complete under the SAME predicate as the coordinator's
-     * adopted-page stamp (translation terminal + inpaint READY + cleaned
-     * image + a non-blank translated block + renderStatus PENDING) gets the
-     * idempotent render-terminal stamp through the SAME guarded
-     * fresh-snapshot write + Render-stage BATCH lease discipline. ONE
-     * bounded pass — no waiting, no retries: a denied lease or a rejected
-     * write skips the page (a later run's drain retries it), identical to
-     * the E2 rejection semantics.
-     */
-    private suspend fun stampRenderTerminalOrphans() {
-        for (pageKey in orderedPageKeys) {
-            val candidate = store.snapshot(pageKey).page ?: continue
-            val displayComplete =
-                (
-                    candidate.translationStatus == StageStatus.READY ||
-                        candidate.translationStatus == StageStatus.PARTIAL
-                    ) &&
-                    candidate.isCleanedImageReady &&
-                    candidate.renderStatus == StageStatus.PENDING &&
-                    candidate.blocks.any { it.translation.isNotBlank() }
-            if (!displayComplete) continue
-            when (
-                pageTraceRegistry?.withLeaseWait(
-                    pageKey = pageKey,
-                    site = TranslationTraceSite.BATCH_OVERLAP_RENDER,
-                    leaseKind = TranslationTraceLeaseKind.RENDER,
-                ) {
-                    store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
-                } ?: store.tryAcquirePageStageLease(pageKey, PageStage.Render, PageWriteOrigin.BATCH)
-            ) {
-                is LeaseAcquisition.Granted -> Unit
-                else -> continue
-            }
-            try {
-                // The guarded write's lease fence is checked against the
-                // CURRENT page lease (render-stage token just acquired), so
-                // the precondition is snapshotted AFTER the acquire — the
-                // same idiom the guarded stage seeds use.
-                val held = store.snapshot(pageKey)
-                val outcome = store.updatePageGuarded(
-                    pageKey = pageKey,
-                    expected = ChapterTranslationStore.PatchPrecondition(
-                        generation = held.generation,
-                        pageVersion = held.pageVersion,
-                        blockFingerprints = held.blockFingerprints,
-                        leaseToken = held.leaseToken,
-                        candidateGenerationId = held.candidateGenerationId,
-                        dependencyFingerprint = held.dependencyFingerprint,
-                        artifactPageVersion = held.artifactPageVersion,
-                    ),
-                    description = "t934 track I: stamp order-inverted display-complete page render-terminal",
-                ) { current ->
-                    (current ?: candidate).apply {
-                        if (renderStatus == StageStatus.PENDING && isCleanedImageReady) {
-                            renderStatus = StageStatus.READY
-                            updatedAt = System.currentTimeMillis()
-                        }
-                    }
-                }
-                if (outcome is ChapterTranslationStore.PatchResult.Rejected) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT t934 render-terminal sweep skipped pageHash=${pageKey.hashCode()} " +
-                            "reason=${outcome.reason}"
-                    }
-                }
-            } finally {
-                runCatching { releaseBatchLease(pageKey) }
             }
         }
     }
@@ -673,11 +571,6 @@ internal class OverlapScheduler(
                                     firstOverlapCommitAtMs.compareAndSet(0L, nowEpochMs())
                                 } else {
                                     counters.serialInpaintsExecuted.incrementAndGet()
-                                }
-                                runCatching { onInpaintCommitted?.invoke(pageKey) }.onFailure { t ->
-                                    logcat(LogPriority.WARN) {
-                                        "TachiyomiAT t924 overlap post-inpaint hook failed pageHash=${pageKey.hashCode()}: $t"
-                                    }
                                 }
                             } else {
                                 counters.overlapInpaintFailures.incrementAndGet()

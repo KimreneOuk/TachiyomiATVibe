@@ -155,12 +155,6 @@ internal class StandardLaneWorker(
             )
         }
 
-        //  publish the persisted layout right after each inpaint commits
-        // (the same per-page hook the AI envelope lane installs).
-        overlapScheduler?.onInpaintCommitted = { pageKey ->
-            renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
-            Unit
-        }
         // The overlap loop runs beside the serial translate loop and stops
         // between pages when the translation tail ends.
         val overlapLoop: suspend (suspend () -> BatchPass1Outcome) -> BatchPass1Outcome =
@@ -212,7 +206,10 @@ internal class StandardLaneWorker(
                     overlapScheduler?.onRemoteWindowClosed()
                 }
                 when (outcome) {
-                    is TranslationCompletionOutcome.Completed -> translatedPages += outcome.completedPageKeys.size
+                    is TranslationCompletionOutcome.Completed -> {
+                        translatedPages += outcome.completedPageKeys.size
+                        outcome.completedPageKeys.forEach { pageKey -> renderJoin?.tryRender(pageKey) }
+                    }
                     is TranslationCompletionOutcome.Paused -> {
                         publishRecord(
                             artifact,

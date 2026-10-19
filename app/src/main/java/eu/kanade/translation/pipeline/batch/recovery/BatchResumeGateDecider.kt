@@ -4,8 +4,6 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasExhaustedRetries
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
@@ -18,7 +16,7 @@ import eu.kanade.translation.model.isTextlessTerminal
 internal object BatchResumePolicy {
     enum class NextStage {
         SKIP,
-        RENDER,
+        TRANSLATE,
         INPAINT,
         FULL,
     }
@@ -39,19 +37,23 @@ internal object BatchResumePolicy {
         inpaintModeMatches: Boolean = true,
     ): NextStage {
         if (page == null) return NextStage.FULL
-        if (page.hasRenderedResult && cleanedFileValid && inpaintModeMatches) return NextStage.SKIP
+        val hasCommittedTranslation =
+            page.translationStatus in setOf(StageStatus.READY, StageStatus.PARTIAL) &&
+                page.blocks.any { it.translation.isNotBlank() }
+        val cleanImageReady = page.isCleanedImageReady || page.originalImageFallback
+        if (hasCommittedTranslation && cleanImageReady && cleanedFileValid && inpaintModeMatches) {
+            return NextStage.SKIP
+        }
         if (page.hasExhaustedRetries || page.isTextlessTerminal) {
             return NextStage.SKIP
         }
-        if (page.isCleanedImageReady &&
+        if (cleanImageReady &&
             cleanedFileValid &&
             inpaintModeMatches &&
-            (
-                page.hasRecognizedTranslation ||
-                    (page.ocrStatus == StageStatus.READY && page.hasCurrentInpaintMask)
-                )
+            page.ocrStatus == StageStatus.READY &&
+            page.hasCurrentInpaintMask
         ) {
-            return NextStage.RENDER
+            return NextStage.TRANSLATE
         }
         if (page.ocrStatus == StageStatus.READY && page.hasCurrentInpaintMask) {
             return NextStage.INPAINT
@@ -65,11 +67,11 @@ internal object BatchResumePolicy {
  *
  * Given a (possibly null) persisted [PageTranslation] for a page, decides how
  * much of the ONNX phase to skip on resume:
- *  - [Decision.FULL]          — run recognition + inpaint + render
+ *  - [Decision.FULL]          — run recognition + inpaint
  *  - [Decision.INPAINT_ONLY]  — OCR done and mask captured, but cleaned image
- *                               missing/stale — re-inpaint + render
- *  - [Decision.SKIP_ALL]      — OCR done, durable cleaned image present, mask
- *                               current — render only (or fully skip)
+ *                               missing/stale — re-inpaint
+ *  - [Decision.SKIP_ALL]      — OCR and cleaned-image artifacts are current,
+ *                               so the producer stages can be skipped
  *
  * Pure over the public PageTranslation model; JVM-testable without the heavy
  * pipeline object. The pipeline resolves the page once and calls [decide].
@@ -89,7 +91,7 @@ internal object BatchResumeGateDecider {
         if (page?.isStageRunning == true && page.ocrStatus != StageStatus.READY) return Decision.FULL
         return when (BatchResumePolicy.nextStage(page, cleanedFileValid, inpaintModeMatches)) {
             BatchResumePolicy.NextStage.SKIP,
-            BatchResumePolicy.NextStage.RENDER,
+            BatchResumePolicy.NextStage.TRANSLATE,
             -> Decision.SKIP_ALL
             BatchResumePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY
             BatchResumePolicy.NextStage.FULL -> Decision.FULL

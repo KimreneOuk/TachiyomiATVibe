@@ -47,7 +47,6 @@ import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
-import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslationView
@@ -735,9 +734,6 @@ class ReaderViewModel @JvmOverloads constructor(
         translationStoreJob?.cancel()
         translationBatchProgressJob?.cancel()
         translationStateJob?.cancel()
-        //  Stage 7: drop the chapter hydration source with the store
-        // — without it the overlay keeps the byte-identical planner fallback.
-        PersistedLayoutReaderBridge.installChapterSource(null)
         currentTranslationStore = null
         val readerStop = translationManager.requestReaderStop("reader closed")
         registerReaderCleanupAfterStop(readerStop) {

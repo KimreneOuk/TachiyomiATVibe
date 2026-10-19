@@ -5,13 +5,6 @@ import eu.kanade.translation.persistence.SidecarPointer
 import eu.kanade.translation.persistence.DisplayBaseReference
 import eu.kanade.translation.persistence.DisplayBaseKind
 import eu.kanade.translation.persistence.SourceIdentity
-import eu.kanade.translation.context.ChapterTranslationProfile
-import eu.kanade.translation.context.ProfileFact
-import eu.kanade.translation.context.FactType
-import eu.kanade.translation.context.FactScope
-import eu.kanade.translation.context.FactProvenance
-import eu.kanade.translation.context.FactConflictState
-import eu.kanade.translation.context.EvidenceStrength
 
 
 import eu.kanade.translation.model.InpaintMaskBox

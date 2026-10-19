@@ -63,7 +63,6 @@ internal class EnvelopeDispatcherContext(
         String,
     ) -> Unit,
     val providerChunkProfile: () -> TranslationContextChunkPlanner.Profile,
-    val drainDisplayTailAfterCommit: suspend (List<String>) -> Unit,
     val runFinalizeAndComplete: suspend (
         ChapterArtifactEngine,
         String,
@@ -345,13 +344,6 @@ internal class EnvelopeDispatcher(
                 val dispatchGate = overlapScheduler?.let { scheduler ->
                     OverlapScheduler.WindowSignallingGate(translationSublimitGate, scheduler)
                 } ?: translationSublimitGate
-                //  publish the persisted layout right after each inpaint
-                // commits (per page, never blocking the envelope loop — the
-                // hook runs inside the overlap scheduler's coroutine).
-                overlapScheduler?.onInpaintCommitted = { pageKey ->
-                    renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
-                    Unit
-                }
                 val executor = ProfileEnvelopeExecutor(
                     store = store,
                     textTranslator = translator,
@@ -362,10 +354,10 @@ internal class EnvelopeDispatcher(
                     providerProfile = providerChunkProfile(),
                     nowEpochMs = nowEpochMs,
                     // Freed write slots wake the overlap lane at commit settle;
-                    // committed pages also get a bounded display-tail repair.
+                    // committed pages also release their held inpaint buffers.
                     onCommitSettled = { committedPageKeys ->
                         overlapScheduler?.notifyCandidatesChanged()
-                        context.drainDisplayTailAfterCommit(committedPageKeys)
+                        committedPageKeys.forEach { pageKey -> renderJoin?.tryRender(pageKey) }
                     },
                     pageTraceRegistry = pageTraceRegistry,
                 )

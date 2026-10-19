@@ -15,7 +15,6 @@ import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
@@ -67,34 +66,8 @@ object SettingsTranslationScreen : SearchableSettings {
             getInpaintingModeGroup(translationPreferences),
             getHardwareAccelerationGroup(translationPreferences),
             getEngineGroup(translationPreferences),
-        ) + if (BuildConfig.DEBUG) {
-            listOf(getExperimentsGroup(translationPreferences))
-        } else {
-            emptyList()
-        }
+        )
     }
-
-    /**
-     *  debug-build-only experiment switches. The remaining flag is read at
-     * each translation commit/render (never mid-run), so flipping between
-     * commits is the supported flow. Never shown in release builds. (
-     * completed its A/B lifecycle: the profile pipeline is now the only
-     * pipeline and the switch was removed with the flag.)
-     */
-    @Composable
-    private fun getExperimentsGroup(
-        translationPreferences: TranslationPreferences,
-    ): Preference.PreferenceGroup = Preference.PreferenceGroup(
-        title = "Experiments (debug)",
-        preferenceItems = persistentListOf(
-            Preference.PreferenceItem.SwitchPreference(
-                pref = translationPreferences.translationBatchPersistedLayout(),
-                title = "Persisted layout reader bridge (FF-02)",
-                subtitle = "Persist translation layouts with committed pages and " +
-                    "hydrate them in the reader. Takes effect on the next commit/render.",
-            ),
-        ),
-    )
 
     @Composable
     private fun getHardwareAccelerationGroup(

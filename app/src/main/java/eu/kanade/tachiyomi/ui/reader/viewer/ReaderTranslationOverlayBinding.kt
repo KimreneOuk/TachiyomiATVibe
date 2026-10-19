@@ -8,13 +8,6 @@ data class ReaderTranslationOverlayBinding(
     val blocks: List<TranslationBlockView>,
     val pageWidth: Int,
     val pageHeight: Int,
-    /**
-     *  Stage 7: the translation page key (`PageTranslationView
-     * .sourceFileName`). Propagated to the overlay bind so the
-     * chapter hydration source can resolve the page's persisted draw plan.
-     * Null/empty keeps the byte-identical legacy planner path.
-     */
-    val pageKey: String? = null,
 )
 
 /**
@@ -44,7 +37,6 @@ fun selectReaderTranslationOverlayBinding(
             blocks = translation.blocks,
             pageWidth = width,
             pageHeight = height,
-            pageKey = translation.sourceFileName,
         )
     }
     return ReaderTranslationOverlayBinding(emptyList(), 0, 0)

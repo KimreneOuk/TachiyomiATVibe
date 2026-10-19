@@ -1,6 +1,7 @@
 package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import io.kotest.assertions.withClue
@@ -157,8 +158,8 @@ class CancelledBatchRestartReuseTest {
                 // drain-side twin of the E2 adopted-page stamp).
                 harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
                 harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p0").hasRenderedResult shouldBe true
+                harness.store.state.value.getValue("p1").hasRenderedResult shouldBe true
             }
             withClue("reuse: the completed page 0 may not be re-decoded/re-OCR'd by the restart") {
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe

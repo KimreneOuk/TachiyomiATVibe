@@ -11,15 +11,11 @@ import eu.kanade.translation.diagnostics.BatchDiagnosticReason
 import eu.kanade.translation.diagnostics.BatchDiagnosticStage
 import eu.kanade.translation.diagnostics.BatchTranslationDiagnostics
 import eu.kanade.translation.diagnostics.DeviceStageNormalization
-import eu.kanade.translation.diagnostics.NativeVisionTelemetry
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
-import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
-import eu.kanade.translation.diagnostics.TranslationTraceSite
 import eu.kanade.translation.diagnostics.TranslationTraceStage
-import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
@@ -48,8 +44,6 @@ import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.persistence.toArtifactOrigin
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
-import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
-import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
@@ -66,16 +60,14 @@ import java.io.InputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Runs HTTP translation outside the native permit, then reacquires the device
- * permit for Canvas rendering. It handles contextual or plain translation,
- * bounded partial retries, color recompute, and guarded commit.
+ * Runs HTTP translation outside the native permit. It handles contextual or
+ * plain translation, bounded partial retries, and guarded artifact commit.
  */
 internal class SinglePageHttpRenderPhase(
     private val translationPreferences: TranslationPreferences,
     private val provider: TranslationFileProvider,
     private val streamRegistry: eu.kanade.translation.pipeline.execution.TranslationStreamRegistry,
     private val engines: EngineLane,
-    private val devicePagePermitGate: DevicePagePermitGate,
     private val cleanedPublication: CleanedPublication,
     private val expectedBatchFingerprints: (TextRecognizerLanguage, TextTranslatorLanguage) -> BatchExpectedFingerprints,
     private val retryInpaintDownscaledFn: suspend (
@@ -90,44 +82,6 @@ internal class SinglePageHttpRenderPhase(
         AttemptAuthority?,
     ) -> PageTranslation,
 ) {
-
-    private suspend fun withRenderPermit(
-        origin: PageWriteOrigin,
-        block: suspend (permitWaitMs: Double) -> Unit,
-    ): Boolean {
-        val waitStart = System.nanoTime()
-        val waitSpan = TranslationTrace.beginStage(
-            stage = TranslationTraceStage.RENDER_PERMIT_WAIT,
-            lane = TranslationTraceLane.SCHEDULER,
-            site = if (origin == PageWriteOrigin.MANUAL) {
-                TranslationTraceSite.READER_SINGLE_PAGE
-            } else {
-                TranslationTraceSite.ROLLING_AUTO_TRANSLATION
-            },
-            leaseKind = TranslationTraceLeaseKind.RENDER,
-        )
-        val permit = try {
-            devicePagePermitGate.acquire(
-                if (origin == PageWriteOrigin.MANUAL) DevicePermitPriority.FOREGROUND else DevicePermitPriority.BACKGROUND,
-            )
-        } catch (t: Throwable) {
-            waitSpan.end(
-                if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
-                error = t,
-            )
-            throw t
-        }
-        val permitWaitMs = (System.nanoTime() - waitStart) / 1_000_000.0
-        waitSpan.end(if (permit == null) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS)
-        if (permit == null) return false
-
-        try {
-            block(permitWaitMs)
-        } finally {
-            permit.release()
-        }
-        return true
-    }
 
     private val textTranslator get() = engines.textTranslator
 
@@ -590,8 +544,8 @@ internal class SinglePageHttpRenderPhase(
     }
 
     /**
-     * Renders translated text onto the cleaned bitmap via Canvas and performs
-     * the final guarded commit to the store via [attempt].
+     * Commits translated page artifacts and retries cleaned-image publication
+     * when the first inpaint output could not be produced.
      */
     suspend fun renderSinglePageTranslated(
         manga: Manga,
@@ -601,313 +555,104 @@ internal class SinglePageHttpRenderPhase(
         ctx: OnnxPhaseResult,
         owner: CleanedOwner,
         attempt: AttemptAuthority? = null,
-        stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): TranslationCompletionOutcome {
         val pageTranslation = ctx.pageTranslation
         val store = ctx.store
         var translationOutcome: TranslationCompletionOutcome = TranslationCompletionOutcome.Completed()
-        var lastPermitWaitMs = 0.0
-        var lastColorEstimateMs = 0.0
         var commitPrecondition = ctx.commitPrecondition ?: store.snapshot(pageKey).toPrecondition()
 
-        val renderFailure = ProviderFailure(
-            kind = ProviderFailureKind.PROTOCOL,
-            retryability = ProviderFailureRetryability.RETRY_NOW,
-            safeSummary = "rendering failed; retry required",
-        )
-
-        fun markRenderFailure() {
-            pageTranslation.renderStatus = StageStatus.FAILED
-            pageTranslation.recordAttemptFailure()
-            pageTranslation.errorMessage = renderFailure.safeSummary
-            translationOutcome = TranslationCompletionOutcome.Failed(
-                anchorPageKey = pageKey,
-                terminalPageKeys = emptySet(),
-                failure = renderFailure,
-                reason = renderFailure.safeSummary,
-            )
-        }
-
-        fun deferRenderForPermit() {
-            val failure = ProviderFailure(
-                kind = ProviderFailureKind.REFUSAL,
-                retryability = ProviderFailureRetryability.PAUSE,
-                safeSummary = "render permit unavailable; retry required",
-            )
-            pageTranslation.renderStatus = StageStatus.PENDING
-            translationOutcome = TranslationCompletionOutcome.Paused(
-                anchorPageKey = pageKey,
-                retryablePageKeys = setOf(pageKey),
-                failure = failure,
-                nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
-                reason = failure.safeSummary,
-            )
-        }
-
-        suspend fun publishLiveStage(
-            description: String,
-            update: (PageTranslation) -> Unit,
-        ) {
-            if (attempt != null) {
-                attempt.write(description) { current ->
-                    current.apply {
-                        update(this)
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-            } else {
-                val result = store.updatePageFromCurrentSnapshot(pageKey, description) { current ->
-                    (current ?: pageTranslation.copy()).apply {
-                        sourceFileName = pageKey
-                        update(this)
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-                if (result is ChapterTranslationStore.PatchResult.Rejected) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT live stage publication rejected: pageKey=$pageKey " +
-                            "description=$description reason=${result.reason}"
-                    }
-                }
-            }
-        }
-
-        if (pageTranslation.blocks.isNotEmpty() &&
-            (
-                pageTranslation.translationStatus == StageStatus.READY ||
-                    pageTranslation.translationStatus == StageStatus.PARTIAL
-                )
+        var didRetryInpaint = false
+        if (
+            pageTranslation.blocks.isNotEmpty() &&
+            pageTranslation.translationStatus in setOf(StageStatus.READY, StageStatus.PARTIAL)
         ) {
             val cleanedBitmap = owner.borrow()
-            val hasCleanedOnDisk = pageTranslation.isCleanedImageReady
+            val hasCleanedOnDisk = pageTranslation.isCleanedImageReady ||
+                attempt?.let { store.snapshot(pageKey).page?.isCleanedImageReady } == true
             if (cleanedBitmap != null || hasCleanedOnDisk) {
-                try {
-                    pageTranslation.renderStatus = StageStatus.RUNNING
-                    val liveRenderPublished = try {
-                        publishLiveStage("single-page render running") {
-                            it.renderStatus = StageStatus.RUNNING
-                        }
-                        true
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        markRenderFailure()
-                        logcat(LogPriority.ERROR, e) { "Failed to publish render start for single page $pageKey" }
-                        false
-                    }
-                    if (liveRenderPublished) {
-                        val renderStageAdmitted = try {
-                            stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-                            true
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            markRenderFailure()
-                            logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
-                            false
-                        }
-                        if (renderStageAdmitted) {
-                            val rendered = withRenderPermit(origin) { permitWaitMs ->
-                                lastPermitWaitMs = permitWaitMs
-                                val layoutSpan = TranslationTrace.beginStage(
-                                    TranslationTraceStage.LAYOUT,
-                                    lane = TranslationTraceLane.RENDER,
-                                    normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                                )
-                                try {
-                                    if (cleanedBitmap != null) {
-                                        val renderSpan = TranslationTrace.beginStage(
-                                            TranslationTraceStage.RENDER,
-                                            lane = TranslationTraceLane.RENDER,
-                                            items = 0,
-                                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                                        )
-                                        try {
-                                            val renderLaneToken =
-                                                TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
-                                            try {
-                                                val colorEstimateStart = System.nanoTime()
-                                                RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
-                                                lastColorEstimateMs = (System.nanoTime() - colorEstimateStart) / 1_000_000.0
-                                            } finally {
-                                                renderLaneToken?.close()
-                                            }
-                                        } catch (e: Exception) {
-                                            renderSpan.end(
-                                                if (e is CancellationException) {
-                                                    TranslationTraceOutcome.CANCELLED
-                                                } else {
-                                                    TranslationTraceOutcome.FAILURE
-                                                },
-                                                error = e,
-                                            )
-                                            throw e
-                                        }
-                                        renderSpan.end()
-                                    }
-                                    layoutSpan.end()
-                                    pageTranslation.renderStatus = StageStatus.READY
-                                    pageTranslation.updatedAt = System.currentTimeMillis()
-                                } catch (e: Exception) {
-                                    if (e is CancellationException) {
-                                        layoutSpan.end(TranslationTraceOutcome.CANCELLED)
-                                        throw e
-                                    }
-                                    layoutSpan.end(TranslationTraceOutcome.FAILURE)
-                                    markRenderFailure()
-                                    logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
-                                }
-                            }
-                            if (!rendered) deferRenderForPermit()
-                        }
-                    }
-                } finally {
-                    if (cleanedBitmap != null) {
-                        owner.closeBorrow()
-                    }
+                if (cleanedBitmap != null) {
+                    owner.closeBorrow()
                 }
             } else {
                 logcat(LogPriority.WARN) {
-                    "TachiyomiAT render blocked for $pageKey: inpaint produced no cleaned bitmap; " +
-                        "retrying at lower resolution"
+                    "TachiyomiAT cleaned image unavailable for $pageKey; retrying inpaint at lower resolution"
                 }
-                val retryResult = retryInpaintDownscaled(
-                    manga = manga,
-                    chapter = chapter,
-                    source = source,
-                    pageKey = pageKey,
-                    streams = ctx.streams,
-                    decoded = ctx.decoded,
-                    pageTranslation = pageTranslation,
-                    owner = owner,
-                    attempt = attempt,
-                )
-                val retriedCleaned = retryResult.cleanedBitmap
-                if (retriedCleaned != null) {
-                    val published = if (attempt != null) {
-                        val enrolled = cleanedPublication.enrollCleanedPersistence(
-                            manga,
-                            chapter,
-                            source,
-                            pageKey,
-                            store,
-                            retryResult,
-                            owner,
-                            attempt,
-                        )
-                        if (enrolled) store.flush()
-                        if (enrolled && owner.awaitPersistence()) store.snapshot(pageKey) else null
-                    } else {
-                        val companionDir = provider.getCompanionImageDir(
-                            manga.title,
-                            source,
-                            chapter.name,
-                            chapter.scanlator,
-                        )
-                        persistCleanedBitmap(
-                            pageTranslation, retriedCleaned, companionDir, pageKey, chapter.name,
-                            store, source.id, manga.id, chapter.id, expectedPrecondition = commitPrecondition,
-                        )
-                    }
-                    if (published != null) {
-                        commitPrecondition = published.toPrecondition()
-                    }
-                    if (published == null) {
-                        markRenderFailure()
-                        pageTranslation.errorMessage =
-                            "Cleaned image could not be published; translated text was not rendered."
-                    } else {
-                        val borrowedRetried = owner?.borrow()
-                        if (borrowedRetried != null) {
-                            try {
-                                pageTranslation.renderStatus = StageStatus.RUNNING
-                                publishLiveStage("single-page render retry running") {
-                                    it.renderStatus = StageStatus.RUNNING
-                                }
-                                val renderStageAdmitted = try {
-                                    stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-                                    true
-                                } catch (e: Exception) {
-                                    if (e is CancellationException) throw e
-                                    markRenderFailure()
-                                    logcat(LogPriority.ERROR, e) {
-                                        "Failed to render text for single page (retry path) $pageKey"
-                                    }
-                                    false
-                                }
-                                if (renderStageAdmitted) {
-                                    val rendered = withRenderPermit(origin) { permitWaitMs ->
-                                        lastPermitWaitMs = permitWaitMs
-                                        val retryLayoutSpan = TranslationTrace.beginStage(
-                                            TranslationTraceStage.LAYOUT,
-                                            lane = TranslationTraceLane.RENDER,
-                                            normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                                        )
-                                        try {
-                                            val retryRenderSpan = TranslationTrace.beginStage(
-                                                TranslationTraceStage.RENDER,
-                                                lane = TranslationTraceLane.RENDER,
-                                                items = 0,
-                                                normalizationUnits = DeviceStageNormalization.regionArea(pageTranslation.blocks),
-                                            )
-                                            try {
-                                                val renderLaneToken =
-                                                    TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.RENDER)
-                                                try {
-                                                    val colorEstimateStart = System.nanoTime()
-                                                    RenderColorEstimator.recomputeFor(borrowedRetried, pageTranslation.blocks)
-                                                    lastColorEstimateMs = (System.nanoTime() - colorEstimateStart) / 1_000_000.0
-                                                } finally {
-                                                    renderLaneToken?.close()
-                                                }
-                                            } catch (e: Exception) {
-                                                retryRenderSpan.end(
-                                                    if (e is CancellationException) {
-                                                        TranslationTraceOutcome.CANCELLED
-                                                    } else {
-                                                        TranslationTraceOutcome.FAILURE
-                                                    },
-                                                    error = e,
-                                                )
-                                                throw e
-                                            }
-                                            retryRenderSpan.end()
-                                            retryLayoutSpan.end()
-                                            pageTranslation.renderStatus = StageStatus.READY
-                                            pageTranslation.updatedAt = System.currentTimeMillis()
-                                        } catch (e: Exception) {
-                                            if (e is CancellationException) {
-                                                retryLayoutSpan.end(TranslationTraceOutcome.CANCELLED)
-                                                throw e
-                                            }
-                                            retryLayoutSpan.end(TranslationTraceOutcome.FAILURE)
-                                            markRenderFailure()
-                                            logcat(LogPriority.ERROR, e) {
-                                                "Failed to render text for single page (retry path) $pageKey"
-                                            }
-                                        }
-                                    }
-                                    if (!rendered) deferRenderForPermit()
-                                }
-                            } catch (e: Exception) {
-                                if (e is CancellationException) throw e
-                                markRenderFailure()
-                                logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
-                            } finally {
-                                owner.closeBorrow()
-                            }
-                        }
-                    }
+            val retryResult = retryInpaintDownscaled(
+                manga = manga,
+                chapter = chapter,
+                source = source,
+                pageKey = pageKey,
+                streams = ctx.streams,
+                decoded = ctx.decoded,
+                pageTranslation = pageTranslation,
+                owner = owner,
+                attempt = attempt,
+            )
+            val retriedCleaned = retryResult.cleanedBitmap
+            if (retriedCleaned != null) {
+                val published = if (attempt != null) {
+                    val enrolled = cleanedPublication.enrollCleanedPersistence(
+                        manga,
+                        chapter,
+                        source,
+                        pageKey,
+                        store,
+                        retryResult,
+                        owner,
+                        attempt,
+                    )
+                    if (enrolled) store.flush()
+                    if (enrolled && owner.awaitPersistence()) store.snapshot(pageKey) else null
                 } else {
-                    markRenderFailure()
-                    val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
-                    pageTranslation.errorMessage =
-                        "Inpainting unavailable ($reason) - original text would show through, so the " +
-                        "translated text was not rendered. Retry, or switch recognition mode."
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT single-page render BLOCKED for $pageKey: inpaint unavailable after retry " +
-                            "(reason=$reason). Showing original image with error instead of a half-translated overlay."
-                    }
+                    val companionDir = provider.getCompanionImageDir(
+                        manga.title,
+                        source,
+                        chapter.name,
+                        chapter.scanlator,
+                    )
+                    persistCleanedBitmap(
+                        pageTranslation,
+                        retriedCleaned,
+                        companionDir,
+                        pageKey,
+                        chapter.name,
+                        store,
+                        source.id,
+                        manga.id,
+                        chapter.id,
+                        expectedPrecondition = commitPrecondition,
+                    )
                 }
+                if (published != null) {
+                    commitPrecondition = published.toPrecondition()
+                } else {
+                    val reason = "Cleaned image could not be published; retry inpainting"
+                    pageTranslation.inpaintStatus = StageStatus.FAILED
+                    pageTranslation.inpaintError = reason
+                    pageTranslation.errorMessage = reason
+                    pageTranslation.recordAttemptFailure()
+                    translationOutcome = TranslationCompletionOutcome.Failed(
+                        anchorPageKey = pageKey,
+                        reason = reason,
+                    )
+                }
+            } else {
+                val reason = retryResult.inpaintError ?: retryResult.errorMessage ?: "inpaint unavailable"
+                val message =
+                    "Inpainting unavailable ($reason). Retry, or switch recognition mode."
+                pageTranslation.inpaintStatus = StageStatus.FAILED
+                pageTranslation.inpaintError = message
+                pageTranslation.errorMessage = message
+                pageTranslation.recordAttemptFailure()
+                translationOutcome = TranslationCompletionOutcome.Failed(
+                    anchorPageKey = pageKey,
+                    reason = message,
+                )
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT single-page inpaint retry failed for $pageKey: $reason"
+                }
+            }
             }
         }
 
@@ -918,12 +663,35 @@ internal class SinglePageHttpRenderPhase(
             TranslationTraceStage.STORE_COMMIT,
             lane = TranslationTraceLane.STORAGE,
         )
-        val commitStart = System.nanoTime()
         val commit = try {
             val result = if (attempt != null) {
-                attempt.write("commit single-page translation and render") { current ->
+                attempt.write("commit single-page translation artifacts") { current ->
                     current.apply {
-                        renderStatus = pageTranslation.renderStatus
+                        blocks = pageTranslation.blocks
+                        translationStatus = pageTranslation.translationStatus
+                        translationError = pageTranslation.translationError
+                        translationOrigin = pageTranslation.translationOrigin
+                        translationFingerprint = pageTranslation.translationFingerprint
+                        layoutFingerprint = pageTranslation.layoutFingerprint
+                        if (didRetryInpaint) {
+                            if (pageTranslation.cleanedImageName != null) {
+                                cleanedImageName = pageTranslation.cleanedImageName
+                                cleanedImageContentHash = pageTranslation.cleanedImageContentHash
+                            }
+                            if (pageTranslation.inpaintStatus != StageStatus.PENDING) {
+                                inpaintStatus = pageTranslation.inpaintStatus
+                                inpaintError = pageTranslation.inpaintError
+                            }
+                            if (pageTranslation.inpaintingModeUsed != null) {
+                                inpaintingModeUsed = pageTranslation.inpaintingModeUsed
+                            }
+                            if (pageTranslation.inpaintRevision != 0) {
+                                inpaintRevision = pageTranslation.inpaintRevision
+                            }
+                        }
+                        if (pageTranslation.originalImageFallback) {
+                            originalImageFallback = true
+                        }
                         if (pageTranslation.errorMessage != null) {
                             errorMessage = pageTranslation.errorMessage
                         }
@@ -946,17 +714,9 @@ internal class SinglePageHttpRenderPhase(
                 store.patchPage(
                     pageKey = pageKey,
                     expected = commitPrecondition,
-                    description = "commit single-page translation and render",
+                    description = "commit single-page translation artifacts",
                 ) { pageTranslation }
             }
-            val commitMs = (System.nanoTime() - commitStart) / 1_000_000.0
-            NativeVisionTelemetry.logRenderTailBreakdown(
-                pageKey = pageKey,
-                permitWaitMs = lastPermitWaitMs,
-                colorEstimateMs = lastColorEstimateMs,
-                commitMs = commitMs,
-                totalTailMs = lastPermitWaitMs + lastColorEstimateMs + commitMs,
-            )
             commitSpan.end(
                 if (result is ChapterTranslationStore.PatchResult.Rejected) {
                     TranslationTraceOutcome.FAILURE

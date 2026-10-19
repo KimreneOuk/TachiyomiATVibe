@@ -5,25 +5,15 @@ import eu.kanade.translation.engines.translator.contextual.TranslationPrompts
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.context.AnalyzerProvenance
 import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.ChapterArtifactManifest
-import eu.kanade.translation.context.ChapterTranslationProfile
 import eu.kanade.translation.persistence.CommittedBundleMetadata
 import eu.kanade.translation.persistence.DisplayBaseKind
 import eu.kanade.translation.persistence.DisplayBaseReference
-import eu.kanade.translation.context.EvidenceRef
-import eu.kanade.translation.context.EvidenceStrength
-import eu.kanade.translation.context.FactConflictState
-import eu.kanade.translation.context.FactProvenance
-import eu.kanade.translation.context.FactScope
-import eu.kanade.translation.context.FactType
 import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.PageArtifactRecord
-import eu.kanade.translation.context.ProfileFact
-import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
@@ -267,33 +257,6 @@ class RollingHistoryContextContractTest {
         prepared.selectedPairs.none { it.first == "source-0" } shouldBe true
     }
 
-    @Test
-    fun `N3 series profile registry state does not affect request history`() {
-        val fixture = fixture(
-            listOf(
-                historyPage("p0", 0, "zero", "ZERO"),
-                historyPage("current", 1, "current", "CURRENT"),
-            ),
-        )
-        val before = fixture.prepare("current", LaneCapability.MANUAL)
-
-        try {
-            SeriesProfileRegistry.register(
-                seriesKey = "series-1",
-                profile = seriesProfile(),
-                sourceLang = "ja",
-                targetLang = "en",
-                providerKey = "ai:test",
-                nowEpochMs = 10L,
-            )
-
-            fixture.prepare("current", LaneCapability.MANUAL).rollingContext shouldBe before.rollingContext
-            fixture.prepare("current", LaneCapability.MANUAL).selectedPairs shouldContainExactly before.selectedPairs
-        } finally {
-            SeriesProfileRegistry.clear()
-        }
-    }
-
     private fun fixture(
         pages: List<HistoryPage>,
         liveOverrides: Map<String, PageTranslation> = emptyMap(),
@@ -420,37 +383,6 @@ class RollingHistoryContextContractTest {
             renderStatus,
             emptyBlocks,
         )
-
-        fun seriesProfile(): ChapterTranslationProfile {
-            val fact = ProfileFact(
-                factId = "series-name",
-                type = FactType.ENTITY_IDENTITY,
-                canonicalSourceForm = "source-name",
-                canonicalTargetForm = "Target Name",
-                evidenceStrength = EvidenceStrength.EXPLICIT,
-                evidenceRefs = listOf(
-                    EvidenceRef("p0", "b0", sha256Hex("source-name")),
-                ),
-                scope = FactScope.CANONICAL_CHAPTER_WIDE,
-                provenance = FactProvenance.CHAPTER_ANALYSIS,
-                conflictState = FactConflictState.RESOLVED,
-            )
-            val draft = ChapterTranslationProfile(
-                version = 1,
-                contentFingerprint = "",
-                profileInputFingerprint = sha256Hex("profile-input"),
-                sourceRunId = "series-run",
-                analyzerProvenance = AnalyzerProvenance("provider", "model", 1, 1),
-                entities = listOf(fact),
-                frozenAtEpochMs = 1L,
-            )
-            return draft.copy(contentFingerprint = StageFingerprints.profileContentFingerprint(draft))
-        }
-
-        private fun sha256Hex(value: String): String =
-            java.security.MessageDigest.getInstance("SHA-256")
-                .digest(value.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it) }
 
         fun page(source: String, target: String, extraPairs: List<Pair<String, String>> = emptyList()): PageTranslation =
             PageTranslation(

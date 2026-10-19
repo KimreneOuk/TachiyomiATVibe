@@ -8,7 +8,6 @@ import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.FailureCategory
 import eu.kanade.translation.persistence.RunConfigSnapshot
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -20,7 +19,6 @@ internal class FinalizeWorkerContext(
     val frozenConfig: RunConfigSnapshot,
     val freshSourcePairsForPages: suspend (List<PageKey>) -> List<Pair<String, String>>?,
     val overlapScheduler: OverlapScheduler?,
-    val renderJoin: BatchRenderJoin?,
     val publishRecord: suspend (
         ChapterArtifactEngine,
         ChapterRunRecord,
@@ -33,9 +31,6 @@ internal class FinalizeWorkerContext(
         Map<String, Int>,
         String?,
     ) -> ChapterRunRecord,
-    val drainDisplayTailBeforeComplete: suspend (
-        List<String>,
-    ) -> RecoveryWorker.DisplayTailDrain,
     val t924PageTerminalAtFinalize: (PageTranslationView?, Long) -> Boolean,
     val strandedPageReason: (PageTranslationView?) -> String,
     val persistEnvelopeStructuralFailure: suspend (String, String, String) -> Unit,
@@ -50,8 +45,6 @@ internal class FinalizeWorker(
         get() = context.frozenConfig
     private val overlapScheduler: OverlapScheduler?
         get() = context.overlapScheduler
-    private val renderJoin: BatchRenderJoin?
-        get() = context.renderJoin
 
     private suspend fun publishRecord(
         artifact: ChapterArtifactEngine,
@@ -74,11 +67,6 @@ internal class FinalizeWorker(
         counters,
         ocrCorpusFingerprint,
     )
-
-    private suspend fun drainDisplayTailBeforeComplete(
-        orderedPageKeys: List<String>,
-    ): RecoveryWorker.DisplayTailDrain =
-        context.drainDisplayTailBeforeComplete(orderedPageKeys)
 
     private fun t924PageTerminalAtFinalize(
         page: PageTranslationView?,
@@ -151,15 +139,9 @@ internal class FinalizeWorker(
      *  2. Serial inpaint drain through the overlap scheduler — pages whose
      *     inpaint already committed are skipped by the scheduler's candidate
      *     rule (never re-inpainted); with no scheduler this is a no-op.
-     *  2b.  display-tail drain: pages whose translate+inpaint work is
-     *     done but whose committed display (render-terminal stamp →
-     *     promotion) never landed are drained to completion here, bounded;
-     *     a page the drain cannot finish takes a SPECIFIC typed terminal and
-     *     the run still completes (as a warning).
-     *  3. Persisted-layout publication sweep (idempotent per page).
-     *  4. Stranded-page reconciliation (safe re-run: terminal pages skip).
-     *  5. NonCancellable flush + retention reconciliation.
-     *  6. The run's FIRST and ONLY `COMPLETE` publication.
+     *  3. Stranded-page reconciliation (safe re-run: terminal pages skip).
+     *  4. NonCancellable flush + retention reconciliation.
+     *  5. The run's FIRST and ONLY `COMPLETE` publication.
      */
 
     suspend fun drainPhase(
@@ -192,39 +174,10 @@ internal class FinalizeWorker(
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).
         overlapScheduler?.drainSerial()
 
-        // 2b.  display-tail drain: COMPLETE means "every page readable",
-        //     not "every ingredient done". The inpaint lane's render-terminal
-        //     stamp only fires when the page's translation was ALREADY
-        //     terminal at inpaint time, so order-inverted pages (inpaint
-        //     committed before the envelope translation — the decoupled
-        //     candidacy norm) stay render-PENDING with ALL work done and are
-        //     invisible to the stranded sweep below (translation READY is
-        //     terminal there). Drain that tail to completion here — bounded
-        //     passes, each a fresh snapshot so a stale-write rejection
-        //     retries — and give a page the drain genuinely cannot finish a
-        //     SPECIFIC typed terminal instead of publishing COMPLETE over a
-        //     silently frozen ORIGINAL_ONLY page.
-        val displayTail = drainDisplayTailBeforeComplete(orderedPages.map { it.first })
-
-        // 3. Persisted-layout publication sweep for any page the per-page
-        //    hook missed (idempotent — pages with a published plan skip).
-        var layoutsPublished = 0
-        val renderJoin = context.renderJoin
-        if (renderJoin != null) {
-            for ((pageKey, _) in orderedPages) {
-                if (renderJoin.publishPersistedLayoutForCompletedPage(pageKey)) {
-                    layoutsPublished++
-                }
-            }
-        }
-
-        // 4. Stranded-page reconciliation: pages that are not durably
+        // 3. Stranded-page reconciliation: pages that are not durably
         //    terminal get a durable failure + a reported reason. The
-        //    terminal predicate is NOT the legacy reconciler's one: the legacy
-        //    schedule renders + promotes display in-pass (hasRenderedResult),
-        //    while the flagged pipeline's committed-translation state is
-        //    terminal WITHOUT an in-pass render — reusing the legacy
-        //    definition here would mark every healthy page stranded.
+        //    terminal predicate follows committed translation and textless
+        //    state; it does not depend on a producer render pass.
         val stateNow = store.state.value
         var strandedReconciled = 0
         for (pageKey in orderedPages.map { it.first }) {
@@ -246,7 +199,7 @@ internal class FinalizeWorker(
             strandedReconciled++
         }
 
-        // 5. Durable teardown: NonCancellable flush + retention reconciliation
+        // 4. Durable teardown: NonCancellable flush + retention reconciliation
         //    (the BatchChapterTranslator :781-794 idiom). The sweep itself runs
         //    fire-and-forget: its crawl is minutes of SAF round-trips and must
         //    neither delay run closure nor hold the store mutex (2026-09-15
@@ -294,10 +247,7 @@ internal class FinalizeWorker(
                 mapOf(
                     ChapterProfileBatchCoordinator.COUNTER_FINALIZE to 1,
                     ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE to 1,
-                    ChapterProfileBatchCoordinator.COUNTER_LAYOUTS_PUBLISHED to layoutsPublished,
                     ChapterProfileBatchCoordinator.COUNTER_STRANDED_RECONCILED to strandedReconciled,
-                    ChapterProfileBatchCoordinator.COUNTER_DISPLAY_TAIL_DRAINED to displayTail.drained,
-                    ChapterProfileBatchCoordinator.COUNTER_DISPLAY_TAIL_FAILED to displayTail.failed.size,
                     ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_RETRYABLE to protocolParkedRetryable,
                     ChapterProfileBatchCoordinator.COUNTER_PROTOCOL_PARKED_TERMINAL to protocolParkedTerminal,
                 ),
@@ -314,8 +264,6 @@ internal class FinalizeWorker(
             is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
-                        "layouts=$layoutsPublished displayTailDrained=${displayTail.drained} " +
-                        "displayTailFailed=${displayTail.failed.size} " +
                         "protocolParkedRetryable=$protocolParkedRetryable " +
                         "protocolParkedTerminal=$protocolParkedTerminal " +
                         "overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
@@ -357,9 +305,7 @@ internal class FinalizeWorker(
      * advances, paused work records a pause, failures remain failures, and a
      * rejected persistence write records PERSISTENCE_REJECTED. When the loop
      * drains, [runFinalizeAndComplete] performs the serial inpaint drain,
-     * layout sweep, stranded-page reconciliation, and one COMPLETE
-     * publication. Completion is translation-terminal without an in-pass
-     * render; display uses the live overlay and candidate snapshots, and
-     * renderStatus remains PENDING.
+     * stranded-page reconciliation, and one COMPLETE publication. The
+     * reader plans and draws overlays on demand from committed artifacts.
      */
 }

@@ -847,36 +847,6 @@ internal class BatchLaneWorkers(
                         stage = BatchDiagnosticStage.INPAINT,
                     )
                 }
-                //  no-render batch design: the batch never runs an in-pass
-                // render stage — the reader draws the text overlay on demand
-                // from the committed blocks. A page that just reached
-                // inpaint-terminal with translated blocks is therefore
-                // display-complete as-is, but the durable record kept
-                // Persist render terminality so the store commits the page snapshot
-                // and updates displayImageName. Without that projection, the reader
-                // keeps showing the source image until its stranded-page sweep runs.
-                if (target.translationStatus == StageStatus.READY ||
-                    target.translationStatus == StageStatus.PARTIAL
-                ) {
-                    val stamp = guardedBatchUpdate(pageKey, "batch render terminal stamp", BatchStage.LAYOUT) { current ->
-                        (current ?: target).apply {
-                            if (renderStatus == StageStatus.PENDING && isCleanedImageReady) {
-                                renderStatus = StageStatus.READY
-                                updatedAt = System.currentTimeMillis()
-                            }
-                        }
-                    }
-                    if (stamp is ChapterTranslationStore.PatchResult.Rejected) {
-                        // Non-fatal: the page stays translation/inpaint-terminal
-                        // and a later run's adoption stamp (E2) retries it.
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT batch render terminal stamp rejected: " +
-                                "pageKey=$pageKey reason=${stamp.reason}"
-                        }
-                    } else {
-                        tracker?.markRenderDone(pageKey)
-                    }
-                }
             } else {
                 val terminal = guardedBatchUpdate(pageKey, "batch inpaint terminal state", BatchStage.INPAINT) {
                     (it ?: target).apply {
@@ -895,6 +865,7 @@ internal class BatchLaneWorkers(
             }
             heldBitmapRegistry.holdCleaned(pageKey, target.cleanedBitmap)
             target.cleanedBitmap = null
+            tryRender(pageKey)
         }
 
         override fun releaseNativeHandoff(ref: OcrReadyPageRef) {

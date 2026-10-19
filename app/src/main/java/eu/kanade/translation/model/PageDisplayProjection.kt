@@ -86,7 +86,6 @@ private fun PageTranslationView.singlePageProjection(): PageDisplayProjection {
 private fun PageTranslationView.isTranslationDisplayShapeReady(): Boolean =
     (isCleanedImageReady || originalImageFallback) &&
         (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
-        renderStatus == StageStatus.READY &&
         blocks.any { it.translation.isNotBlank() }
 
 private fun PageTranslationView.differsFromCommitted(committed: PageTranslationView): Boolean =

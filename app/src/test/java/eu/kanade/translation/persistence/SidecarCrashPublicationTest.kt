@@ -1,13 +1,9 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.context.*
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.TranslationProvenancePage
 import eu.kanade.translation.model.OcrBlockContent
 import eu.kanade.translation.model.EnvelopePlanInputPage
-
-import eu.kanade.translation.context.ChapterTranslationProfile
-import eu.kanade.translation.context.AnalyzerProvenance
 
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -48,20 +44,6 @@ class SidecarCrashPublicationTest {
         envelopePolicyFingerprint = hex64,
         createdAtEpochMs = 1757050000000L,
         updatedAtEpochMs = 1757050000000L,
-    )
-
-    private fun profile() = ChapterTranslationProfile(
-        version = 1,
-        contentFingerprint = hex64,
-        profileInputFingerprint = hex64,
-        sourceRunId = "run-1757050000000-a1b2c3d4",
-        analyzerProvenance = AnalyzerProvenance(
-            providerId = "gemini",
-            modelId = "gemini-2.5",
-            promptVersion = 3,
-            analysisSchemaVersion = 1,
-        ),
-        frozenAtEpochMs = 1757050800000L,
     )
 
     /** A minimal durable artifact-authoritative manifest to transact against. */
@@ -176,7 +158,7 @@ class SidecarCrashPublicationTest {
                 docs.publishJson(runName, record)
             },
             ChapterArtifactEngine.SidecarPublication(profileName, hex64) {
-                docs.publishJson(profileName, profile())
+                docs.publishJson(profileName, record)
             },
         )
         fun installPointers(manifest: ChapterArtifactManifest) = manifest.copy(

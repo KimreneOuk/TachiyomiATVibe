@@ -178,7 +178,6 @@ val PageTranslationView.isTextlessTerminal: Boolean
     get() = ocrStatus == StageStatus.READY &&
         blocks.isEmpty() &&
         translationStatus == StageStatus.SKIPPED &&
-        renderStatus == StageStatus.SKIPPED &&
         (inpaintStatus == StageStatus.SKIPPED || inpaintStatus == StageStatus.READY)
 
 val PageTranslationView.hasRecognizedTranslation: Boolean

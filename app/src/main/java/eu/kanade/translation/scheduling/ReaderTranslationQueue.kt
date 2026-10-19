@@ -165,6 +165,9 @@ class ReaderTranslationQueue(
         val retainedDeadline: Long? = null,
     )
 
+    /** A drain request over a captured binding set; completed when none are live. */
+    private class RegistryDrain(val bindings: Set<Binding>, val completion: CompletableDeferred<Unit>)
+
     private class OperationTrace(val schedule: TranslationScheduleTrace, val run: TranslationRunTrace) {
         fun end(outcome: TranslationTraceOutcome) {
             run.end(outcome)
@@ -182,6 +185,7 @@ class ReaderTranslationQueue(
     private val liveWorkers = LinkedHashMap<Job, Demand>()
     private val terminals = LinkedHashMap<String, SinglePageOutcome>()
     private var drainSignal: CompletableDeferred<Unit>? = null
+    private val registryDrains = mutableListOf<RegistryDrain>()
     private val localPermit = Semaphore(1)
     private val staleOutcomes = MutableStateFlow<Map<String, SinglePageOutcome>>(emptyMap()).asStateFlow()
 
@@ -471,6 +475,68 @@ class ReaderTranslationQueue(
         cancelOutside(cancellations)
     }
 
+    /**
+     * Cancels and drains every live worker in the physical registry, regardless
+     * of scheduler session metadata. Reader-stop paths need this because the
+     * scheduler's token list may already be empty (invalidated or rebound
+     * sessions) while retained workers are still live.
+     */
+    suspend fun drainAllRetained(): ReaderDrainResult = drainMatchingBindings { true }
+
+    /**
+     * Session-level chapter stop: cancels and drains workers of [chapterId]'s
+     * retired or invalidated bindings while preserving that chapter's current
+     * live binding (still bound and accepting). Bindings of other chapters
+     * never match.
+     */
+    suspend fun drainRetiredForChapter(chapterId: Long): ReaderDrainResult =
+        drainMatchingBindings { it.chapter.id == chapterId && !(it === bound && it.accepting) }
+
+    /**
+     * Destructive chapter stop (store reset/rekey): cancels and drains ALL
+     * workers bound to [chapterId], including a current same-chapter binding —
+     * its writes cannot survive the destructive action. Bindings of other
+     * chapters never match.
+     */
+    suspend fun drainAllForChapter(chapterId: Long): ReaderDrainResult =
+        drainMatchingBindings { it.chapter.id == chapterId }
+
+    /**
+     * Registry-scoped drain engine: cancels matching demands (paid workers
+     * retained under their grace), then awaits physical exit of exactly the
+     * matched bindings via a request completed in [releaseWorker] — the
+     * per-binding counterpart of the all-or-nothing [drainSignal].
+     */
+    private suspend fun drainMatchingBindings(matches: (Binding) -> Boolean): ReaderDrainResult {
+        val now = nowEpochMs()
+        val cancellations: List<StopAction>
+        val drain: RegistryDrain?
+        synchronized(control) {
+            val candidateBindings = (pending.values + liveWorkers.values).map { it.binding }.toMutableSet()
+            bound?.let { candidateBindings += it }
+            val bindings = candidateBindings.filter(matches).toSet()
+            bindings.forEach { it.accepting = false }
+            cancellations = if (bindings.isEmpty()) {
+                emptyList()
+            } else {
+                cancelLocked(preservePaid = true, now = now) { it.binding in bindings }
+            }
+            drain = if (liveWorkers.values.any { it.binding in bindings }) {
+                RegistryDrain(bindings, CompletableDeferred()).also { registryDrains += it }
+            } else {
+                null
+            }
+        }
+        cancelOutside(cancellations)
+        if (drain == null) return ReaderDrainResult.Completed
+        withTimeoutOrNull(cancellationWaitMs) { drain.completion.await() }
+        return if (drain.completion.isCompleted) {
+            ReaderDrainResult.Completed
+        } else {
+            ReaderDrainResult.PendingNativeDrain(drain.completion)
+        }
+    }
+
     suspend fun closeAndDrain(): ReaderDrainResult {
         val now = nowEpochMs()
         val cancellations = synchronized(control) {
@@ -627,7 +693,9 @@ class ReaderTranslationQueue(
     }
 
     private fun releaseWorker(job: Job, demand: Demand) {
-        val drained = synchronized(control) {
+        val drained: Pair<CompletableDeferred<Unit>?, List<RegistryDrain>>
+        val timer: Job?
+        synchronized(control) {
             liveWorkers.remove(job)
             if (demand.job === job) demand.job = null
             if (job.isCancelled && (demand.state == State.QUEUED || demand.state == State.RUNNING)) {
@@ -646,11 +714,15 @@ class ReaderTranslationQueue(
                 }
             }
             if (demand.state == State.DONE || demand.state == State.CANCELLED) demand.paidCall?.recordPhysicalExit()
-            val timer = demand.drainTimer
+            timer = demand.drainTimer
             demand.drainTimer = null
-            (if (liveWorkers.isEmpty()) drainSignal else null) to timer
+            val satisfied = registryDrains.filter { request ->
+                liveWorkers.values.none { it.binding in request.bindings }
+            }
+            registryDrains.removeAll(satisfied)
+            drained = (if (liveWorkers.isEmpty()) drainSignal else null) to satisfied
         }
-        drained.second?.cancel()
+        timer?.cancel()
         val terminal = synchronized(control) {
             when {
                 job.isCancelled -> TranslationTraceOutcome.CANCELLED
@@ -661,6 +733,7 @@ class ReaderTranslationQueue(
         }
         terminal?.let { demand.trace.end(it) }
         drained.first?.complete(Unit)
+        drained.second.forEach { it.completion.complete(Unit) }
         pump()
     }
 

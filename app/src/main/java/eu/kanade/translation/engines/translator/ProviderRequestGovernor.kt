@@ -837,8 +837,7 @@ object SharedProviderRequestGovernor {
 
 /**
  * The Batch aggregate sub-limit allows one request per credential, shared by
- * all Batch traffic (analysis chunks and translation envelopes) — never two
- * separate pools. A measured constant,
+ * all Batch traffic — never separate pools. A measured constant,
  * not a flag; Manual/Auto/reader INTERACTIVE requests never enter this bucket.
  *
  * Mechanism (DR-D, accepted recommendation): a SECOND rolling-window

@@ -15,9 +15,6 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.engines.rendering.BlockLayout
 import eu.kanade.translation.engines.rendering.ComponentClipCache
-import eu.kanade.translation.engines.rendering.DrawPlanFingerprint
-import eu.kanade.translation.engines.rendering.PersistedLayoutReaderBridge
-import eu.kanade.translation.engines.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.engines.rendering.ReaderTextLayoutCache
 import eu.kanade.translation.engines.rendering.TextAlign
 import eu.kanade.translation.engines.rendering.TextLayoutBindResult
@@ -71,23 +68,6 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         }
     }
 
-    //  WP9 (wave-2 review gap 6): production font digest — read the exact
-    // bundled font bytes ONCE at this Android entry point and pin their
-    // SHA-256 process-wide, so the Batch-side LAYOUT_PREPARE publisher and
-    // every reader-side hydration verify the same font identity
-    // (PersistedLayoutRuntime.productionFontSha256). Installing the loader is
-    // idempotent; the digest itself is computed lazily once and cached.
-    init {
-        if (!PersistedLayoutRuntime.fontSourceInstalled) {
-            PersistedLayoutRuntime.fontSha256Loader = {
-                DrawPlanFingerprint.fontAssetSha256(
-                    context.resources.openRawResource(R.font.animeace).use { it.readBytes() },
-                )
-            }
-            PersistedLayoutRuntime.fontSourceInstalled = true
-        }
-    }
-
     //  3.1: bind identity + background planning. bind() never runs the
     // planner synchronously on the calling thread; identical rebinds stay the
     // cheap early-return and cache hits apply prepared layouts synchronously with zero planner
@@ -101,17 +81,6 @@ internal class TranslationOverlayView @JvmOverloads constructor(
             buildPreparedLayouts(layouts, width, height)
         },
         onPrepared = ::applyPreparedLayouts,
-        //  WP9: consult the persisted-layout hydration
-        // source BEFORE the async planner. Null (feature flag off, no source
-        // installed, missing/corrupt/incompatible/lossy plan) falls back to
-        // the planner above — the fallback is mandatory.
-        // Stage 7: the pageKeyed chapter source is consulted first; a
-        // null page key (legacy bind path,  OFF, no installation) keeps
-        // the byte-identical legacy behavior.
-        hydrate = { blocks, width, height ->
-            val hydrated = PersistedLayoutReaderBridge.hydrate(boundPageKey, blocks, width, height)
-            hydrated?.let { buildPreparedLayouts(it, width, height) }
-        },
     )
 
     private fun applyPreparedLayouts(prepared: List<PreparedOverlayLayout>) {
@@ -124,12 +93,6 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private var pageWidth = 0
     private var pageHeight = 0
 
-    //  Stage 7: the translation page key of the current binding, set
-    // by the pageKeyed [bind] overload. The background hydrate lambda reads it
-    // to resolve the chapter's persisted plan. Null (legacy 4-arg bind path)
-    // keeps the byte-identical planner-only behavior.
-    @Volatile
-    private var boundPageKey: String? = null
     private var preparedLayouts = emptyList<PreparedOverlayLayout>()
     private var framePending = false
     private val frameCallback = Choreographer.FrameCallback {
@@ -148,29 +111,17 @@ internal class TranslationOverlayView @JvmOverloads constructor(
      * always dropped immediately so foreign text can never appear over a page
      * while its own layout is in flight.
      */
-    fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlockView>, pageWidth: Int, pageHeight: Int) {
-        bind(imageView, blocks, pageWidth, pageHeight, pageKey = null)
-    }
-
-    /**
-     *  Stage 7: pageKeyed bind — enables the persisted-layout
-     * hydration consult for this binding ([PersistedLayoutReaderBridge]
-     * chapter source,  at the install site). A null [pageKey]
-     * behaves exactly like the legacy bind.
-     */
     fun bind(
         imageView: SubsamplingScaleImageView?,
         blocks: List<TranslationBlockView>,
         pageWidth: Int,
         pageHeight: Int,
-        pageKey: String?,
     ) {
         val imageViewChanged = this.imageView !== imageView
         this.imageView = imageView
         this.blocks = blocks
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        this.boundPageKey = pageKey?.takeIf { it.isNotEmpty() && blocks.isNotEmpty() }
         when (val result = layoutCoordinator.bind(blocks, pageWidth, pageHeight)) {
             is TextLayoutBindResult.Ready -> {
                 preparedLayouts = result.prepared

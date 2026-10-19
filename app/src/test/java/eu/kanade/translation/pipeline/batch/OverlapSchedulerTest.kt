@@ -441,31 +441,6 @@ class OverlapSchedulerTest {
         scheduler.counters.snapshot()["overlapWindowsCount"] shouldBe 0L
     }
 
-    @Test
-    fun `inpaint commit hook fires per committed page (stage-7 publication seam)`() = runTest {
-        val store = lazyStore()
-        val pageKeys = listOf("p1", "p2")
-        store.preRegisterPages(pageKeys)
-        pageKeys.forEach { seedTranslatedPage(store, it) }
-        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
-        val lane = FakeInpaintLane(store, identities)
-        val scheduler = scheduler(store, lane, pageKeys, identities)
-        val committedHooks = mutableListOf<String>()
-        scheduler.onInpaintCommitted = { pageKey ->
-            committedHooks += pageKey
-        }
-
-        val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
-        scheduler.onRemoteWindowOpened()
-        testScheduler.advanceUntilIdle()
-        scheduler.onRemoteWindowClosed()
-        scheduler.stopOverlap()
-        loopJob.cancel()
-
-        committedHooks.size shouldBe 2
-        committedHooks.toSet() shouldBe pageKeys.toSet()
-    }
-
     // ------------------------------------------------------------------
     //  coexistence: contention with a live concurrent writer (the
     // reader's translate-on-view lane) must YIELD the page, never retry it
@@ -814,99 +789,6 @@ class OverlapSchedulerTest {
             promoted.toPageDisplayProjection().displayReady shouldBe true
             promoted.translationStatus shouldBe StageStatus.READY
             promoted.cleanedImageName shouldBe "cleaned-p1.jpg"
-    }
-
-    /**
-     * Commits a READY translation (plus optional cleaned image name and
-     * non-blank block translations) through the SAME guarded lease idiom the
-     * translation lane's final commit uses.
-     */
-    private suspend fun commitTranslation(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        cleanedName: String?,
-    ) {
-        val tLease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
-            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
-        val mid = store.snapshot(pageKey)
-        store.updatePageGuarded(
-            pageKey = pageKey,
-            expected = ChapterTranslationStore.PatchPrecondition(
-                generation = mid.generation,
-                pageVersion = mid.pageVersion,
-                leaseToken = tLease.token,
-            ),
-            description = "t934 render sweep test translation ready",
-        ) { page ->
-            page!!.apply {
-                translationStatus = StageStatus.READY
-                if (cleanedName != null) {
-                    cleanedImageName = cleanedName
-                }
-                blocks.forEach { block -> block.translation = "translated-${block.blockId}" }
-            }
-        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
-        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
-    }
-
-    @Test
-    fun `serial drain stamps order-inverted display-complete pages render-terminal`() = runTest {
-        //  round 3: the decoupled window inpaints p1/p2 while BOTH
-        // translations are still PENDING (the order inversion the relaxed
-        // candidacy creates). The inpaint lane's own render stamp is gated
-        // on the translation being already terminal, so no stamp lands
-        // here. The drain's adoption sweep must stamp exactly the page that
-        // later carries the full display evidence (p1: cleaned image +
-        // translated block), and skip the one missing it (p2: no cleaned
-        // image) — the drain-side twin of the coordinator's E2 stamp.
-        val store = lazyStore()
-            val pageKeys = listOf("p1", "p2")
-            store.preRegisterPages(pageKeys)
-            pageKeys.forEach { seedOcrOnlyPage(store, it) }
-            val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
-            val lane = FakeInpaintLane(store, identities)
-            val scheduler = scheduler(store, lane, pageKeys, identities)
-
-            // The window inpaints both pages while their translations are
-            // PENDING — the order inversion.
-            val loopJob = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { scheduler.runOverlapLoop() }
-            scheduler.onRemoteWindowOpened()
-            testScheduler.advanceUntilIdle()
-            scheduler.onRemoteWindowClosed()
-            scheduler.stopOverlap()
-            loopJob.cancel()
-
-            lane.inpainted shouldBe pageKeys
-            pageKeys.forEach { key ->
-                val page = store.snapshot(key).page!!
-                page.inpaintStatus shouldBe StageStatus.READY
-                page.translationStatus shouldBe StageStatus.PENDING
-                page.renderStatus shouldBe StageStatus.PENDING
-            }
-
-            // The translations commit later (next window of the pass, or a
-            // restart). p1 gets the full display shape; p2 has no cleaned
-            // image persisted.
-            File(mangaDir, "Chapter 1_images").mkdirs()
-            File(mangaDir, "Chapter 1_images/cleaned-p1.jpg").writeBytes(byteArrayOf(1))
-            commitTranslation(store, "p1", cleanedName = "cleaned-p1.jpg")
-            commitTranslation(store, "p2", cleanedName = null)
-
-            // The drain finds no inpaint work (both artifacts durable) but
-            // settles the inverted page's render terminality.
-            scheduler.drainSerial()
-
-            val stamped = store.snapshot("p1").page!!
-            stamped.renderStatus shouldBe StageStatus.READY
-            stamped.translationStatus shouldBe StageStatus.READY
-            stamped.inpaintStatus shouldBe StageStatus.READY
-            // The stamp fires the committed-display promotion (the reader gate).
-            store.resolveDisplayPage("p1")!!.toPageDisplayProjection().displayReady shouldBe true
-            // Missing display evidence is NOT stamped.
-            store.snapshot("p2").page!!.renderStatus shouldBe StageStatus.PENDING
-            //  teardown discipline: the sweep's Render lease is released.
-            store.snapshot("p1").leaseToken shouldBe null
-            store.snapshot("p2").leaseToken shouldBe null
     }
 
     // ------------------------------------------------------------------

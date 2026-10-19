@@ -13,6 +13,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
@@ -476,7 +477,7 @@ class P5HonestOutcomeTypingTest {
     // helpers
     // ------------------------------------------------------------------
 
-    private fun PageTranslationView.hasRenderedResult(): Boolean = renderStatus == StageStatus.READY
+    private fun PageTranslationView.hasRenderedResult(): Boolean = renderStatus == StageStatus.READY || isTranslationDisplayReady
 
     // Phase 4 S5 r1: outcomes moved to the queue at the S2 cutover; read them
     // through the live facade instead of the retired reflective map seam.

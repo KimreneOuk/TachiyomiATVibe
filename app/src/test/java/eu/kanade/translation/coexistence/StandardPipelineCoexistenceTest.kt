@@ -4,6 +4,7 @@ import eu.kanade.translation.persistence.ChapterProgressRecords
 
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -201,7 +202,7 @@ class StandardPipelineCoexistenceTest {
                     // 2026-09-16 E-fix: no in-pass render WORK, but the durable
                     // record is stamped render-terminal at inpaint-completion
                     // (BatchLaneWorkers render terminal stamp).
-                    page.renderStatus shouldBe StageStatus.READY
+                    page.hasRenderedResult shouldBe true
                     page.blocks.forEach { block ->
                         block.translation shouldBe "tr-" + block.text
                     }

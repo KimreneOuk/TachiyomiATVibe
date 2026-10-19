@@ -3,8 +3,6 @@ package eu.kanade.translation.pipeline.batch
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
-import eu.kanade.translation.engines.translator.analysis.AnalysisEngineTransport
-import eu.kanade.translation.engines.translator.contextual.AnalysisChunkPolicy
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPolicy
@@ -139,24 +137,6 @@ class EightKilobyteComplianceTest {
         val totalBudget = policy.maxEstimatedInputTokens + policy.maxEstimatedOutputTokens + 512
         totalBudget shouldBe 8_192
         (totalBudget <= 8_192) shouldBe true
-    }
-
-    @Test
-    fun `analysis chunks comply with 8k`() {
-        val policy = AnalysisChunkPolicy()
-        policy.maxEstimatedInputTokens shouldBe 4_096
-        AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 512
-        ChapterProfileBatchCoordinator.ANALYSIS_MAX_OUTPUT_TOKENS shouldBe 512
-
-        // The per-page estimates exclude the chunk-level fixed framing
-        // (system+user prompts + envelope scaffolding, ~400 tokens); the
-        // input cap reserves that framing room, and the free-form summary
-        // output budget is small by design, so the pinned arithmetic sums
-        // well under the window.
-        val totalAnalysisBudget = policy.maxEstimatedInputTokens +
-            AnalysisEngineTransport.ANALYSIS_MAX_OUTPUT_TOKENS + 512
-        totalAnalysisBudget shouldBe 5_120
-        (totalAnalysisBudget <= 8_192) shouldBe true
     }
 
     @Test

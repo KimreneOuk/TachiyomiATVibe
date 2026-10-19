@@ -14,6 +14,7 @@ import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.immutableCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterArtifactLayout
@@ -141,8 +142,10 @@ class SinglePageOverlapBoundaryTest {
             barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)
             barrier.disarm(CoexistenceBarrier.BarrierPoint.PROVIDER_START)
             pipelineJob.await() shouldBe SinglePageOutcome.Completed
-            renderEntered.isCompleted shouldBe true
-            harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+            val finalPage = harness.store.state.value.getValue("p0")
+            finalPage.isTranslationDisplayReady shouldBe true
+            finalPage.translationStatus shouldBe StageStatus.READY
+            finalPage.inpaintStatus shouldBe StageStatus.READY
             harness.fakeTransport.callsFor("p0") shouldBe 1
         } finally {
             barrier.disarm(CoexistenceBarrier.BarrierPoint.INPAINT)

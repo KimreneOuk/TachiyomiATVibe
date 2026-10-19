@@ -13,19 +13,9 @@ import eu.kanade.translation.engines.translator.ProviderFailureException
 import eu.kanade.translation.engines.translator.ProviderFailureKind
 import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunOutcome
-import eu.kanade.translation.engines.translator.analysis.AnalysisChunkRunner
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverage
-import eu.kanade.translation.engines.translator.analysis.AnalysisCoverageKind
-import eu.kanade.translation.engines.translator.analysis.AnalysisEvidenceTexts
-import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator
-import eu.kanade.translation.engines.translator.analysis.AnalysisRunIdentity
-import eu.kanade.translation.engines.translator.analysis.ValidatedEntity
-import eu.kanade.translation.engines.translator.analysis.ValidatedTerm
 import eu.kanade.translation.engines.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.engines.translator.contextual.ContextualTranslationResult
-import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.engines.translator.providers.AiTranslator
@@ -37,7 +27,6 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.context.AnalyzerProvenance
 import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ArtifactStageStatus
 import eu.kanade.translation.persistence.AtomicChapterDocuments
@@ -45,7 +34,6 @@ import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.EnvelopePolicySnapshot
-import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.FailureCategory
 import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.ChapterTranslationStore
@@ -182,7 +170,6 @@ class ProfileEnvelopeDispatchTest {
         store: ChapterTranslationStore,
         worker: NativeLaneWorker,
         pages: List<PageKey>,
-        runner: AnalysisChunkRunner,
         translator: FakeTranslator?,
         maxPagesPerEnvelope: Int = 8,
         gate: BatchRequestSublimitGate = BatchRequestSublimitGate(),
@@ -205,7 +192,6 @@ class ProfileEnvelopeDispatchTest {
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
         freshSourceShaByPageKey = freshSourceShaByPageKey,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        analysisChunkRunner = runner,
         textTranslator = translator,
         translationSublimitGate = gate,
         expectedBatchFingerprints = BatchExpectedFingerprints(
@@ -256,38 +242,6 @@ class ProfileEnvelopeDispatchTest {
     }
 
     /** Typed fake analyzer: one entity + one term per chunk, COMPLETE. */
-    private inner class FakeAnalyzer : AnalysisChunkRunner {
-        val executedOrdinals = mutableListOf<Int>()
-
-        override suspend fun executeChunk(
-            chunk: PlannedAnalysisChunk,
-            identity: AnalysisRunIdentity,
-            evidence: AnalysisEvidenceTexts,
-        ): AnalysisChunkRunOutcome {
-            executedOrdinals += chunk.chunkOrdinal
-            val firstStoragePage = chunk.contributingPageKeys.first()
-            val wirePage = evidence.wirePageKeyByStorageKey[firstStoragePage].shouldNotBeNull()
-            val wireBlock = evidence.blockIdsByPage[wirePage].shouldNotBeNull().first()
-            val sourceText = evidence.textByBlockId[wireBlock].shouldNotBeNull()
-            val response = AnalysisResponseValidator.ValidatedAnalysisResponse(
-                chunkId = chunk.chunkId,
-                terms = listOf(ValidatedTerm("t001", "剣", "sword", emptyList(), "TERM")),
-                entities = listOf(
-                    ValidatedEntity("e001", listOf("カイル"), "カイル", "Kail", emptyList(), emptyList()),
-                ),
-                scenes = emptyList(),
-                narrativeSummary = "An opening journey.",
-                conflictNotes = emptyList(),
-                evidenceRefs = listOf(EvidenceRef(wirePage, wireBlock, hex64(sourceText))),
-            )
-            return AnalysisChunkRunOutcome.Completed(
-                response = response,
-                coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
-                droppedAuthorityKeys = emptyList(),
-                provenance = AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
-            )
-        }
-    }
 
     /**
      * The typed AI translator fake: rides the REAL adaptive retry controller
@@ -409,7 +363,7 @@ class ProfileEnvelopeDispatchTest {
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
-        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         outcome.status shouldBe BatchPass1Status.COMPLETED
@@ -419,24 +373,22 @@ class ProfileEnvelopeDispatchTest {
     }
 
     @Test
-    fun `N2 normal AI batch makes zero analysis transport calls`() = runTest {
+    fun `N2 normal AI batch dispatches one translation envelope`() = runTest {
         val store = lazyStore()
         val pageKeys = listOf("p1")
         store.preRegisterPages(pageKeys)
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val analysis = FakeAnalyzer()
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
         val outcome = coordinator(
             store,
             FakePreflightOcrWorker(store),
             pages,
-            analysis,
             translator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         outcome.status shouldBe BatchPass1Status.COMPLETED
-        analysis.executedOrdinals shouldBe emptyList()
+        translator.requests.size shouldBe 1
     }
 
     @Test
@@ -462,7 +414,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 1,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -488,7 +439,7 @@ class ProfileEnvelopeDispatchTest {
         val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
         val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
-        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // The drained run completes after finalization under the current
@@ -540,7 +491,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             firstWorker,
             pages,
-            FakeAnalyzer(),
             firstTranslator,
             freshSourceShaByPageKey = { originalSha },
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -556,7 +506,6 @@ class ProfileEnvelopeDispatchTest {
             resumedStore,
             resumedWorker,
             pages,
-            FakeAnalyzer(),
             changedTranslator,
             freshSourceShaByPageKey = { changedSha },
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -589,7 +538,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -629,7 +577,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -655,26 +602,22 @@ class ProfileEnvelopeDispatchTest {
         // First run freezes (no translator: typed CONFIGURATION pause), then
         // the user translates every block manually, then a FRESH run
         // (process-death shape) sees zero translatable work.
-        coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), null)
+        coordinator(store, FakePreflightOcrWorker(store), pages, null)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
         pageKeys.forEach { key -> userEdit(store, key) }
 
         val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
-        val resumedAnalyzer = FakeAnalyzer()
         val outcome = coordinator(
             resumedStore,
             resumedWorker,
             pages,
-            resumedAnalyzer,
             translator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         //  skip rule: no translatable work never reaches TRANSLATE —
-        // typed PAUSED no-work terminal with ZERO provider calls and zero
-        // re-OCR / re-analysis.
+        // typed PAUSED no-work terminal with ZERO provider calls and no re-OCR.
         resumedWorker.ocrPages shouldBe emptyList()
-        resumedAnalyzer.executedOrdinals shouldBe emptyList()
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.ENVELOPE_NO_WORK_REASON
         translator.requests.size shouldBe 0
@@ -702,7 +645,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -754,7 +696,6 @@ class ProfileEnvelopeDispatchTest {
             initialStore,
             FakePreflightOcrWorker(initialStore),
             pages,
-            FakeAnalyzer(),
             firstTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -774,7 +715,6 @@ class ProfileEnvelopeDispatchTest {
             resumedStore,
             FakePreflightOcrWorker(resumedStore),
             pages,
-            FakeAnalyzer(),
             secondTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -802,7 +742,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             firstTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -843,7 +782,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             resumedTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -866,7 +804,7 @@ class ProfileEnvelopeDispatchTest {
             responseFor(chunk, omit = setOf("p2_b1"))
         }
 
-        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // NOT a batch pause: the two fully covered pages committed, the
@@ -910,7 +848,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 3,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -938,7 +875,7 @@ class ProfileEnvelopeDispatchTest {
         val firstTranslator = FakeTranslator { _, chunk ->
             responseFor(chunk, omit = setOf("p2_b1"))
         }
-        coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), firstTranslator)
+        coordinator(store, FakePreflightOcrWorker(store), pages, firstTranslator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
         store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.FAILED
 
@@ -951,7 +888,6 @@ class ProfileEnvelopeDispatchTest {
             resumedStore,
             resumedWorker,
             pages,
-            FakeAnalyzer(),
             secondTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -996,7 +932,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -1032,7 +967,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             failingTranslator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -1060,7 +994,6 @@ class ProfileEnvelopeDispatchTest {
             resumedStore,
             resumedWorker,
             pages,
-            FakeAnalyzer(),
             workingTranslator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -1087,7 +1020,7 @@ class ProfileEnvelopeDispatchTest {
             responseFor(chunk, text = { "I cannot provide a translation for this content." })
         }
 
-        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
+        val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         outcome.status shouldBe BatchPass1Status.PAUSED
@@ -1120,7 +1053,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             firstTranslator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -1129,22 +1061,18 @@ class ProfileEnvelopeDispatchTest {
         // ---- simulated process death: fresh stores over the SAME documents.
         val resumedStore = ChapterTranslationStore.openArtifactSuspend(root(), "Chapter 1.json").also { ownedStores += it }
         val resumedWorker = FakePreflightOcrWorker(resumedStore)
-        val resumedAnalyzer = FakeAnalyzer()
         val secondTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
 
         val resumed = coordinator(
             resumedStore,
             resumedWorker,
             pages,
-            resumedAnalyzer,
             secondTranslator,
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Zero re-OCR (checkpoint reuse), zero re-analysis (frozen-profile
-        // reuse), and the committed 8 pages are NEVER re-sent.
+        // Checkpoint reuse avoids re-OCR, and the committed 8 pages are NEVER re-sent.
         resumedWorker.ocrPages shouldBe emptyList()
-        resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.COMPLETED
         resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         val sentIds = requestedStableBlockIds(secondTranslator.requests)
@@ -1207,7 +1135,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             worker,
             pages,
-            FakeAnalyzer(),
             firstTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -1239,7 +1166,6 @@ class ProfileEnvelopeDispatchTest {
             reopened,
             FakePreflightOcrWorker(reopened, blocksFor),
             pages,
-            FakeAnalyzer(),
             secondTranslator,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
@@ -1267,7 +1193,6 @@ class ProfileEnvelopeDispatchTest {
             store,
             FakePreflightOcrWorker(store),
             pages,
-            FakeAnalyzer(),
             translator,
             maxPagesPerEnvelope = 1,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)

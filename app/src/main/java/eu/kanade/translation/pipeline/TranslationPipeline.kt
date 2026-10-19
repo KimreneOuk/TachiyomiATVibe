@@ -31,6 +31,7 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.LeaseAcquisition
 import eu.kanade.translation.persistence.PageWriteOrigin
@@ -658,12 +659,9 @@ class TranslationPipeline private constructor(
 
             if (onnxResult == null) {
                 val page = store.state.value[pageKey]
-                // A resume null is a SUCCESS shape when the drained tail committed
-                // the native stages (render READY); only a non-terminal page is a
-                // genuine native timeout.
                 val resumeRenderCommitted = page != null &&
                     page.ocrStatus == StageStatus.READY &&
-                    page.renderStatus == StageStatus.READY &&
+                    (page.renderStatus == StageStatus.READY || page.isCleanedImageReady) &&
                     page.inpaintStatus != StageStatus.FAILED &&
                     (page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL)
                 if (page != null && (isPreparedPageTerminal(page) || resumeRenderCommitted)) {
@@ -778,10 +776,6 @@ class TranslationPipeline private constructor(
                             if (translationStatus != StageStatus.READY && translationStatus != StageStatus.PARTIAL) {
                                 translationStatus = StageStatus.FAILED
                                 translationError = msg
-                            }
-                            if (renderStatus != StageStatus.READY) {
-                                renderStatus = StageStatus.FAILED
-                                renderError = msg
                             }
                             errorMessage = msg
                             retryCount += 1
@@ -987,10 +981,6 @@ class TranslationPipeline private constructor(
                             translationError = msg
                         }
                     }
-                    if (renderStatus != StageStatus.READY) {
-                        renderStatus = StageStatus.FAILED
-                        renderError = msg
-                    }
                     errorMessage = msg
                     retryCount += 1
                     attemptCount += 1
@@ -1038,7 +1028,6 @@ class TranslationPipeline private constructor(
             ctx = httpCtx,
             owner = owner,
             attempt = attempt,
-            stageListener = stageListener,
             origin = origin,
         )
     }
@@ -1096,7 +1085,6 @@ class TranslationPipeline private constructor(
         provider = provider,
         streamRegistry = streamRegistry,
         engines = engines,
-        devicePagePermitGate = devicePagePermitGate,
         cleanedPublication = cleanedPublication,
         expectedBatchFingerprints = { fromLang, toLang -> batchExpectedFingerprints(fromLang, toLang) },
         retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation, owner, attempt ->

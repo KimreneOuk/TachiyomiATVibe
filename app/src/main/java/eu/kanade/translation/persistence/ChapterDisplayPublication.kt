@@ -1,7 +1,7 @@
 package eu.kanade.translation.persistence
 
 import eu.kanade.translation.model.blockFingerprints
-import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.PageTranslation
@@ -26,14 +26,14 @@ internal class ChapterDisplayPublication(
     /**
      * Atomic committed-display promotion: when the page just reached a fully
      * displayable state (cleaned image file published and verified upstream by
-     * [CleanedImagePublisher], translation READY/PARTIAL, render READY, some
+     * [CleanedImagePublisher], translation READY/PARTIAL, some
      * translated text), the committed pointer swaps to a frozen snapshot of
      * exactly that state. A superseded bundle\'s cleaned file is retained until
      * the pipeline drains it, never deleted under a live committed pointer.
      */
     internal fun promoteDisplayIfReadyLocked(pageKey: String, updated: PageTranslation) {
         val published = store.pages[pageKey] ?: return
-        if (pageKey.isEmpty() || (!published.hasRenderedResult && !published.isTextlessTerminal)) return
+        if (pageKey.isEmpty() || (!published.isTranslationDisplayReady && !published.isTextlessTerminal)) return
         val fingerprint = displayFingerprintOf(published)
         val existing = store.committedDisplay[pageKey]
         if (existing != null && existing.displayFingerprint == fingerprint) return
