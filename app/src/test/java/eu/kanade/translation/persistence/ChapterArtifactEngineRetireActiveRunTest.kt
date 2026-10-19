@@ -59,7 +59,7 @@ class ChapterArtifactEngineRetireActiveRunTest {
             createdAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
-        val publication = artifact.publishActiveRun(
+        val publication = artifact.progress.publishActiveRun(
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = record,
             contentFingerprint = hex64("complete-run-record"),
@@ -76,14 +76,14 @@ class ChapterArtifactEngineRetireActiveRunTest {
         val (artifact, _, _, _) = artifactWithCompleteRun()
         val durable = artifact.readManifest().shouldNotBeNull()
 
-        val outcome = artifact.retireActiveRun(durable, "chapter data reset")
+        val outcome = artifact.progress.retireActiveRun(durable, "chapter data reset")
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun shouldBe null
         artifact.readManifest().shouldNotBeNull().activeRun shouldBe null
 
         // Idempotent: retiring again commits the unchanged manifest.
         val durableAfterFirst = artifact.readManifest().shouldNotBeNull()
-        val second = artifact.retireActiveRun(durableAfterFirst, "chapter data reset")
+        val second = artifact.progress.retireActiveRun(durableAfterFirst, "chapter data reset")
         second.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
             .manifest shouldBe durableAfterFirst
     }
@@ -99,7 +99,7 @@ class ChapterArtifactEngineRetireActiveRunTest {
         // pointer; a retry that also fails still returns Rejected.
         val stale = artifact.readManifest().shouldNotBeNull().copy(updatedAtEpochMs = 99L)
 
-        val outcome = artifact.retireActiveRun(stale, "chapter data reset")
+        val outcome = artifact.progress.retireActiveRun(stale, "chapter data reset")
 
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun shouldBe null
@@ -117,7 +117,7 @@ class ChapterArtifactEngineRetireActiveRunTest {
         // wrapper must return it as-is with no second attempt.
         io.ownedRenamesToFail.add(AtomicChapterDocuments.tempNameFor(layout.manifestFileName))
 
-        val outcome = artifact.retireActiveRun(durable, "chapter data reset")
+        val outcome = artifact.progress.retireActiveRun(durable, "chapter data reset")
 
         val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.reason shouldBe "manifest publication failed; active run pointer unchanged"
@@ -128,7 +128,7 @@ class ChapterArtifactEngineRetireActiveRunTest {
     fun `the retired run record sidecar becomes a retention orphan`() {
         val (artifact, pointer, _, documents) = artifactWithCompleteRun()
         val durable = artifact.readManifest().shouldNotBeNull()
-        val retirement = artifact.retireActiveRun(durable, "chapter data reset")
+        val retirement = artifact.progress.retireActiveRun(durable, "chapter data reset")
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         // The sidecar file is still on disk (the transaction never deletes),

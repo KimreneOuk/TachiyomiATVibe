@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
@@ -283,8 +285,8 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
         val record = (
-            artifactStore().readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactEngine.RunRecordRead.Usable
+            artifactStore().progress.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                as ChapterProgressRecords.RunRecordRead.Usable
             ).record
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 3

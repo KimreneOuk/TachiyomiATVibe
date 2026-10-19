@@ -1,5 +1,7 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterRunState
@@ -115,8 +117,8 @@ class BatchDispatchResumeWiringTest {
                 } catch (_: TimeoutCancellationException) {
                     val manifest = artifact.readManifest().shouldNotBeNull()
                     val record = (
-                        artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
-                            as ChapterArtifactEngine.RunRecordRead.Usable
+                        artifact.progress.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                            as ChapterProgressRecords.RunRecordRead.Usable
                         ).record
                     error(
                         "run $attempt never reached ChapterRunState.COMPLETE within " +
@@ -142,8 +144,8 @@ class BatchDispatchResumeWiringTest {
     ): Pair<String, ChapterRunState> {
         val manifest = artifact.readManifest().shouldNotBeNull()
         val record = (
-            artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactEngine.RunRecordRead.Usable
+            artifact.progress.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                as ChapterProgressRecords.RunRecordRead.Usable
             ).record
         return record.runId to record.state
     }
@@ -158,8 +160,8 @@ class BatchDispatchResumeWiringTest {
             val manifestBefore = artifact.readManifest().shouldNotBeNull()
             val pointerBefore = manifestBefore.activeRun.shouldNotBeNull()
             val recordBefore = (
-                artifact.readRunRecord(pointerBefore)
-                    as ChapterArtifactEngine.RunRecordRead.Usable
+                artifact.progress.readRunRecord(pointerBefore)
+                    as ChapterProgressRecords.RunRecordRead.Usable
                 ).record
             recordBefore.state shouldBe ChapterRunState.COMPLETE
             recordBefore.frozenConfig.providerKey shouldBe "standard:mlkit"
@@ -203,8 +205,8 @@ class BatchDispatchResumeWiringTest {
                 // untouched (idempotent resume republishes nothing).
                 artifact.readManifest().shouldNotBeNull().activeRun shouldBe pointerBefore
                 (
-                    artifact.readRunRecord(pointerBefore)
-                        as ChapterArtifactEngine.RunRecordRead.Usable
+                    artifact.progress.readRunRecord(pointerBefore)
+                        as ChapterProgressRecords.RunRecordRead.Usable
                     ).record shouldBe recordBefore
             } finally {
                 second.close()
@@ -222,8 +224,8 @@ class BatchDispatchResumeWiringTest {
             val artifact = first.store.artifactEngine.shouldNotBeNull()
             val manifestBefore = artifact.readManifest().shouldNotBeNull()
             val recordBefore = (
-                artifact.readRunRecord(manifestBefore.activeRun.shouldNotBeNull())
-                    as ChapterArtifactEngine.RunRecordRead.Usable
+                artifact.progress.readRunRecord(manifestBefore.activeRun.shouldNotBeNull())
+                    as ChapterProgressRecords.RunRecordRead.Usable
                 ).record
             recordBefore.state shouldBe ChapterRunState.COMPLETE
 

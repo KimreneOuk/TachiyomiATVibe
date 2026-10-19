@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
@@ -282,7 +284,7 @@ class ProfileEnvelopePromptEnrichmentTest {
     private fun runCounters(store: ChapterTranslationStore): Pair<ChapterRunState, Map<String, Int>> {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        val record = (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        val record = (artifact.progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
         return record.state to record.phaseCounters
     }
 

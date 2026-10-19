@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
@@ -218,7 +220,7 @@ class WriteTimeDigestsTest {
     private fun runRecord(store: ChapterTranslationStore): ChapterRunRecord {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val pointer = manifest.activeRun.shouldNotBeNull()
-        return (artifactStore().readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        return (artifactStore().progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
     }
 
     private fun recordedDigests(): Map<String, String> =

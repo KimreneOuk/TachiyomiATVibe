@@ -241,7 +241,7 @@ internal object ChapterStoreOpener {
         val activeRunRecord = manifest.activeRun
             ?.takeIf { it.isWellFormed() }
             ?.let { pointer ->
-                (engine.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
+                (engine.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
             }
         return DurableChapterRead.Supported(
             DurableChapterState(
@@ -285,10 +285,10 @@ internal object ChapterStoreOpener {
             if (record?.candidate?.pageSnapshotFileName != null) return@forEach
             if (record?.committed?.pageSnapshotFileName != null) return@forEach
             val recordedSha = manifest.sourceShaByPageKey[pageKey] ?: return@forEach
-            when (val recovery = engine.readRecoveryCheckpoint(pointer, recordedSha)) {
-                is ChapterArtifactEngine.CheckpointRecoveryRead.Usable ->
+            when (val recovery = engine.progress.readRecoveryCheckpoint(pointer, recordedSha)) {
+                is ChapterProgressRecords.CheckpointRecoveryRead.Usable ->
                     pages = pages + (pageKey to recovery.ocrSnapshot.toPublishedPage())
-                is ChapterArtifactEngine.CheckpointRecoveryRead.Unusable -> logcat(LogPriority.WARN) {
+                is ChapterProgressRecords.CheckpointRecoveryRead.Unusable -> logcat(LogPriority.WARN) {
                     "TachiyomiAT durable reader checkpoint recovery unavailable: " +
                         "pageKey=$pageKey reason=${recovery.reason}"
                 }

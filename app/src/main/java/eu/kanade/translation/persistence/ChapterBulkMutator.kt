@@ -696,7 +696,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
     private fun deleteArtifactPageLocked(pageKey: String): String? {
         val artifact = store.artifactEngine ?: return null
         val manifest = store.artifactManifest ?: return null
-        val outcome = artifact.deleteLivePage(manifest, pageKey)
+        val outcome = artifact.candidates.deleteLivePage(manifest, pageKey)
         when (outcome) {
             is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 store.artifactManifest = outcome.manifest
@@ -715,6 +715,6 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                 "TachiyomiAT artifact page deletion rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
         }
-        return outcome.reason
+        return (outcome as? ChapterArtifactEngine.TransactionOutcome.Rejected)?.reason
     }
 }

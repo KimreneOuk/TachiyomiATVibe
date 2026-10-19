@@ -187,19 +187,19 @@ class ChapterTranslationStore internal constructor(
     internal val testSeams = ChapterStoreTestSeams(this)
 
     private val candidateReuseObservers = CopyOnWriteArrayList<
-        (ChapterArtifactEngine.CandidateOpenState.Reused) -> Unit,
+        (ChapterCandidateTransactions.CandidateOpenState.Reused) -> Unit,
         >()
 
     /** Observe typed artifact reuse outcomes without coupling storage to batch diagnostics. */
     internal fun observeCandidateReuse(
-        observer: (ChapterArtifactEngine.CandidateOpenState.Reused) -> Unit,
+        observer: (ChapterCandidateTransactions.CandidateOpenState.Reused) -> Unit,
     ): AutoCloseable {
         candidateReuseObservers.add(observer)
         return AutoCloseable { candidateReuseObservers.remove(observer) }
     }
 
-    internal fun reportCandidateReuse(state: ChapterArtifactEngine.CandidateOpenState?) {
-        val reused = state as? ChapterArtifactEngine.CandidateOpenState.Reused ?: return
+    internal fun reportCandidateReuse(state: ChapterCandidateTransactions.CandidateOpenState?) {
+        val reused = state as? ChapterCandidateTransactions.CandidateOpenState.Reused ?: return
         candidateReuseObservers.forEach { observer ->
             // Diagnostics must not change whether an artifact transaction is accepted.
             runCatching { observer(reused) }
@@ -225,7 +225,7 @@ class ChapterTranslationStore internal constructor(
     internal fun readRunRecord(pointer: SidecarPointer?): ChapterRunRecord? {
         val pointer = pointer?.takeIf { it.isWellFormed() } ?: return null
         val artifact = artifactEngine ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
+        return (artifact.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
     }
 
     /** Read-only manifest projection for context/status consumers. */
@@ -1513,7 +1513,7 @@ class ChapterTranslationStore internal constructor(
                         return@withLock rejectedCheckpoint(description, "incomplete source identity for checkpoint")
                     }
                     val snapshotFingerprint = StageFingerprints.pageSnapshot(live)
-                    val snapshotFileName = artifact.ocrStageSnapshotName(pageKey, snapshotFingerprint)
+                    val snapshotFileName = artifact.progress.ocrStageSnapshotName(pageKey, snapshotFingerprint)
                     val naturalPageIndex = artifactPage?.naturalPageIndex
                     val checkpoint = PageOcrCheckpoint(
                         pageKey = pageKey,
@@ -1545,7 +1545,7 @@ class ChapterTranslationStore internal constructor(
                         producerGenerationId = expectedCandidateGenerationId,
                         checkpointedAtEpochMs = nowEpochMs,
                     )
-                    val outcome = artifact.checkpointOcr(
+                    val outcome = artifact.progress.checkpointOcr(
                         manifest = manifest,
                         pageKey = pageKey,
                         expectedPageVersion = artifactPage?.pageVersion ?: 0L,
@@ -1621,9 +1621,9 @@ class ChapterTranslationStore internal constructor(
         // The provenance verification (both fingerprints, complete source
         // identity, observed sha, READY state) is the ONE classified recovery
         // read shared with the opener's publication-free reader fallback.
-        val recovery = when (val read = artifact.readRecoveryCheckpoint(checkpointPointer, observedSourceSha256)) {
-            is ChapterArtifactEngine.CheckpointRecoveryRead.Usable -> read
-            is ChapterArtifactEngine.CheckpointRecoveryRead.Unusable ->
+        val recovery = when (val read = artifact.progress.readRecoveryCheckpoint(checkpointPointer, observedSourceSha256)) {
+            is ChapterProgressRecords.CheckpointRecoveryRead.Usable -> read
+            is ChapterProgressRecords.CheckpointRecoveryRead.Unusable ->
                 return@withLock rejectedStage(pageKey, description, read.reason)
         }
         val checkpoint = recovery.checkpoint
@@ -2396,7 +2396,7 @@ class ChapterTranslationStore internal constructor(
         return mutex.withLock {
             val artifact = artifactEngine ?: return@withLock false
             val manifest = artifactManifest ?: return@withLock false
-            when (val outcome = artifact.retireActiveRun(manifest, reason)) {
+            when (val outcome = artifact.progress.retireActiveRun(manifest, reason)) {
                 is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                     artifactManifest = outcome.manifest
                     logcat(LogPriority.INFO) {
@@ -2419,7 +2419,7 @@ class ChapterTranslationStore internal constructor(
         val store = artifactEngine ?: return true
         val manifest = artifactManifest ?: return true
         val candidate = manifest.pages[pageKey]?.candidate ?: return true
-        val outcome = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)
+        val outcome = store.candidates.cancelLiveCandidate(manifest, pageKey, candidate.generationId)
         if (outcome is ChapterArtifactEngine.TransactionOutcome.Committed) {
             artifactManifest = outcome.manifest
             return true
@@ -2435,8 +2435,8 @@ class ChapterTranslationStore internal constructor(
     private fun demoteArtifactPageLocked(pageKey: String): String? {
         val store = artifactEngine ?: return null
         val manifest = artifactManifest ?: return null
-        val outcome = store.demoteLivePage(manifest, pageKey)
-        when (outcome) {
+        val outcome = store.candidates.demoteLivePage(manifest, pageKey)
+        return when (outcome) {
             is ChapterArtifactEngine.TransactionOutcome.Committed -> {
                 artifactManifest = outcome.manifest
                 // P3A/P3B typed incomplete: the pointers were durably removed

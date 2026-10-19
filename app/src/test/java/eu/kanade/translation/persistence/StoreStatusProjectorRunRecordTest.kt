@@ -109,7 +109,7 @@ class StoreStatusProjectorRunRecordTest {
             createdAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
-        val publication = artifact.publishActiveRun(
+        val publication = artifact.progress.publishActiveRun(
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = completeRecord,
             contentFingerprint = hex64("complete-run-record"),

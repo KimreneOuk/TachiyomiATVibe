@@ -89,14 +89,14 @@ class ChapterRunRecordSchemaTest {
         val initial = initialManifest(store)
         val record = contractExampleRecord()
 
-        val published = store.publishActiveRun(initial, record, hex64)
+        val published = store.progress.publishActiveRun(initial, record, hex64)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         val pointer = published.manifest.activeRun.shouldNotBeNull()
         pointer.contentFingerprint shouldBe hex64
         val sidecarBytes = io.read(layout.runRecordFile(hex64)).shouldNotBeNull()
         String(sidecarBytes) shouldBe ArtifactDocumentJson.encodeToString(record)
-        store.readRunRecord(pointer) shouldBe ChapterArtifactEngine.RunRecordRead.Usable(record)
+        store.progress.readRunRecord(pointer) shouldBe ChapterProgressRecords.RunRecordRead.Usable(record)
     }
 
     @Test
@@ -141,7 +141,7 @@ class ChapterRunRecordSchemaTest {
         )
         store.publishManifest(manifestWithPointer) shouldBe true
 
-        store.readRunRecord(manifestWithPointer.activeRun!!) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
+        store.progress.readRunRecord(manifestWithPointer.activeRun!!) shouldBe ChapterProgressRecords.RunRecordRead.Absent
         // The unparseable payload was quarantined, not silently consumed.
         io.files.containsKey("$fileName.corrupt") shouldBe true
     }
@@ -153,16 +153,16 @@ class ChapterRunRecordSchemaTest {
         val store = artifactStore(io)
         val initial = initialManifest(store)
 
-        val rejected = store.publishActiveRun(initial, wrongKind, hex64)
+        val rejected = store.progress.publishActiveRun(initial, wrongKind, hex64)
         rejected.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
 
         // A wrong-kind document already on disk is corrupt, never consumed.
         val fileName = layout.runRecordFile(hex64)
         io.write(fileName, ArtifactDocumentJson.encodeToString(wrongKind).toByteArray())
-        store.readRunRecord(
+        store.progress.readRunRecord(
             SidecarPointer(fileName = fileName, schemaVersion = 1, contentFingerprint = hex64),
-        ) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
+        ) shouldBe ChapterProgressRecords.RunRecordRead.Absent
         io.files.containsKey("$fileName.corrupt") shouldBe true
     }
 
@@ -181,8 +181,8 @@ class ChapterRunRecordSchemaTest {
         )
         store.publishManifest(withPointer) shouldBe true
 
-        val read = store.readRunRecord(withPointer.activeRun!!)
-        read shouldBe ChapterArtifactEngine.RunRecordRead.UnsupportedVersion(2)
+        val read = store.progress.readRunRecord(withPointer.activeRun!!)
+        read shouldBe ChapterProgressRecords.RunRecordRead.UnsupportedVersion(2)
         // Bytes preserved untouched: never deleted, overwritten, or quarantined.
         String(io.read(fileName)!!) shouldBe futureJson
         io.files.containsKey("$fileName.corrupt") shouldBe false

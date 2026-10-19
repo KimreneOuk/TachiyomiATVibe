@@ -87,7 +87,7 @@ class DestructivePublicationReceiptTest {
         val store = artifactStore(io)
         val seeded = store.loadArtifact(seededSnapshot()).manifest
 
-        val outcome = store.demoteLivePage(seeded, "page.jpg")
+        val outcome = store.candidates.demoteLivePage(seeded, "page.jpg")
 
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.unverifiedBackupReason shouldBe null
@@ -108,7 +108,7 @@ class DestructivePublicationReceiptTest {
         val store = artifactStore(io)
         val seeded = store.loadArtifact(seededSnapshot()).manifest
 
-        val outcome = store.deleteLivePage(seeded, "page.jpg")
+        val outcome = store.candidates.deleteLivePage(seeded, "page.jpg")
 
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.unverifiedBackupReason shouldBe null
@@ -124,7 +124,7 @@ class DestructivePublicationReceiptTest {
         val seeded = store.loadArtifact(seededSnapshot()).manifest
         io.writeNamesToFail += backupName
 
-        val outcome = store.demoteLivePage(seeded, "page.jpg")
+        val outcome = store.candidates.demoteLivePage(seeded, "page.jpg")
 
         // The reset itself is durable and reported Committed; the unverified
         // same-state backup is carried as a typed, non-silent reason.
@@ -143,7 +143,7 @@ class DestructivePublicationReceiptTest {
         io.write(manifestName, json.encodeToString(future).toByteArray())
         io.writtenNames.clear()
 
-        val outcome = store.demoteLivePage(future, "page.jpg")
+        val outcome = store.candidates.demoteLivePage(future, "page.jpg")
 
         val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.incompletePublication shouldBe null

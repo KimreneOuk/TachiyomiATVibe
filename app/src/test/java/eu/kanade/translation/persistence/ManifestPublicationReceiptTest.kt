@@ -87,7 +87,7 @@ class ManifestPublicationReceiptTest {
         store: ChapterArtifactEngine,
     ): Pair<ChapterArtifactManifest, String> {
         val seeded = store.loadArtifact(seededSnapshot()).manifest
-        val opened = store.openCandidate(seeded, "page.jpg", ArtifactOrigin.BATCH, 0L, hex64)
+        val opened = store.candidates.openCandidate(seeded, "page.jpg", ArtifactOrigin.BATCH, 0L, hex64)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         return opened.manifest to opened.generationId.shouldNotBeNull()
     }
@@ -99,7 +99,7 @@ class ManifestPublicationReceiptTest {
         val initial = store.loadArtifact(seededSnapshot()).manifest
         io.writtenNames.clear()
 
-        val outcome = store.publishActiveRun(initial, runRecord(), "not-hex")
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), "not-hex")
 
         val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         rejected.incompletePublication shouldBe null
@@ -114,7 +114,7 @@ class ManifestPublicationReceiptTest {
         val initial = store.loadArtifact(seededSnapshot()).manifest
         io.ownedRenamesToFail += manifestTmpName
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         val receipt = rejected.incompletePublication.shouldNotBeNull()
@@ -181,7 +181,7 @@ class ManifestPublicationReceiptTest {
         val (withCandidate, generationId) = openedCandidate(io, store)
         io.ownedRenamesToFail += manifestTmpName
 
-        val outcome = store.persistLiveCandidate(
+        val outcome = store.candidates.persistLiveCandidate(
             manifest = withCandidate,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -204,7 +204,7 @@ class ManifestPublicationReceiptTest {
         val (withCandidate, generationId) = openedCandidate(io, store)
         io.ownedRenamesToFailOnce += manifestTmpName
 
-        val failed = store.promoteLiveCandidateImmediately(
+        val failed = store.candidates.promoteLiveCandidateImmediately(
             manifest = withCandidate,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -226,7 +226,7 @@ class ManifestPublicationReceiptTest {
         store.readManifest() shouldBe recoverable
 
         val repaired = store.finishIncompletePublication(receipt) { fresh ->
-            store.promoteLiveCandidateImmediately(
+            store.candidates.promoteLiveCandidateImmediately(
                 manifest = fresh,
                 pageKey = "page.jpg",
                 generationId = generationId,
@@ -248,7 +248,7 @@ class ManifestPublicationReceiptTest {
         val store = artifactStore(io)
         val (withCandidate, generationId) = openedCandidate(io, store)
         io.ownedRenamesToFailOnce += manifestTmpName
-        val failed = store.promoteLiveCandidateImmediately(
+        val failed = store.candidates.promoteLiveCandidateImmediately(
             manifest = withCandidate,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -283,7 +283,7 @@ class ManifestPublicationReceiptTest {
         val store = artifactStore(io)
         val (withCandidate, generationId) = openedCandidate(io, store)
         io.ownedRenamesToFailOnce += manifestTmpName
-        val failed = store.promoteLiveCandidateImmediately(
+        val failed = store.candidates.promoteLiveCandidateImmediately(
             manifest = withCandidate,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -295,7 +295,7 @@ class ManifestPublicationReceiptTest {
         val receipt = (failed as ChapterArtifactEngine.TransactionOutcome.Rejected)
             .incompletePublication.shouldNotBeNull()
         store.finishIncompletePublication(receipt) { fresh ->
-            store.promoteLiveCandidateImmediately(
+            store.candidates.promoteLiveCandidateImmediately(
                 manifest = fresh,
                 pageKey = "page.jpg",
                 generationId = generationId,
@@ -318,7 +318,7 @@ class ManifestPublicationReceiptTest {
         val store = artifactStore(io)
         val initial = store.loadArtifact(seededSnapshot()).manifest
         io.ownedRenamesToFail += manifestTmpName
-        val failed = store.publishActiveRun(initial, runRecord(), hex64)
+        val failed = store.progress.publishActiveRun(initial, runRecord(), hex64)
         val receipt = (failed as ChapterArtifactEngine.TransactionOutcome.Rejected)
             .incompletePublication.shouldNotBeNull()
 

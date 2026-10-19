@@ -335,14 +335,14 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         }
         if (candidate == null || candidate.origin != origin) {
             val baseManifest = if (candidate != null && candidate.origin != origin) {
-                when (val cancelled = engine.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
+                when (val cancelled = engine.candidates.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
                     is ChapterArtifactEngine.TransactionOutcome.Committed -> cancelled.manifest
                     else -> manifest
                 }
             } else {
                 manifest
             }
-            fun open(manifest: ChapterArtifactManifest) = engine.openCandidate(
+            fun open(manifest: ChapterArtifactManifest) = engine.candidates.openCandidate(
                 manifest = manifest,
                 pageKey = pageKey,
                 origin = origin,
@@ -371,7 +371,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
         when (classifyMutation(durableFailure)) {
             ArtifactMutation.Failure -> {
                 val failure = checkNotNull(durableFailure)
-                fun persistFailure(manifest: ChapterArtifactManifest) = engine.persistLiveCandidateAndFailure(
+                fun persistFailure(manifest: ChapterArtifactManifest) = engine.candidates.persistLiveCandidateAndFailure(
                     manifest = manifest,
                     pageKey = pageKey,
                     generationId = currentCandidate.generationId,
@@ -404,7 +404,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                 val immediatelyPromotable = updated.hasRenderedResult || updated.isTextlessTerminal
                 fun persistDirect(manifest: ChapterArtifactManifest) =
                     if (immediatelyPromotable) {
-                        engine.promoteLiveCandidateImmediately(
+                        engine.candidates.promoteLiveCandidateImmediately(
                             manifest = manifest,
                             pageKey = pageKey,
                             generationId = currentCandidate.generationId,
@@ -415,7 +415,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
                             sourceIdentity = updated.sourceIdentity(pageKey),
                         )
                     } else {
-                        engine.persistLiveCandidate(
+                        engine.candidates.persistLiveCandidate(
                             manifest = manifest,
                             pageKey = pageKey,
                             generationId = currentCandidate.generationId,

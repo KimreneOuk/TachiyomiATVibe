@@ -1,5 +1,7 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -168,8 +170,8 @@ class StandardPipelineCoexistenceTest {
             val artifact = store.artifactEngine.shouldNotBeNull()
             val pointer = store.artifactManifest?.activeRun.shouldNotBeNull()
             val record = (
-                artifact.readRunRecord(pointer)
-                    as ChapterArtifactEngine.RunRecordRead.Usable
+                artifact.progress.readRunRecord(pointer)
+                    as ChapterProgressRecords.RunRecordRead.Usable
                 ).record
             if (record.state != ChapterRunState.COMPLETE) {
                 throw AssertionError(

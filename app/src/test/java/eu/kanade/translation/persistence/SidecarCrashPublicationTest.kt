@@ -85,7 +85,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         io.writtenNames.clear()
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         committed.manifest.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64
@@ -103,7 +103,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         io.writeNamesToFail += "/runs/"
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
@@ -117,7 +117,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         io.ownedRenamesToFail += AtomicChapterDocuments.tempNameFor(layout.runRecordFile(hex64))
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
@@ -133,7 +133,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         io.ownedRenamesToFail += manifestTmpName()
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // The prior manifest stays authoritative: the pointer never dangles.
@@ -153,7 +153,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         io.writeNamesToFail += manifestTmpName()
 
-        val outcome = store.publishActiveRun(initial, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(initial, runRecord(), hex64)
 
         outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
@@ -222,13 +222,13 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
 
         // Publish a usable run record first.
-        val committed = store.publishActiveRun(initial, runRecord(), hex64)
+        val committed = store.progress.publishActiveRun(initial, runRecord(), hex64)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val pointer = committed.manifest.activeRun.shouldNotBeNull()
 
         // Corrupt the pointed bytes: treated as absent, quarantined.
         io.files[pointer.fileName] = "{ corrupted".toByteArray()
-        store.readRunRecord(pointer) shouldBe ChapterArtifactEngine.RunRecordRead.Absent
+        store.progress.readRunRecord(pointer) shouldBe ChapterProgressRecords.RunRecordRead.Absent
         io.files.keys.count { it.startsWith("${pointer.fileName}.corrupt") } shouldBe 1
         store.reconcileRetention(committed.manifest)
         io.files.keys.any { it.startsWith("${pointer.fileName}.corrupt") } shouldBe true
@@ -241,7 +241,7 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         val stale = initial.copy(updatedAtEpochMs = 2L)
 
-        val outcome = store.publishActiveRun(stale, runRecord(), hex64)
+        val outcome = store.progress.publishActiveRun(stale, runRecord(), hex64)
 
         //   a stale caller snapshot (the façade cached the
         // pre-verify manifest while the background health verify republished)

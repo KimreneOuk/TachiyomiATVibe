@@ -1,6 +1,8 @@
 @file:Suppress("ClassName")
 
+
 package eu.kanade.translation.coexistence
+import eu.kanade.translation.persistence.ChapterProgressRecords
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -1455,8 +1457,8 @@ internal class TranslationCoexistenceHarness private constructor(
                     "retryCount=${failure.retryCount}, reason=${failure.lastFailureMessage}"
             }
         val runSummary = manifest?.activeRun?.let { pointer ->
-            when (val read = artifact?.readRunRecord(pointer)) {
-                is ChapterArtifactEngine.RunRecordRead.Usable ->
+            when (val read = artifact?.progress?.readRunRecord(pointer)) {
+                is ChapterProgressRecords.RunRecordRead.Usable ->
                     "state=${read.record.state}, phaseCounters=${read.record.phaseCounters}"
 
                 null -> "unavailable"

@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
@@ -305,7 +307,7 @@ class Stage7FinalizeResumeCoordinatorTest {
     private fun durableRunRecord(store: ChapterTranslationStore): ChapterRunRecord? {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
+        return (artifact.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
     }
 
     private fun activeRunPointer(store: ChapterTranslationStore): SidecarPointer =
@@ -533,8 +535,8 @@ class Stage7FinalizeResumeCoordinatorTest {
                 (snapshot?.hasRecognizedTranslation ?: false) shouldBe false
             }
             (
-                artifactStore().readRunRecord(manifestAfterReset.activeRun.shouldNotBeNull())
-                    as ChapterArtifactEngine.RunRecordRead.Usable
+                artifactStore().progress.readRunRecord(manifestAfterReset.activeRun.shouldNotBeNull())
+                    as ChapterProgressRecords.RunRecordRead.Usable
                 ).record.state shouldBe ChapterRunState.COMPLETE
 
             // ---- Pass 2: the flag-ON re-dispatch must NOT return the ----

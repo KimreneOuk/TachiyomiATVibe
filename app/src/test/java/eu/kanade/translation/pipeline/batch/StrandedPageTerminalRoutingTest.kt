@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
@@ -311,7 +313,7 @@ class StrandedPageTerminalRoutingTest {
     private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        return (artifact.progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
     }
 
     private fun coordinator(
@@ -552,7 +554,7 @@ class StrandedPageTerminalRoutingTest {
                 publishRecord = { artifact, record ->
                     val serialized = ArtifactDocumentJson.encodeToString(record)
                     val manifest = artifact.readManifest().shouldNotBeNull()
-                    artifact.publishActiveRun(
+                    artifact.progress.publishActiveRun(
                         manifest = manifest,
                         record = record,
                         contentFingerprint = ChapterProfileBatchCoordinator.sha256Hex(serialized.encodeToByteArray()),

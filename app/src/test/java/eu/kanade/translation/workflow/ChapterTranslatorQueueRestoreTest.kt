@@ -1,5 +1,7 @@
 package eu.kanade.translation.workflow
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -201,8 +203,8 @@ class ChapterTranslatorQueueRestoreTest {
         outcome.status shouldBe BatchPass1Status.FAILED
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val record = (
-            artifactStore().readRunRecord(manifest.activeRun.shouldNotBeNull())
-                as ChapterArtifactEngine.RunRecordRead.Usable
+            artifactStore().progress.readRunRecord(manifest.activeRun.shouldNotBeNull())
+                as ChapterProgressRecords.RunRecordRead.Usable
             ).record
         return Triple(store, record, manifest.ocrCheckpoints.keys)
     }

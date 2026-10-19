@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
@@ -215,7 +217,7 @@ class OcrPreflightCoordinatorTest {
     private fun runRecord(store: ChapterTranslationStore): ChapterRunRecord? {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         val pointer = manifest.activeRun.shouldNotBeNull()
-        return (artifactStore().readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        return (artifactStore().progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
     }
 
     @Test
@@ -273,8 +275,8 @@ class OcrPreflightCoordinatorTest {
         corpusFingerprint shouldBe StageFingerprints.ocrCorpusFingerprint(
             pages = listOf("p1", "p2", "p3").map { pageKey ->
                 pageKey to (
-                    artifactStore().readOcrCheckpoint(manifest.ocrCheckpoints.getValue(pageKey))
-                        as ChapterArtifactEngine.OcrCheckpointRead.Usable
+                    artifactStore().progress.readOcrCheckpoint(manifest.ocrCheckpoints.getValue(pageKey))
+                        as ChapterProgressRecords.OcrCheckpointRead.Usable
                     ).checkpoint.ocrContentFingerprint
             },
             expectedPageCount = 3,
@@ -484,9 +486,9 @@ class OcrPreflightCoordinatorTest {
             val manifest = artifactStore().readManifest().shouldNotBeNull()
             manifest.pages.keys shouldBe setOf("001.jpg")
             manifest.ocrCheckpoints.keys shouldBe setOf("001.jpg")
-            val checkpoint = artifactStore().readOcrCheckpoint(
+            val checkpoint = artifactStore().progress.readOcrCheckpoint(
                 manifest.ocrCheckpoints.getValue("001.jpg"),
-            ).shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>().checkpoint
+            ).shouldBeInstanceOf<ChapterProgressRecords.OcrCheckpointRead.Usable>().checkpoint
             checkpoint.pageKey shouldBe "001.jpg"
         } finally {
             store.closeAndFlush()

@@ -4,6 +4,7 @@ import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterProgressRecords
 import eu.kanade.translation.persistence.ChapterRunRecord
 import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.OcrCheckpointMode
@@ -180,15 +181,15 @@ internal class PreflightWorker(
 
     private suspend fun existingActiveRecord(
         artifact: ChapterArtifactEngine,
-    ): ChapterArtifactEngine.RunRecordRead? {
+    ): ChapterProgressRecords.RunRecordRead? {
         //  dispatch reads the DURABLE manifest, not the facade's cached
         // snapshot: the cache is a CAS optimization with many writers, while
         // this decision must never re-run paid work (or drain a stale
         // FINALIZE) behind what the artifact tree actually records. One
         // sidecar read per dispatch — negligible next to the preflight.
-        return store.withArtifactEngineLocked { engine ->
+        return store.withArtifactEngineLocked<ChapterProgressRecords.RunRecordRead?> { engine ->
             val pointer = engine.readManifest()?.activeRun ?: return@withArtifactEngineLocked null
-            engine.readRunRecord(pointer)
+            engine.progress.readRunRecord(pointer)
         }
     }
 
@@ -257,9 +258,9 @@ internal class PreflightWorker(
         val pointer = manifest.ocrCheckpoints[pageKey]
             ?: return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.NO_POINTER)
         val read = store.withArtifactEngineLocked { engine ->
-            engine.readOcrCheckpoint(pointer)
+            engine.progress.readOcrCheckpoint(pointer)
         }
-        if (read !is ChapterArtifactEngine.OcrCheckpointRead.Usable) {
+        if (read !is ChapterProgressRecords.OcrCheckpointRead.Usable) {
             return CheckpointReuse.Unavailable(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
         val admissionSha = context.admissionSourceSha(pageKey)
@@ -284,9 +285,9 @@ internal class PreflightWorker(
         val manifest = store.artifactManifest ?: return null
         val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
         val read = store.withArtifactEngineLocked { engine ->
-            engine.readOcrCheckpoint(pointer)
+            engine.progress.readOcrCheckpoint(pointer)
         }
-        return (read as? ChapterArtifactEngine.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
+        return (read as? ChapterProgressRecords.OcrCheckpointRead.Usable)?.checkpoint?.ocrContentFingerprint
     }
 
     private suspend fun recordPageFailure(failure: PreflightStageFailure) =
@@ -319,7 +320,7 @@ internal class PreflightWorker(
         }
 
         val frozenFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig)
-        val priorRecord = (existingActiveRecord(artifact) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
+        val priorRecord = (existingActiveRecord(artifact) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
         val terminalPrior = priorRecord?.takeIf {
             it.state == ChapterRunState.FINALIZE || it.state == ChapterRunState.COMPLETE
         }

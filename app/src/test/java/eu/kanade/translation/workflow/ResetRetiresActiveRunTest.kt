@@ -107,7 +107,7 @@ class ResetRetiresActiveRunTest {
             createdAtEpochMs = 1L,
             updatedAtEpochMs = 1L,
         )
-        artifact.publishActiveRun(
+        artifact.progress.publishActiveRun(
             manifest = artifact.readManifest().shouldNotBeNull(),
             record = completeRecord,
             contentFingerprint = hex64("complete-run-record"),

@@ -172,8 +172,8 @@ class ChapterTranslationStoreCheckpointHydrationTest {
         mergeAndCheckpoint(store)
         val checkpointPointer = artifactStore().readManifest().shouldNotBeNull()
             .ocrCheckpoints.getValue("p1")
-        val checkpoint = artifactStore().readOcrCheckpoint(checkpointPointer)
-            .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>().checkpoint
+        val checkpoint = artifactStore().progress.readOcrCheckpoint(checkpointPointer)
+            .shouldBeInstanceOf<ChapterProgressRecords.OcrCheckpointRead.Usable>().checkpoint
         val checkpointedSnapshot = artifactStore()
             .readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName).shouldNotBeNull()
 

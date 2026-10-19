@@ -28,6 +28,7 @@ import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ArtifactStageStatus
 import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterProgressRecords.OcrCheckpointRead
 import eu.kanade.translation.persistence.ChapterArtifactManifest
 import eu.kanade.translation.persistence.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.ChapterRunRecord
@@ -1016,10 +1017,10 @@ internal class ChapterProfileBatchCoordinator(
             ?: return CheckpointAdoption.Failed(CheckpointAdoptionFailure.NO_POINTER)
         val checkpoint = when (
             val read = store.withArtifactEngineLocked { engine ->
-                engine.readOcrCheckpoint(pointer)
+                engine.progress.readOcrCheckpoint(pointer)
             }
         ) {
-            is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
+            is OcrCheckpointRead.Usable -> read.checkpoint
             else -> return CheckpointAdoption.Failed(CheckpointAdoptionFailure.SIDE_CAR_UNREADABLE)
         }
         // Configuration identity (P0A single-owner predicate): source bytes
@@ -1119,10 +1120,10 @@ internal class ChapterProfileBatchCoordinator(
             val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
             val checkpoint = when (
                 val read = store.withArtifactEngineLocked { engine ->
-                    engine.readOcrCheckpoint(pointer)
+                    engine.progress.readOcrCheckpoint(pointer)
                 }
             ) {
-                is ChapterArtifactEngine.OcrCheckpointRead.Usable -> read.checkpoint
+                is OcrCheckpointRead.Usable -> read.checkpoint
                 else -> return null
             }
             val snapshot = store.withArtifactEngineLocked { engine ->
@@ -1231,7 +1232,7 @@ internal class ChapterProfileBatchCoordinator(
         val json = ArtifactDocumentJson.encodeToString(bounded)
         val outcome = store.withArtifactEngineLocked { engine ->
             val manifest = engine.readManifest() ?: return@withArtifactEngineLocked null
-            engine.publishActiveRun(
+            engine.progress.publishActiveRun(
                 manifest = manifest,
                 record = bounded,
                 contentFingerprint = sha256Hex(json.encodeToByteArray()),

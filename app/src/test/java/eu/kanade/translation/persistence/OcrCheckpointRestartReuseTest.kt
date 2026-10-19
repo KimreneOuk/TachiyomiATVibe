@@ -175,8 +175,8 @@ class OcrCheckpointRestartReuseTest {
         // current cleaned-output revision.
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().ocrCheckpoints.getValue("p1")
-        val read = artifact.readOcrCheckpoint(pointer)
-            .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
+        val read = artifact.progress.readOcrCheckpoint(pointer)
+            .shouldBeInstanceOf<ChapterProgressRecords.OcrCheckpointRead.Usable>()
         read.checkpoint.inpaintMaskRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
         // Snapshot state keeps its real cleaned-output revision.
         artifact.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName)
@@ -197,8 +197,8 @@ class OcrCheckpointRestartReuseTest {
         val artifact = artifactStore()
         val manifest = artifact.readManifest().shouldNotBeNull()
         val pointer = manifest.ocrCheckpoints["p1"].shouldNotBeNull()
-        val read = artifact.readOcrCheckpoint(pointer)
-            .shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
+        val read = artifact.progress.readOcrCheckpoint(pointer)
+            .shouldBeInstanceOf<ChapterProgressRecords.OcrCheckpointRead.Usable>()
         // Origin-neutral checkpoint: provenance recorded, ownership none.
         read.checkpoint.producedByOrigin shouldBe ArtifactOrigin.BATCH
         read.checkpoint.producerGenerationId shouldBe candidateGenerationId
@@ -214,7 +214,7 @@ class OcrCheckpointRestartReuseTest {
         // opens from the checkpoint — impossible while a BATCH candidate held the
         // page before. ----
         val pageVersion = manifest.pageRecord("p1").pageVersion
-        val readerOpen = artifact.openCandidate(
+        val readerOpen = artifact.candidates.openCandidate(
             manifest,
             "p1",
             ArtifactOrigin.READER_ADHOC,
@@ -223,7 +223,7 @@ class OcrCheckpointRestartReuseTest {
             nowEpochMs = 600L,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val readerGenerationId = readerOpen.generationId.shouldNotBeNull()
-        val readerPersist = artifact.persistLiveCandidate(
+        val readerPersist = artifact.candidates.persistLiveCandidate(
             manifest = readerOpen.manifest,
             pageKey = "p1",
             generationId = readerGenerationId,
@@ -233,7 +233,7 @@ class OcrCheckpointRestartReuseTest {
             origin = ArtifactOrigin.READER_ADHOC,
             nowEpochMs = 601L,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
-        val readerPromoted = artifact.promoteLiveCandidate(
+        val readerPromoted = artifact.candidates.promoteLiveCandidate(
             manifest = readerPersist.manifest,
             pageKey = "p1",
             generationId = readerGenerationId,
@@ -297,7 +297,7 @@ class OcrCheckpointRestartReuseTest {
             producerGenerationId = null,
             checkpointedAtEpochMs = 700L,
         )
-        val driftOutcome = artifactStore().checkpointOcr(
+        val driftOutcome = artifactStore().progress.checkpointOcr(
             manifest = adopt.manifest,
             pageKey = "p1",
             expectedPageVersion = adopt.manifest.pageRecord("p1").pageVersion,
@@ -314,7 +314,7 @@ class OcrCheckpointRestartReuseTest {
 
         // ---- Batch reuse on the final durable state: a fresh BATCH candidate
         // opens from the (adopted) checkpoint, too. ----
-        artifact.openCandidate(
+        artifact.candidates.openCandidate(
             adopt.manifest,
             "p1",
             ArtifactOrigin.BATCH,

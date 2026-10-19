@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.TextTranslator
@@ -388,7 +390,7 @@ class StandardPipelineCoordinatorTest {
     private fun durableRunRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.ChapterRunRecord? {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
-        return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record
+        return (artifact.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
     }
 
     private suspend fun publishLegacyCompleteIdentity(
@@ -399,13 +401,13 @@ class StandardPipelineCoordinatorTest {
         val artifact = store.withArtifactEngineLocked { it }.shouldNotBeNull()
         val manifest = artifact.readManifest().shouldNotBeNull()
         val pointer = manifest.activeRun.shouldNotBeNull()
-        val prior = (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        val prior = (artifact.progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
         val placeholderDigest = ChapterProfileBatchCoordinator.orderedSourceDigest(
             pages.map { (pageKey, _) -> pageKey to "source-fingerprint-unavailable" },
         )
         val legacyRecord = prior.copy(orderedSourceDigest = placeholderDigest)
         val serialized = ArtifactDocumentJson.encodeToString(legacyRecord)
-        val published = artifact.publishActiveRun(
+        val published = artifact.progress.publishActiveRun(
             manifest = manifest.copy(sourceShaByPageKey = sourceShaByPageKey),
             record = legacyRecord,
             contentFingerprint = ChapterProfileBatchCoordinator.sha256Hex(serialized.encodeToByteArray()),

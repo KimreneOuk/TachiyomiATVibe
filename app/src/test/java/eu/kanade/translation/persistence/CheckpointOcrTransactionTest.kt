@@ -91,7 +91,7 @@ class CheckpointOcrTransactionTest {
     private fun fixtureWithActiveCandidate(io: FakeChapterDocumentIo, ocrSnapshot: PageTranslation = ocrPage()): Fixture {
         val store = store(io)
         val migrated = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
-        val opened = store.openCandidate(
+        val opened = store.candidates.openCandidate(
             migrated,
             "page.jpg",
             ArtifactOrigin.BATCH,
@@ -100,7 +100,7 @@ class CheckpointOcrTransactionTest {
             nowEpochMs = 500L,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
-        val persisted = store.persistLiveCandidate(
+        val persisted = store.candidates.persistLiveCandidate(
             manifest = opened.manifest,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -142,7 +142,7 @@ class CheckpointOcrTransactionTest {
             ocrFingerprint = ocrSnapshot.ocrFingerprint!!,
             ocrContentFingerprint = contentFingerprint,
             ocrPageSnapshotPointer = SidecarPointer(
-                fileName = store.ocrStageSnapshotName("page.jpg", snapshotFingerprint),
+                fileName = store.progress.ocrStageSnapshotName("page.jpg", snapshotFingerprint),
                 schemaVersion = 1,
                 contentFingerprint = snapshotFingerprint,
             ),
@@ -161,7 +161,7 @@ class CheckpointOcrTransactionTest {
         checkpoint: PageOcrCheckpoint,
         mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
         expectedPageVersion: Long = manifest.pages.getValue("page.jpg").pageVersion,
-    ) = store.checkpointOcr(
+    ) = store.progress.checkpointOcr(
         manifest = manifest,
         pageKey = "page.jpg",
         expectedPageVersion = expectedPageVersion,
@@ -207,7 +207,7 @@ class CheckpointOcrTransactionTest {
         io.files.containsKey(checkpoint.ocrPageSnapshotPointer.fileName) shouldBe true
 
         // The pointer resolves to a usable checkpoint whose snapshot is readable.
-        val read = fx.store.readOcrCheckpoint(pointer).shouldBeInstanceOf<ChapterArtifactEngine.OcrCheckpointRead.Usable>()
+        val read = fx.store.progress.readOcrCheckpoint(pointer).shouldBeInstanceOf<ChapterProgressRecords.OcrCheckpointRead.Usable>()
         read.checkpoint.producedByOrigin shouldBe ArtifactOrigin.BATCH
         fx.store.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName).shouldNotBeNull()
 
@@ -246,7 +246,7 @@ class CheckpointOcrTransactionTest {
             checkpoint.ocrContentFingerprint
 
         // The successor's very first write validates against the checkpoint.
-        val written = fx.store.persistLiveCandidate(
+        val written = fx.store.candidates.persistLiveCandidate(
             manifest = outcome.manifest,
             pageKey = "page.jpg",
             generationId = successorId,
@@ -260,7 +260,7 @@ class CheckpointOcrTransactionTest {
             .generationId shouldBe successorId
 
         // A stale writer still holding the closed generation is fenced.
-        val stale = fx.store.persistLiveCandidate(
+        val stale = fx.store.candidates.persistLiveCandidate(
             manifest = written.manifest,
             pageKey = "page.jpg",
             generationId = fx.generationId,
@@ -283,7 +283,7 @@ class CheckpointOcrTransactionTest {
         ocrSnapshot: PageTranslation = ocrPage(),
     ): Triple<ChapterArtifactEngine, ChapterArtifactManifest, PageTranslation> {
         val fx = fixtureWithActiveCandidate(io, ocrSnapshot)
-        val promoted = fx.store.promoteLiveCandidate(
+        val promoted = fx.store.candidates.promoteLiveCandidate(
             manifest = fx.manifest,
             pageKey = "page.jpg",
             generationId = fx.generationId,
@@ -375,7 +375,7 @@ class CheckpointOcrTransactionTest {
         val store = store(io)
         val migrated = store.loadArtifact(seededSnapshot()).manifest
         // Demote the committed bundle so neither candidate nor committed exists.
-        val demoted = store.demoteLivePage(migrated, "page.jpg")
+        val demoted = store.candidates.demoteLivePage(migrated, "page.jpg")
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>().manifest
         val checkpoint = checkpointFor(ocrPage(), store, producerGenerationId = null)
 
@@ -501,7 +501,7 @@ class CheckpointOcrTransactionTest {
         checkpointTransaction(fx.store, fx.manifest, fx.ocrSnapshot, staleGeneration)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         // Changed dependency fingerprint (no grace clause,.1/C2).
-        val staleDependencyOutcome = fx.store.checkpointOcr(
+        val staleDependencyOutcome = fx.store.progress.checkpointOcr(
             manifest = fx.manifest,
             pageKey = "page.jpg",
             expectedPageVersion = fx.manifest.pages.getValue("page.jpg").pageVersion,
@@ -546,7 +546,7 @@ class CheckpointOcrTransactionTest {
         )
         var manifest = fx.manifest
         for (stage in listOf(ArtifactStage.OCR, ArtifactStage.TRANSLATION)) {
-            manifest = fx.store.persistLiveCandidate(
+            manifest = fx.store.candidates.persistLiveCandidate(
                 manifest = manifest,
                 pageKey = "page.jpg",
                 generationId = fx.generationId,
@@ -593,12 +593,12 @@ class CheckpointOcrTransactionTest {
 
         val fileName = layout.ocrCheckpointFile("page.jpg", stale.ocrContentFingerprint)
         io.write(fileName, ArtifactDocumentJson.encodeToString(stale).toByteArray())
-        fx.store.readOcrCheckpoint(
+        fx.store.progress.readOcrCheckpoint(
             SidecarPointer(
                 fileName = fileName,
                 schemaVersion = 1,
                 contentFingerprint = stale.ocrContentFingerprint,
             ),
-        ) shouldBe ChapterArtifactEngine.OcrCheckpointRead.Absent
+        ) shouldBe ChapterProgressRecords.OcrCheckpointRead.Absent
     }
 }

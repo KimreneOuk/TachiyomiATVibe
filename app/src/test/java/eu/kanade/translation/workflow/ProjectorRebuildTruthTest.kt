@@ -85,7 +85,7 @@ class ProjectorRebuildTruthTest {
             ),
         )
         val initial = artifact.readManifest().shouldNotBeNull()
-        val committed = artifact.publishActiveRun(initial, record, hex64)
+        val committed = artifact.progress.publishActiveRun(initial, record, hex64)
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
 
         return ChapterTranslationStore(

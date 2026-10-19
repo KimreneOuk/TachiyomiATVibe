@@ -118,7 +118,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             updatedAtEpochMs = 1L,
         )
 
-        val outcome = artifact.publishActiveRun(
+        val outcome = artifact.progress.publishActiveRun(
             manifest = callerCopy,
             record = record,
             contentFingerprint = hex64("li4-run-record"),
@@ -188,7 +188,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         )
         val ocrSnapshot = ocrPage()
         val migrated = store.loadArtifact(seededSnapshot(ocrSnapshot)).manifest
-        val opened = store.openCandidate(
+        val opened = store.candidates.openCandidate(
             migrated,
             "page.jpg",
             ArtifactOrigin.BATCH,
@@ -197,7 +197,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             nowEpochMs = 500L,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
-        val persisted = store.persistLiveCandidate(
+        val persisted = store.candidates.persistLiveCandidate(
             manifest = opened.manifest,
             pageKey = "page.jpg",
             generationId = generationId,
@@ -240,7 +240,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
             ocrFingerprint = fx.ocrSnapshot.ocrFingerprint!!,
             ocrContentFingerprint = hex64("ocr-content"),
             ocrPageSnapshotPointer = SidecarPointer(
-                fileName = fx.store.ocrStageSnapshotName("page.jpg", snapshotFingerprint),
+                fileName = fx.store.progress.ocrStageSnapshotName("page.jpg", snapshotFingerprint),
                 schemaVersion = 1,
                 contentFingerprint = snapshotFingerprint,
             ),
@@ -258,7 +258,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val checkpoint = checkpointFor(fx)
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
 
-        val outcome = fx.store.checkpointOcr(
+        val outcome = fx.store.progress.checkpointOcr(
             manifest = fx.callerCopy,
             pageKey = "page.jpg",
             expectedPageVersion = callerPageVersion,
@@ -288,7 +288,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         // while the stale caller was still mid-flight: the candidate closes and
         // the page version advances beyond anything the caller saw.
         val concurrentCheckpoint = checkpointFor(fx)
-        fx.store.checkpointOcr(
+        fx.store.progress.checkpointOcr(
             manifest = fx.store.readManifest().shouldNotBeNull(),
             pageKey = "page.jpg",
             expectedPageVersion = fx.store.readManifest().shouldNotBeNull()
@@ -304,7 +304,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         // (older) OCR content for the closed candidate generation.
         val staleCallerCheckpoint = checkpointFor(fx)
             .copy(ocrContentFingerprint = hex64("stale-ocr-content"))
-        val outcome = fx.store.checkpointOcr(
+        val outcome = fx.store.progress.checkpointOcr(
             manifest = fx.callerCopy,
             pageKey = "page.jpg",
             expectedPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion,
@@ -369,7 +369,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val callerCopy = artifact.readManifest().shouldNotBeNull()
         bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 2L)
 
-        val outcome = artifact.openCandidate(
+        val outcome = artifact.candidates.openCandidate(
             manifest = callerCopy,
             pageKey = "page.jpg",
             origin = ArtifactOrigin.BATCH,
@@ -396,7 +396,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val callerCopy = artifact.readManifest().shouldNotBeNull()
         // A concurrent writer opens the candidate against the FRESH manifest
         // while the stale caller was mid-flight: page version 0 -> 1.
-        artifact.openCandidate(
+        artifact.candidates.openCandidate(
             artifact.readManifest().shouldNotBeNull(),
             "page.jpg",
             ArtifactOrigin.BATCH,
@@ -407,7 +407,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val concurrentGenerationId = artifact.readManifest().shouldNotBeNull()
             .pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId
 
-        val outcome = artifact.openCandidate(
+        val outcome = artifact.candidates.openCandidate(
             manifest = callerCopy,
             pageKey = "page.jpg",
             origin = ArtifactOrigin.BATCH,
@@ -430,7 +430,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val artifact = authorityFlipFixture()
         val current = artifact.readManifest().shouldNotBeNull()
 
-        val outcome = artifact.openCandidate(
+        val outcome = artifact.candidates.openCandidate(
             manifest = current,
             pageKey = "page.jpg",
             origin = ArtifactOrigin.BATCH,
@@ -451,7 +451,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val fx = checkpointFixtureWithConcurrentVerify()
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
 
-        val outcome = fx.store.persistLiveCandidate(
+        val outcome = fx.store.candidates.persistLiveCandidate(
             manifest = fx.callerCopy,
             pageKey = "page.jpg",
             generationId = fx.generationId,
@@ -475,7 +475,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     fun `persistLiveCandidate with a fresh manifest and a wrong generation still rejects as-is`() {
         val fx = checkpointFixtureWithConcurrentVerify()
 
-        val outcome = fx.store.persistLiveCandidate(
+        val outcome = fx.store.candidates.persistLiveCandidate(
             manifest = fx.store.readManifest().shouldNotBeNull(),
             pageKey = "page.jpg",
             generationId = "g-other",
@@ -498,7 +498,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val fx = checkpointFixtureWithConcurrentVerify()
         val callerPageVersion = fx.callerCopy.pages.getValue("page.jpg").pageVersion
 
-        val outcome = fx.store.promoteLiveCandidate(
+        val outcome = fx.store.candidates.promoteLiveCandidate(
             manifest = fx.callerCopy,
             pageKey = "page.jpg",
             generationId = fx.generationId,
@@ -525,7 +525,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     fun `promoteLiveCandidate with a fresh manifest and drifted dependencies still rejects as-is`() {
         val fx = checkpointFixtureWithConcurrentVerify()
 
-        val outcome = fx.store.promoteLiveCandidate(
+        val outcome = fx.store.candidates.promoteLiveCandidate(
             manifest = fx.store.readManifest().shouldNotBeNull(),
             pageKey = "page.jpg",
             generationId = fx.generationId,
@@ -546,7 +546,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val artifact = authorityFlipFixture()
         val record = li4RunRecord("run-li4-retire-1")
         check(
-            artifact.publishActiveRun(
+            artifact.progress.publishActiveRun(
                 manifest = artifact.readManifest().shouldNotBeNull(),
                 record = record,
                 contentFingerprint = hex64("li4-retire-run"),
@@ -556,7 +556,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val callerCopy = artifact.readManifest().shouldNotBeNull()
         bumpBehindCallersBack(artifact, callerCopy, nowEpochMs = 3L)
 
-        val outcome = artifact.retireActiveRun(callerCopy, "batch resume teardown", nowEpochMs = 4L)
+        val outcome = artifact.progress.retireActiveRun(callerCopy, "batch resume teardown", nowEpochMs = 4L)
 
         val committed = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val durable = artifact.readManifest().shouldNotBeNull()

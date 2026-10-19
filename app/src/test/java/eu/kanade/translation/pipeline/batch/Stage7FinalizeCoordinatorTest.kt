@@ -1,5 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.persistence.ChapterProgressRecords
+
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.engines.translator.BatchRequestSublimitGate
@@ -261,7 +263,7 @@ class Stage7FinalizeCoordinatorTest {
     private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record
+        return (artifact.progress.readRunRecord(pointer) as ChapterProgressRecords.RunRecordRead.Usable).record
     }
 
     private fun coordinator(
