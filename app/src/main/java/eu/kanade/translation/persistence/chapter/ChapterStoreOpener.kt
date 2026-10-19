@@ -17,7 +17,7 @@ import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.RenameResult
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.toArtifactPageFallback
+import eu.kanade.translation.persistence.chapter.toArtifactPageFallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

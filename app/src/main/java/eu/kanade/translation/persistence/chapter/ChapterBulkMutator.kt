@@ -12,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.PartialBatchDetermination
 import eu.kanade.translation.persistence.artifact.PartialBatchInfo
-import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
+import eu.kanade.translation.persistence.chapter.ChapterStoreEngineMode
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.sync.Mutex

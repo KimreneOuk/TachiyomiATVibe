@@ -1,4 +1,5 @@
 package eu.kanade.translation.persistence.artifact
+import eu.kanade.translation.persistence.chapter.CleanedImageIdentity
 
 import eu.kanade.translation.model.StageFingerprints
 

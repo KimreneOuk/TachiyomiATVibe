@@ -10,8 +10,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
-import eu.kanade.translation.persistence.artifact.CleanedImageIdentitySidecar
+import eu.kanade.translation.persistence.chapter.CleanedImageIdentity
+import eu.kanade.translation.persistence.chapter.CleanedImageIdentitySidecar
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.CleanedImagePublisher
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider

@@ -1,10 +1,14 @@
 package eu.kanade.translation.persistence.chapter
 
+import eu.kanade.translation.persistence.artifact.ChapterResetPreflight
+import eu.kanade.translation.persistence.artifact.chapterResetPreflight
+
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PublishedPageTranslation
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
@@ -33,13 +37,16 @@ import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
 import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SourceIdentity
-import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
-import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StoreWriteDrainCoordinator
 import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CompletableDeferred
@@ -56,11 +63,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import java.io.File
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
+
+
 
 /** Bounded scalar record of an attempt's own verified artifact drain progress. */
 internal data class CertifiedArtifactProgress(
@@ -2739,4 +2743,28 @@ internal fun mergeOcrFields(
         errorMessage?.let { updated.errorMessage = it }
     }
     return updated
+}
+
+
+/**
+ * Explicit storage configuration for a chapter store.
+ *
+ * The mode is deliberately separate from the public [ChapterTranslationStore]
+ * seam: memory-only stores are a supported test/runtime mode, while durable
+ * stores may be eager or lazy.  Keeping the mode explicit lets the merge
+ * remove nullable engine state without changing the durable artifact schema.
+ */
+internal sealed interface ChapterStoreEngineMode {
+    /** No filesystem target; mutations remain in memory and retain dirty probes. */
+    data object Memory : ChapterStoreEngineMode
+
+    /** Filesystem target known, but the artifact engine is opened on first write. */
+    data class LazyDurable(
+        val artifactParent: UniFile?,
+        val artifactFileName: String?,
+        val artifactParentResolver: (() -> UniFile)?,
+    ) : ChapterStoreEngineMode
+
+    /** Eagerly opened artifact engine owned by the facade. */
+    data class Durable(val artifact: ChapterArtifactEngine) : ChapterStoreEngineMode
 }

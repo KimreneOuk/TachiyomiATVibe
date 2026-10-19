@@ -1,7 +1,7 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.artifact.CleanedImageIdentity
+import eu.kanade.translation.persistence.chapter.CleanedImageIdentity
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry

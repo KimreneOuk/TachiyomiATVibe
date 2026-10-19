@@ -14,7 +14,7 @@ import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.SourceIdentity
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
+import eu.kanade.translation.persistence.chapter.ChapterStoreEngineMode
 import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

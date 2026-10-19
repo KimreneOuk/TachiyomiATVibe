@@ -1,6 +1,8 @@
 package eu.kanade.translation.persistence.chapter
 
+import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -16,10 +18,18 @@ import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
+import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.toArtifactDisplayProjection
+import eu.kanade.translation.persistence.chapter.toArtifactDisplayProjection
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.flow.StateFlow
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
+
+
+
 
 /**
  * Projection inputs handed to [StoreStatusProjector] by the owning store. The
@@ -237,4 +247,230 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         ChapterStatusProjection.artifactStatus(projectionData()) { pointer ->
             store.readRunRecord(pointer)
         }
+}
+
+
+/** Strict page-map projection shared by durable chapter status and batch progress. */
+internal data class ChapterPageReconciliation(
+    val chapterStatus: Translation.State,
+    val strandedPages: Map<String, String>,
+    val unexpectedPageKeys: Set<String>,
+    val doneCount: Int,
+    val failedCount: Int,
+    val partialCount: Int,
+)
+
+/** Projects expected pages using the same readable-terminal rules in both callers. */
+internal object ChapterPageReconciler {
+
+    /** Logs unexpected keys while keeping their identities out of log output. */
+    fun findUnexpectedPageKeys(
+        pageMap: Map<String, PageTranslationView>,
+        orderedKeys: List<String>,
+    ): Set<String> {
+        val expectedKeys = orderedKeys.distinct().toSet()
+        val unexpectedPageKeys = pageMap.keys - expectedKeys
+        unexpectedPageKeys.forEach { pageKey ->
+            logcat(LogPriority.WARN) {
+                "event=batch_reconciliation reason=unexpected_page pageHash=${ShortHash.hash(pageKey)}"
+            }
+        }
+        return unexpectedPageKeys
+    }
+
+    fun reconcile(
+        pageMap: Map<String, PageTranslationView>,
+        orderedKeys: List<String>,
+        activeGeneration: Long,
+        unexpectedPageKeys: Set<String>,
+    ): ChapterPageReconciliation {
+        val expectedKeys = orderedKeys.distinct()
+        if (expectedKeys.isEmpty()) {
+            return ChapterPageReconciliation(
+                chapterStatus = Translation.State.ERROR,
+                strandedPages = emptyMap(),
+                unexpectedPageKeys = unexpectedPageKeys,
+                doneCount = 0,
+                failedCount = 0,
+                partialCount = 0,
+            )
+        }
+
+        val strandedPages = linkedMapOf<String, String>()
+        var doneCount = 0
+        var failedCount = 0
+        var partialCount = 0
+
+        for (pageKey in expectedKeys) {
+            val page = pageMap[pageKey]
+            if (page == null) {
+                strandedPages[pageKey] = "Translation incomplete — expected page is missing"
+                failedCount++
+                continue
+            }
+            if (page.runGeneration != activeGeneration && !page.hasRenderedResult && !page.isTextlessTerminal) {
+                // A nonterminal page from another generation was skipped by the planner and never reached by the producer.
+                strandedPages[pageKey] =
+                    "Translation incomplete — expected page was stranded by a prior run and not reached"
+                failedCount++
+                continue
+            }
+            when {
+                page.isStageFailed -> failedCount++
+                page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
+                // A partial candidate without rendered output is unreadable and remains retryable work.
+                page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
+                    partialCount++
+                    strandedPages[pageKey] =
+                        "Translation incomplete — partial result was never rendered"
+                    failedCount++
+                }
+                page.isStageCancelled || page.isStageRunning || page.isNonTerminalWithoutOutput() -> {
+                    strandedPages[pageKey] = "Translation incomplete — page was left cancelled or non-terminal"
+                    failedCount++
+                }
+                else -> {
+                    strandedPages[pageKey] = "Translation incomplete — expected page has no readable terminal output"
+                    failedCount++
+                }
+            }
+        }
+
+        val chapterStatus = when {
+            failedCount > 0 -> Translation.State.ERROR
+            partialCount > 0 -> Translation.State.READY_WITH_WARNINGS
+            else -> Translation.State.TRANSLATED
+        }
+
+        return ChapterPageReconciliation(
+            chapterStatus = chapterStatus,
+            strandedPages = strandedPages,
+            unexpectedPageKeys = unexpectedPageKeys,
+            doneCount = doneCount,
+            failedCount = failedCount,
+            partialCount = partialCount,
+        )
+    }
+
+    private fun PageTranslationView.isNonTerminalWithoutOutput(): Boolean {
+        return !isStageFailed &&
+            !hasRenderedResult &&
+            !isTextlessTerminal &&
+            (
+                ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                    ocrStatus == eu.kanade.translation.model.StageStatus.PENDING
+                )
+    }
+}
+
+
+/**
+ * Durable-only projections of a [PageArtifactRecord] (Phase 7 S8): both
+ * answers derive exclusively from the manifest record when no live page
+ * snapshot is available, so they share one committed/display-state
+ * interpretation module.
+ */
+
+/**
+ * Manifest fallback used by the open path ([eu.kanade.translation.persistence.chapter.ChapterStoreOpener]):
+ * synthesizes the page shape implied by the manifest alone. A committed
+ * pointer and validated display base are required before a page counts as
+ * stage-ready.
+ */
+internal fun PageArtifactRecord.toArtifactPageFallback(): PageTranslation {
+    val committed = committed
+    val displayBase = committed?.displayBase
+    val hasCommittedDisplay = committed != null &&
+        (
+            displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE ||
+                (
+                    displayBase?.kind == DisplayBaseKind.CLEANED_IMAGE &&
+                        displayBase.fileName != null &&
+                        !displayBase.legacyLayout
+                    )
+            )
+    val displayReady = displayState == PageDisplayState.DISPLAY_READY ||
+        displayState == PageDisplayState.TEXTLESS_COMPLETE ||
+        displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
+        displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+    val ready = hasCommittedDisplay && displayReady
+    val running = displayState == PageDisplayState.CANDIDATE_RUNNING
+    val failed = displayState == PageDisplayState.FAILED_NO_RESULT
+    val cleanedName = displayBase?.fileName?.takeIf {
+        displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
+            !displayBase.legacyLayout
+    }
+    return PageTranslation(
+        sourceFileName = pageKey,
+        cleanedImageName = cleanedName,
+        ocrStatus = when {
+            ready -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
+        },
+        translationStatus = when {
+            ready -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
+        },
+        inpaintStatus = when {
+            ready && cleanedName != null -> StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
+        },
+        renderStatus = when {
+            ready && (cleanedName != null || displayBase?.kind == DisplayBaseKind.ORIGINAL_SOURCE) ->
+                StageStatus.READY
+            running -> StageStatus.RUNNING
+            failed -> StageStatus.FAILED
+            else -> StageStatus.PENDING
+        },
+        pageVersion = pageVersion,
+        updatedAt = committed?.promotedAtEpochMs ?: 0L,
+    )
+}
+
+/**
+ * Project a durable artifact record when no live page snapshot is available.
+ * A committed pointer and validated display base are required before a page
+ * counts as translated-ready.
+ */
+fun PageArtifactRecord.toArtifactDisplayProjection(): PageDisplayProjection {
+    val committed = committed
+    val committedBaseValid = committed?.displayBase?.validated == true
+    val committedDisplayState = displayState
+    val committedStagesValid =
+        inpaint?.status in
+            setOf(
+                ArtifactStageStatus.READY,
+                ArtifactStageStatus.SKIPPED,
+            ) &&
+            translation?.status in
+            setOf(
+                ArtifactStageStatus.READY,
+                ArtifactStageStatus.PARTIAL,
+            ) &&
+            layout?.status == ArtifactStageStatus.READY
+    val hasCommittedDisplay =
+        committed != null &&
+            committedBaseValid &&
+            (committedDisplayState != PageDisplayState.DISPLAY_READY || committedStagesValid) &&
+            committedDisplayState.hasCommittedDisplay
+    val processed =
+        committedDisplayState in
+            setOf(
+                PageDisplayState.DISPLAY_READY,
+                PageDisplayState.FAILED_WITH_COMMITTED_RESULT,
+                PageDisplayState.FAILED_NO_RESULT,
+                PageDisplayState.TEXTLESS_COMPLETE,
+            )
+
+    return PageDisplayProjection(
+        state = committedDisplayState,
+        displayReady = hasCommittedDisplay,
+        processed = processed,
+    )
 }

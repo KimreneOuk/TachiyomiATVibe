@@ -1,5 +1,8 @@
 package eu.kanade.translation.persistence.chapter
 
+import eu.kanade.translation.persistence.artifact.ChapterResetPreflight
+import eu.kanade.translation.persistence.artifact.chapterResetPreflight
+
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
