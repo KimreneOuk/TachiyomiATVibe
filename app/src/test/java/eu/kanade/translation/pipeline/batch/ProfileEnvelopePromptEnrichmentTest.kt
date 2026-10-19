@@ -28,22 +28,22 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.context.AnalyzerProvenance
-import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.ArtifactDocumentJson
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.EnvelopePolicySnapshot
 import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.OcrStagePatch
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.StagePatchResult
+import eu.kanade.translation.persistence.ocrBlockFingerprints
+import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopeDispatchWork
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import eu.kanade.translation.pipeline.batch.envelope.PageDispatchWork
@@ -658,7 +658,7 @@ class ProfileEnvelopePromptEnrichmentTest {
         // artifact is required to translate.
         val artifact = store.artifactEngine.shouldNotBeNull()
         if (artifact.readManifest() == null) {
-            artifact.publishManifest(eu.kanade.translation.persistence.artifact.ChapterArtifactManifest(chapterKey = "Chapter 1"))
+            artifact.publishManifest(eu.kanade.translation.persistence.ChapterArtifactManifest(chapterKey = "Chapter 1"))
         }
         val planCommit = EnvelopePlanPublication.publish(
             artifact,

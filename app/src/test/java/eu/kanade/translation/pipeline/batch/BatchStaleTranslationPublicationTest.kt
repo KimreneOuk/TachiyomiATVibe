@@ -8,9 +8,9 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage

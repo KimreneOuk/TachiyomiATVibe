@@ -10,7 +10,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceStageObserver
 import eu.kanade.translation.diagnostics.TranslationTraceStageObserverRegistry
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.execution.TranslationStageEvent

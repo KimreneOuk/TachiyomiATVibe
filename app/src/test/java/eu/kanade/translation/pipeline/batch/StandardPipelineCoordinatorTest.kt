@@ -14,21 +14,21 @@ import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.ArtifactDocumentJson
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.OcrStagePatch
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.StagePatchResult
+import eu.kanade.translation.persistence.ocrBlockFingerprints
+import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
@@ -385,7 +385,7 @@ class StandardPipelineCoordinatorTest {
         }
     }
 
-    private fun durableRunRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.artifact.ChapterRunRecord? {
+    private fun durableRunRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.ChapterRunRecord? {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
         return (artifact.readRunRecord(pointer) as? ChapterArtifactEngine.RunRecordRead.Usable)?.record

@@ -3,8 +3,8 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.cancelInFlightStages
-import eu.kanade.translation.persistence.chapter.AttemptArtifactLease
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.AttemptArtifactLease
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable

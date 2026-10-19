@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline.batch.progress
 
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

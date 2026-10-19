@@ -5,17 +5,17 @@ import eu.kanade.translation.model.MaskConversionBudgets
 import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.OrderedMaskResult
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.ChapterArtifactManifest
 import eu.kanade.translation.engines.rendering.ColorStylePreparation
-import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.PageArtifactRecord
 import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.SidecarRead
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -141,10 +141,10 @@ class DrawPlanDtoRoundTripTest {
                 current.copy(
                     pages = current.pages + (
                         PAGE_KEY to page.copy(
-                            layout = eu.kanade.translation.persistence.artifact.StageArtifactRecord(
+                            layout = eu.kanade.translation.persistence.StageArtifactRecord(
                                 status = ArtifactStageStatus.READY,
                                 fingerprint = prepared.compatibilityFingerprint,
-                                origin = eu.kanade.translation.persistence.artifact.ArtifactOrigin.BATCH,
+                                origin = eu.kanade.translation.persistence.ArtifactOrigin.BATCH,
                                 artifactFileName = planFileName,
                                 updatedAtEpochMs = 2L,
                             ),

@@ -5,12 +5,12 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
-import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.chapter.toArtifactDisplayProjection
+import eu.kanade.translation.persistence.ArtifactOrigin
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.DurableFailureMetadata
+import eu.kanade.translation.persistence.PageArtifactRecord
+import eu.kanade.translation.persistence.toArtifactDisplayProjection
 
 /**
  * Plans the stages a page or ordered chapter batch can safely reuse.

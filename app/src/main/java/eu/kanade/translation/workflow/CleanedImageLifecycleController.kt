@@ -1,9 +1,9 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.chapter.CleanedImageIdentity
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.CleanedImageIdentity
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch

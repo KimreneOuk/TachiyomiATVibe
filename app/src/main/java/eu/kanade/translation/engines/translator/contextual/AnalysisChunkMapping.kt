@@ -8,14 +8,14 @@ import eu.kanade.translation.engines.translator.analysis.ExtractedEntity
 import eu.kanade.translation.engines.translator.analysis.ExtractedRelationship
 import eu.kanade.translation.engines.translator.analysis.ExtractedTerm
 import eu.kanade.translation.context.ProfileScene
-import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.SidecarPointer
 
 /**
  * Pure mapping from [PlannedAnalysisChunk] onto the durable
  * [AnalysisChunkResult] DTO. No I/O or coroutines; identity fields, contributing sets, and
  * fingerprints are carried over verbatim, so the mapped record re-validates
  * against the DTO's own schema rules and round-trips through the canonical
- * [eu.kanade.translation.persistence.artifact.ArtifactDocumentJson] instance.
+ * [eu.kanade.translation.persistence.ArtifactDocumentJson] instance.
  */
 
 /**

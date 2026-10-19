@@ -9,11 +9,11 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
-import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchPlannerInput
 import eu.kanade.translation.pipeline.planning.BatchStage

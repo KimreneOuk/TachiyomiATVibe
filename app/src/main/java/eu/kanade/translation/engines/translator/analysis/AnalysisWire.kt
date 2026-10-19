@@ -1,11 +1,11 @@
 package eu.kanade.translation.engines.translator.analysis
 
 import kotlinx.serialization.Serializable
-import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.SidecarPointer
 import eu.kanade.translation.context.ProfileScene
 import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.context.AnalyzerProvenance
-import eu.kanade.translation.persistence.artifact.isSha256Hex
+import eu.kanade.translation.persistence.isSha256Hex
 
 /**
  * Typed structured-analysis wire contract. This file defines the run identity

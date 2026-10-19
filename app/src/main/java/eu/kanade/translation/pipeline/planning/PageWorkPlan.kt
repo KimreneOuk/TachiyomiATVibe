@@ -1,9 +1,9 @@
 package eu.kanade.translation.pipeline.planning
 
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
+import eu.kanade.translation.persistence.ArtifactOrigin
+import eu.kanade.translation.persistence.DurableFailureMetadata
+import eu.kanade.translation.persistence.PageArtifactRecord
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 

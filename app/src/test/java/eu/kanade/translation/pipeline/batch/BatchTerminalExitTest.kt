@@ -7,8 +7,8 @@ import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterArtifactManifest
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints

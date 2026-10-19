@@ -3,7 +3,7 @@ package eu.kanade.translation.scheduling
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.SinglePageOutcome
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe

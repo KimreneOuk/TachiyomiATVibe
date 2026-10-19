@@ -1,7 +1,7 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -131,7 +131,7 @@ internal class ReaderTeardownCoordinator(
 
     /**
      * Cancels all in-flight single-page translation jobs for [chapterId] and evicts the shared
-     * [eu.kanade.translation.persistence.chapter.ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
+     * [eu.kanade.translation.persistence.ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
      * reader navigate-away so the previous chapter's work can no longer hold the executor's
      * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
      */

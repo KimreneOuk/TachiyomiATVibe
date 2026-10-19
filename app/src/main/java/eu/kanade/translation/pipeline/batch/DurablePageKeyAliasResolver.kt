@@ -1,7 +1,7 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.persistence.artifact.isSha256Hex
+import eu.kanade.translation.persistence.isSha256Hex
 
 /** Resolves old source keys from persisted identity and current downloaded bytes only. */
 internal object DurablePageKeyAliasResolver {

@@ -36,11 +36,11 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.persistence.artifact.isSha256Hex
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.isSha256Hex
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT

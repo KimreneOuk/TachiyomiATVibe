@@ -2,13 +2,13 @@ package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.artifact.ArtifactSeed
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.loadArtifact
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ArtifactSeed
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.loadArtifact
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.scheduling.OperationPaidCallLifecycle
 import eu.kanade.translation.scheduling.ReaderSessionToken

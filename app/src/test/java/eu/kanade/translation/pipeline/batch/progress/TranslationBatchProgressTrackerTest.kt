@@ -8,7 +8,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import io.kotest.matchers.nulls.shouldBeNull

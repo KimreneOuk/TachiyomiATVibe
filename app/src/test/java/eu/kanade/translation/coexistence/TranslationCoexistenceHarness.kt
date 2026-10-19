@@ -17,18 +17,18 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.artifact.ArtifactSeed
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.persistence.artifact.loadArtifact
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
+import eu.kanade.translation.persistence.ArtifactSeed
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.FakeChapterDocumentIo
+import eu.kanade.translation.persistence.loadArtifact
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.OcrStagePatch
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.StagePatchResult
+import eu.kanade.translation.persistence.ocrBlockFingerprints
 import eu.kanade.translation.scheduling.InMemorySharedPreferences
 import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.AttemptAuthority
@@ -230,7 +230,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // AdaptiveKnobSignalAdapter.forContext reads the app context during pipeline construction.
             every { context.applicationContext } returns context
             val preferences = harnessPreferences()
-            val provider = mockk<eu.kanade.translation.persistence.chapter.TranslationFileProvider>(relaxed = true)
+            val provider = mockk<eu.kanade.translation.persistence.TranslationFileProvider>(relaxed = true)
             if (cleanedImagesOnDisk.isNotEmpty()) {
                 val onDisk = mockk<UniFile> {
                     every { exists() } returns true

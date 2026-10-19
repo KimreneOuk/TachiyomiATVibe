@@ -6,7 +6,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget

@@ -7,7 +7,7 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.persistence.artifact.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget

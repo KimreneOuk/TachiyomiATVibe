@@ -1,9 +1,9 @@
 package eu.kanade.translation.pipeline.batch
 
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactManifest
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import kotlinx.coroutines.runBlocking
 

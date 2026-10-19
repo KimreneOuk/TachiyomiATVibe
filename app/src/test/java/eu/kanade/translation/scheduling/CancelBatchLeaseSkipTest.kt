@@ -6,10 +6,10 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageStageLease
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.PageStageLease
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe

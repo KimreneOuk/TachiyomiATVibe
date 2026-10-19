@@ -3,8 +3,8 @@ package eu.kanade.translation.engines.rendering
 import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.SidecarRead
 
 /**
  * Resolves a page's persisted

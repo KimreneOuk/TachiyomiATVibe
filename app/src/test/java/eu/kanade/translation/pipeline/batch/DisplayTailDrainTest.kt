@@ -31,23 +31,23 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.context.AnalyzerProvenance
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.EnvelopePolicySnapshot
 import eu.kanade.translation.context.EvidenceRef
-import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.FailureCategory
+import eu.kanade.translation.persistence.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.OcrStagePatch
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.StagePatchResult
+import eu.kanade.translation.persistence.ocrBlockFingerprints
+import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorker
 import eu.kanade.translation.pipeline.batch.recovery.RecoveryWorkerContext
@@ -311,7 +311,7 @@ class DisplayTailDrainTest {
         return ContextualRequestBuilder.toBatch(request, results)
     }
 
-    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.artifact.ChapterRunRecord {
+    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.persistence.ChapterRunRecord {
         val artifact = artifactStore()
         val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
         return (artifact.readRunRecord(pointer) as ChapterArtifactEngine.RunRecordRead.Usable).record

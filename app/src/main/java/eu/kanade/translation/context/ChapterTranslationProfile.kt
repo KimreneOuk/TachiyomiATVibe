@@ -1,6 +1,6 @@
 package eu.kanade.translation.context
 
-import eu.kanade.translation.persistence.artifact.isSha256Hex
+import eu.kanade.translation.persistence.isSha256Hex
 
 import kotlinx.serialization.Serializable
 

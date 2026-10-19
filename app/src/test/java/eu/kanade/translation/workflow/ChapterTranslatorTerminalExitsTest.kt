@@ -4,8 +4,8 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.scheduling.InMemorySharedPreferences
 import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline

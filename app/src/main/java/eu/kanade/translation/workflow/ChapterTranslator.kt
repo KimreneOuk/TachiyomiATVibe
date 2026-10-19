@@ -10,9 +10,9 @@ import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline

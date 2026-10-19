@@ -6,9 +6,9 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.scheduling.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationExecutor

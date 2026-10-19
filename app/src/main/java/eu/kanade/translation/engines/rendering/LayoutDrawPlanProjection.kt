@@ -2,7 +2,7 @@ package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.TranslationBlockView
-import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.engines.rendering.DrawPlanAlign
 import eu.kanade.translation.engines.rendering.DrawPlanBlock
 import eu.kanade.translation.engines.rendering.DrawPlanFontIdentity

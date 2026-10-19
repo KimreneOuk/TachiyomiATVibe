@@ -5,7 +5,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceIdGenerator
 import eu.kanade.translation.diagnostics.TranslationTraceSink
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.model.SinglePageOutcome
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import eu.kanade.translation.pipeline.execution.TranslationStageListener
 import io.kotest.matchers.shouldBe

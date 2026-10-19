@@ -3,9 +3,9 @@ package eu.kanade.translation.presentation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.RunConfigSnapshot
 import eu.kanade.translation.workflow.rebuildTruthFromRunRecord
 import eu.kanade.translation.workflow.withRunRecordTruth
 import io.kotest.matchers.nulls.shouldBeNull

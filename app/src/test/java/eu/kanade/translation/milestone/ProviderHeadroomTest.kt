@@ -101,7 +101,7 @@ class ProviderHeadroomTest {
         sourceLang: String = "ja",
         targetLang: String = "en",
         providerKey: String = "lm_studio:qwen-2.5",
-    ): eu.kanade.translation.persistence.artifact.RunConfigSnapshot = ChapterProfileBatchCoordinator.frozenRunConfig(
+    ): eu.kanade.translation.persistence.RunConfigSnapshot = ChapterProfileBatchCoordinator.frozenRunConfig(
         sourceLang = sourceLang,
         targetLang = targetLang,
         ocrEngine = "MangaOcr",

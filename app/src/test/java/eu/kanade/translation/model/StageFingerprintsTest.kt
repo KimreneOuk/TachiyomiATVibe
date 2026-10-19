@@ -1,10 +1,10 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.DisplayBaseReference
-import eu.kanade.translation.persistence.artifact.DisplayBaseKind
-import eu.kanade.translation.persistence.artifact.SourceIdentity
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.DisplayBaseReference
+import eu.kanade.translation.persistence.DisplayBaseKind
+import eu.kanade.translation.persistence.SourceIdentity
 import eu.kanade.translation.context.ChapterTranslationProfile
 import eu.kanade.translation.context.ProfileFact
 import eu.kanade.translation.context.FactType

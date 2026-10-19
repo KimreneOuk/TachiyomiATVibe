@@ -1,8 +1,8 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.TranslationFileProvider
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

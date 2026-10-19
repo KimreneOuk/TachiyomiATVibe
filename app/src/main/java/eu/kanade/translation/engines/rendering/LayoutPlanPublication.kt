@@ -170,14 +170,14 @@ object LayoutPlanPublication {
 
     /** Canonical encode of the color sub-result ( shared Json only). */
     fun encodeColorPreparation(preparation: ColorStylePreparation): String =
-        eu.kanade.translation.persistence.artifact.ArtifactDocumentJson.encodeToString(
+        eu.kanade.translation.persistence.ArtifactDocumentJson.encodeToString(
             ColorStylePreparation.serializer(),
             preparation,
         )
 
     /** Canonical decode of the color sub-result. */
     fun decodeColorPreparation(json: String): ColorStylePreparation =
-        eu.kanade.translation.persistence.artifact.ArtifactDocumentJson.decodeFromString(
+        eu.kanade.translation.persistence.ArtifactDocumentJson.decodeFromString(
             ColorStylePreparation.serializer(),
             json,
         )

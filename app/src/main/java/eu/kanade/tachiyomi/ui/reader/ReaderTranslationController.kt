@@ -43,8 +43,8 @@ import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.repairStrandedPageWithAcquiredAutoLease
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline

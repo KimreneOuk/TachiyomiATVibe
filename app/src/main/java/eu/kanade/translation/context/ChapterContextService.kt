@@ -3,10 +3,10 @@ package eu.kanade.translation.context
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.PageArtifactRecord
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import java.security.MessageDigest
 
 enum class LaneCapability {

@@ -4,11 +4,11 @@ import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.FailureCategory
+import eu.kanade.translation.persistence.ArtifactOrigin
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.DurableFailureMetadata
+import eu.kanade.translation.persistence.FailureCategory
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

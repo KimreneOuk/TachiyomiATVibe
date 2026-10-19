@@ -10,9 +10,9 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.PageWriteOrigin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock

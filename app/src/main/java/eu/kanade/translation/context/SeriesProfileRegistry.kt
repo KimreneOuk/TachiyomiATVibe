@@ -2,7 +2,7 @@ package eu.kanade.translation.context
 
 import eu.kanade.translation.context.ChapterTranslationProfile
 import eu.kanade.translation.context.FactProvenance
-import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
+import eu.kanade.translation.persistence.RunConfigSnapshot
 import eu.kanade.translation.model.StageFingerprints
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap

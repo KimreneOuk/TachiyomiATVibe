@@ -3,9 +3,9 @@ package eu.kanade.translation.workflow
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler

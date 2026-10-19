@@ -5,11 +5,11 @@ import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.engines.translator.contextual.EnvelopePlannerPolicy
 import eu.kanade.translation.engines.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.RunConfigSnapshot
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.batch.BatchPageTraceRegistry
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status

@@ -2,7 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
  * handles. What remains load-bearing at the store level is the in-memory fast
  * flip itself: RUNNING stages become CANCELLED immediately, rendered results
  * are preserved, and the flip is a no-op after the store is marked defunct
- * (covered by [eu.kanade.translation.persistence.chapter.ChapterTranslationStoreDefunctTest]).
+ * (covered by [eu.kanade.translation.persistence.ChapterTranslationStoreDefunctTest]).
  */
 class CancelSyncStoreWriteTest {
 

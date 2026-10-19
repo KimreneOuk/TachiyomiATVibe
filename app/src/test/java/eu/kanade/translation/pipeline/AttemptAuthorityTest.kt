@@ -2,7 +2,7 @@ package eu.kanade.translation.pipeline
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.Job

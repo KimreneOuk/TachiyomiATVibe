@@ -5,8 +5,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterRunState
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.recovery.BatchResumePolicy
 import io.kotest.matchers.nulls.shouldNotBeNull

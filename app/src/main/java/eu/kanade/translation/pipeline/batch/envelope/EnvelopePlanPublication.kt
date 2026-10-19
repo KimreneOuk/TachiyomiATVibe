@@ -1,15 +1,15 @@
 package eu.kanade.translation.pipeline.batch.envelope
 
 import kotlinx.serialization.Serializable
-import eu.kanade.translation.persistence.artifact.isSha256Hex
+import eu.kanade.translation.persistence.isSha256Hex
 
-import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.ArtifactDocumentJson
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactManifest
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.SidecarRead
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 

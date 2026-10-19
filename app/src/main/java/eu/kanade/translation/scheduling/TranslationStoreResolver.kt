@@ -1,6 +1,6 @@
 package eu.kanade.translation.scheduling
 
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 
 /**
  * resolves the live [ChapterTranslationStore] for a chapter id.

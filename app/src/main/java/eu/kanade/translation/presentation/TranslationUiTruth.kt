@@ -12,7 +12,7 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import java.text.DateFormat
 import java.util.Date
 

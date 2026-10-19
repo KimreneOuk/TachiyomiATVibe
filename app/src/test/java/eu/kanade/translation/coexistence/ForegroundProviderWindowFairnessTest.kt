@@ -11,7 +11,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe

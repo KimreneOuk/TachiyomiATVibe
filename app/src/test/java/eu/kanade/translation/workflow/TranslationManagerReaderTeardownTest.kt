@@ -2,8 +2,8 @@ package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.coEvery
 import io.mockk.every

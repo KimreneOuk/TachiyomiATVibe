@@ -1,6 +1,6 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 
 /**
  * A typed outcome of one single-page intent. It replaces

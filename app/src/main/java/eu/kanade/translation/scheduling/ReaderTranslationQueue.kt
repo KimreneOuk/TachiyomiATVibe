@@ -14,7 +14,7 @@ import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
 import eu.kanade.translation.pipeline.execution.TranslationExecutor

@@ -1,6 +1,6 @@
 package eu.kanade.translation.pipeline.batch.analysis
 
-import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.SidecarPointer
 
 /** Rebuilt OCR page entry with both durable storage and analysis wire identities. */
 internal class AnalysisCorpusEntry(

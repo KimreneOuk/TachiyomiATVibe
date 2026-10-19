@@ -5,7 +5,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.persistence.chapter.ChapterPageReconciler
+import eu.kanade.translation.persistence.ChapterPageReconciler
 import eu.kanade.translation.pipeline.batch.BatchPass1Outcome
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 

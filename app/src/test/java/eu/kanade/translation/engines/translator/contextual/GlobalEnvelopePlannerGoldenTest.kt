@@ -393,7 +393,7 @@ class GlobalEnvelopePlannerGoldenTest {
         )
         val goldenBytes = javaClass.getResourceAsStream(GOLDEN_RESOURCE)?.use { it.readBytes() }
             ?: error("missing golden fixture $GOLDEN_RESOURCE")
-        val actual = eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+        val actual = eu.kanade.translation.persistence.ArtifactDocumentJson
             .encodeToString(EnvelopePlan.serializer(), success.plan)
         actual.toByteArray(Charsets.UTF_8) shouldBe goldenBytes
         success.plan.planFingerprint shouldBe GOLDEN_PLAN_FINGERPRINT

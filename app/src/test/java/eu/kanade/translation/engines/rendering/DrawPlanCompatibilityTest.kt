@@ -2,8 +2,8 @@ package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.SidecarRead
+import eu.kanade.translation.persistence.SidecarPointer
+import eu.kanade.translation.persistence.SidecarRead
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf

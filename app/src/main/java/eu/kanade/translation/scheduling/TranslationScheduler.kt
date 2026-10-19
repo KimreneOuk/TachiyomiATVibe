@@ -9,8 +9,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

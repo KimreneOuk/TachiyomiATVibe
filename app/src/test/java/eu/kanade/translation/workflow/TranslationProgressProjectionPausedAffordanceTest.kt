@@ -3,11 +3,11 @@ package eu.kanade.translation.workflow
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.persistence.artifact.ArtifactStage
-import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
-import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
-import eu.kanade.translation.persistence.artifact.FailureCategory
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.DurableFailureMetadata
+import eu.kanade.translation.persistence.FailureCategory
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.presentation.TranslationUiTruth
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -2,8 +2,8 @@ package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.chapter.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe

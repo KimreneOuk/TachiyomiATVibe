@@ -3,9 +3,9 @@ package eu.kanade.translation.engines.translator.contextual
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkResult
 import eu.kanade.translation.engines.translator.analysis.AnalysisChunkStatus
 import eu.kanade.translation.context.AnalyzerProvenance
-import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
+import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.context.EvidenceRef
-import eu.kanade.translation.persistence.artifact.SidecarPointer
+import eu.kanade.translation.persistence.SidecarPointer
 import eu.kanade.translation.model.StageFingerprints
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull

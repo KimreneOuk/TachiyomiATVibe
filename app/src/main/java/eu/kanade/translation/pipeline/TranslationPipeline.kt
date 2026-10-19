@@ -31,11 +31,11 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.TranslationFileProvider
-import eu.kanade.translation.persistence.chapter.mergeOcrFields
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.persistence.mergeOcrFields
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.DeferredPagePublications

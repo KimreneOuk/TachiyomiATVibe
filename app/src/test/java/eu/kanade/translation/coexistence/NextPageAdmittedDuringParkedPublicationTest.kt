@@ -2,7 +2,7 @@ package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.AttemptAuthority
 import eu.kanade.translation.pipeline.CleanedOwner
 import io.kotest.assertions.withClue

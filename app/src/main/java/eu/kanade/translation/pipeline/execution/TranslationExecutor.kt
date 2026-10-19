@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.model.SinglePageOutcome
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream

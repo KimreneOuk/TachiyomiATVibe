@@ -1,11 +1,11 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.ChapterRunState
-import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.ChapterRunState
+import eu.kanade.translation.persistence.RunConfigSnapshot
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext

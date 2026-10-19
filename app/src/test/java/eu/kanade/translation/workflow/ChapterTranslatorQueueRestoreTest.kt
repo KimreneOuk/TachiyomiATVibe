@@ -10,18 +10,18 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
-import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
-import eu.kanade.translation.persistence.artifact.ChapterRunRecord
-import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
-import eu.kanade.translation.persistence.chapter.LeaseAcquisition
-import eu.kanade.translation.persistence.chapter.OcrStagePatch
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.chapter.StagePatchResult
-import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.chapter.ocrFingerprint
+import eu.kanade.translation.persistence.AtomicChapterDocuments
+import eu.kanade.translation.persistence.ChapterArtifactEngine
+import eu.kanade.translation.persistence.ChapterArtifactLayout
+import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.UniFileChapterDocumentIo
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
+import eu.kanade.translation.persistence.OcrStagePatch
+import eu.kanade.translation.persistence.PageWriteOrigin
+import eu.kanade.translation.persistence.StagePatchResult
+import eu.kanade.translation.persistence.ocrBlockFingerprints
+import eu.kanade.translation.persistence.ocrFingerprint
 import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.NativeLaneWorker
@@ -234,7 +234,7 @@ class ChapterTranslatorQueueRestoreTest {
         // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
         // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
         // next explicit run resumes from this pointer; restore starts nothing.
-        record.state shouldBe eu.kanade.translation.persistence.artifact.ChapterRunState.OCR_PLAN
+        record.state shouldBe eu.kanade.translation.persistence.ChapterRunState.OCR_PLAN
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 1
     }
 

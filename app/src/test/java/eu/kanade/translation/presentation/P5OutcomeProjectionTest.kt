@@ -6,7 +6,7 @@ import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.SinglePageOutcome
-import eu.kanade.translation.persistence.chapter.PageWriteOrigin
+import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.scheduling.TranslationScheduler
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
