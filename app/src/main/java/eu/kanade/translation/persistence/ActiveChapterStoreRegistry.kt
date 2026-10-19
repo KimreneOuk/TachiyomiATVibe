@@ -11,25 +11,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Process-wide registry of active chapter writers in [ActiveChapterStoreRegistry].
- * Registration is observability-only: it records writers but excludes
- * nothing, preserving probe/status-resolver choreography.
- */
-enum class WriterOrigin(val description: String) {
-    MAIN_STORE("main chapter translation store"),
-    PROBE_STORE("probe store for durable inspection"),
-    STATUS_RESOLVER("durable chapter status resolver"),
-}
-
-data class ActiveWriter(
-    val chapterId: Long? = null,
-    val chapterKey: String? = null,
-    val origin: WriterOrigin,
-    val tag: String? = null,
-    val registeredAtEpochMs: Long = System.currentTimeMillis(),
-)
-
-/**
  * Chapter-keyed owner of active translation stores.
  *
  * A reader must select a store by its own chapter ID; publishing another chapter's store can
@@ -39,10 +20,7 @@ data class ActiveWriter(
 internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
     private val fileStores = LinkedHashMap<String, ChapterTranslationStore>()
-    private val probeStores = LinkedHashMap<String, ChapterTranslationStore>()
     private val openingLocks = LinkedHashMap<String, Mutex>()
-    private val storeWriterRegistrations = LinkedHashMap<Long, AutoCloseable>()
-    private val probeWriterRegistrations = LinkedHashMap<String, AutoCloseable>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
 
@@ -56,12 +34,6 @@ internal class ActiveChapterStoreRegistry {
     fun register(chapterId: Long, store: ChapterTranslationStore): Boolean {
         if (stores.containsKey(chapterId)) return false
         stores[chapterId] = store
-        store.chapterKey?.let { mainStores[it] = store }
-        storeWriterRegistrations[chapterId] = registerWriter(
-            chapterId = chapterId,
-            chapterKey = store.chapterKey,
-            origin = WriterOrigin.MAIN_STORE,
-        )
         publish()
         return true
     }
@@ -92,15 +64,6 @@ internal class ActiveChapterStoreRegistry {
             fileKey?.let { getByFile(it) }?.let { store ->
                 return@withLock if (register(chapterId, store)) store else get(chapterId)
             }
-            fileKey?.let { takeProbe(it) }?.let { store ->
-                return@withLock if (register(chapterId, store)) {
-                    registerFile(fileKey, store)
-                    store
-                } else {
-                    store.closeAndFlush()
-                    get(chapterId)
-                }
-            }
             val created = create() ?: return@withLock null
             if (!register(chapterId, created)) return@withLock get(chapterId)
             if (fileKey != null) registerFile(fileKey, created)
@@ -118,41 +81,8 @@ internal class ActiveChapterStoreRegistry {
         }
         return openingLock.withLock {
             getByFile(fileKey)?.let { return@withLock it }
-            takeProbe(fileKey)?.let { probe ->
-                return@withLock if (registerFile(fileKey, probe)) {
-                    probe
-                } else {
-                    probe.closeAndFlush()
-                    getByFile(fileKey)
-                }
-            }
             val created = create() ?: return@withLock null
             if (registerFile(fileKey, created)) created else getByFile(fileKey)
-        }
-    }
-
-    /** Opens a non-published store used only for a durable read probe. */
-    suspend fun getOrCreateProbe(
-        fileKey: String,
-        create: suspend () -> ChapterTranslationStore?,
-    ): ProbeResult? {
-        val openingLock = synchronized(this) {
-            openingLocks.getOrPut(fileKey) { Mutex() }
-        }
-        return openingLock.withLock {
-            getByFile(fileKey)?.let { return@withLock ProbeResult(it, owned = false) }
-            synchronized(this@ActiveChapterStoreRegistry) { probeStores[fileKey] }?.let {
-                return@withLock ProbeResult(it, owned = true)
-            }
-            val created = create() ?: return@withLock null
-            synchronized(this@ActiveChapterStoreRegistry) {
-                probeStores[fileKey] = created
-                probeWriterRegistrations[fileKey] = registerWriter(
-                    chapterKey = fileKey,
-                    origin = WriterOrigin.PROBE_STORE,
-                )
-            }
-            ProbeResult(created, owned = true, created = true)
         }
     }
 
@@ -174,28 +104,11 @@ internal class ActiveChapterStoreRegistry {
     @Synchronized
     fun hasStoreForFile(fileKey: String): Boolean =
         fileStores.containsKey(fileKey) ||
-            probeStores.containsKey(fileKey) ||
             stores.values.any { it.chapterKey == fileKey }
-
-    /**
-     * Removes a probe unless an active chapter or file reader adopted it while
-     * the probe was running. The caller closes the returned store only when the
-     * result is true; active stores retain their persist scope.
-     */
-    @Synchronized
-    fun releaseProbe(fileKey: String, store: ChapterTranslationStore): Boolean {
-        if (probeStores[fileKey] !== store) return false
-        val active = stores.values.any { it === store } || fileStores[fileKey] === store
-        probeStores.remove(fileKey)
-        probeWriterRegistrations.remove(fileKey)?.close()
-        return !active
-    }
 
     @Synchronized
     fun remove(chapterId: Long): ChapterTranslationStore? {
         val removed = stores.remove(chapterId) ?: return null
-        removed.chapterKey?.let { mainStores.remove(it) }
-        storeWriterRegistrations.remove(chapterId)?.close()
         fileStores.entries.removeIf { it.value === removed }
         publish()
         return removed
@@ -221,88 +134,5 @@ internal class ActiveChapterStoreRegistry {
 
     private fun publish() {
         _snapshots.value = stores.toMap()
-    }
-
-    data class ProbeResult(
-        val store: ChapterTranslationStore,
-        val owned: Boolean,
-        /**
-         * True only when this call ran [create] — a freshly opened probe may
-         * have recovered or seeded journal-backed state and advanced durable truth, so
-         * observers must drop statuses cached before it. A reused probe
-         * already had that wipe when it was first created.
-         */
-        val created: Boolean = false,
-    )
-
-    @Synchronized
-    private fun takeProbe(fileKey: String): ChapterTranslationStore? {
-        probeWriterRegistrations.remove(fileKey)?.close()
-        return probeStores.remove(fileKey)
-    }
-
-    companion object {
-        private val mainStores = java.util.concurrent.ConcurrentHashMap<String, ChapterTranslationStore>()
-        private val globalWriters = LinkedHashSet<ActiveWriter>()
-        private val globalMutex = Any()
-
-        fun mainStoreFor(chapterKey: String): ChapterTranslationStore? = mainStores[chapterKey]
-
-        /**
-         * Registers an active writer process-wide.
-         *
-         * Registers a process-wide writer for diagnostics and inspection.
-         */
-        fun registerWriter(
-            chapterId: Long? = null,
-            chapterKey: String? = null,
-            origin: WriterOrigin,
-            tag: String? = null,
-            nowEpochMs: Long = System.currentTimeMillis(),
-        ): AutoCloseable = synchronized(globalMutex) {
-            val writer = ActiveWriter(
-                chapterId = chapterId,
-                chapterKey = chapterKey,
-                origin = origin,
-                tag = tag,
-                registeredAtEpochMs = nowEpochMs,
-            )
-            globalWriters.add(writer)
-            AutoCloseable {
-                synchronized(globalMutex) {
-                    globalWriters.remove(writer)
-                }
-            }
-        }
-
-        fun getActiveWriters(chapterId: Long? = null, chapterKey: String? = null): List<ActiveWriter> =
-            synchronized(globalMutex) {
-                globalWriters.filter {
-                    (chapterId != null && it.chapterId == chapterId) ||
-                        (chapterKey != null && it.chapterKey == chapterKey)
-                }
-            }
-
-        fun hasActiveWriter(
-            chapterId: Long? = null,
-            chapterKey: String? = null,
-            origin: WriterOrigin,
-        ): Boolean = synchronized(globalMutex) {
-            globalWriters.any {
-                (
-                    (chapterId != null && it.chapterId == chapterId) ||
-                        (chapterKey != null && it.chapterKey == chapterKey)
-                    ) &&
-                    it.origin == origin
-            }
-        }
-
-        fun allActiveWriters(): List<ActiveWriter> = synchronized(globalMutex) {
-            globalWriters.toList()
-        }
-
-        fun clearGlobalWriters() = synchronized(globalMutex) {
-            globalWriters.clear()
-        }
     }
 }

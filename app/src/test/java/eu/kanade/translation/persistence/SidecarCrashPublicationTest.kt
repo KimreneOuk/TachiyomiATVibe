@@ -151,35 +151,29 @@ class SidecarCrashPublicationTest {
         val initial = initialManifest(io)
         val record = runRecord(state = ChapterRunState.PROFILE_FROZEN)
         val runName = layout.runRecordFile(hex64)
-        val profileName = layout.profileFile(hex64)
+        val envelopeName = layout.envelopePlanFile(hex64)
 
         fun publication() = listOf(
             ChapterArtifactEngine.SidecarPublication(runName, hex64) {
                 docs.publishJson(runName, record)
             },
-            ChapterArtifactEngine.SidecarPublication(profileName, hex64) {
-                docs.publishJson(profileName, record)
+            ChapterArtifactEngine.SidecarPublication(envelopeName, hex64) {
+                docs.publishJson(envelopeName, record)
             },
         )
         fun installPointers(manifest: ChapterArtifactManifest) = manifest.copy(
             activeRun = SidecarPointer(fileName = runName, schemaVersion = 1, contentFingerprint = hex64),
-            profile = ProfilePointer(
-                fileName = profileName,
-                schemaVersion = 1,
-                contentFingerprint = hex64,
-                version = 1,
-                profileInputFingerprint = hex64,
-            ),
+            envelopePlan = SidecarPointer(fileName = envelopeName, schemaVersion = 1, contentFingerprint = hex64),
         )
 
         // Fail the SECOND sidecar: neither pointer may appear, the first
         // sidecar stays an orphan only.
-        io.writeNamesToFail += "/profiles/"
+        io.writeNamesToFail += "/envelopes/"
         val failed = store.publishSidecarPointers(initial, publication(), ::installPointers)
         failed.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
         store.readManifest() shouldBe initial
         io.files.containsKey(runName) shouldBe true
-        io.files.containsKey(profileName) shouldBe false
+        io.files.containsKey(envelopeName) shouldBe false
         io.writeNamesToFail.clear()
 
         // Retry publishes both sidecars and exactly ONE manifest publication.
@@ -188,13 +182,13 @@ class SidecarCrashPublicationTest {
             .shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         io.writtenNames.count { it == manifestTmpName() } shouldBe 1
         committed.manifest.activeRun?.fileName shouldBe runName
-        committed.manifest.profile?.fileName shouldBe profileName
+        committed.manifest.envelopePlan?.fileName shouldBe envelopeName
         store.readManifest() shouldBe committed.manifest
 
         // Both pointed sidecars survive retention.
         store.reconcileRetention(committed.manifest)
         io.files.containsKey(runName) shouldBe true
-        io.files.containsKey(profileName) shouldBe true
+        io.files.containsKey(envelopeName) shouldBe true
     }
 
     @Test

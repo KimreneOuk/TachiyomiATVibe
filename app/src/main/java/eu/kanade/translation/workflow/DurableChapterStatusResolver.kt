@@ -130,8 +130,6 @@ internal class DurableChapterStatusResolver(
         val read = ChapterStoreOpener.readDurableChapter(
             document.parent,
             document.fileName,
-            provider.privateJournalRoot,
-            provider.privateJournalIdentity(source, mangaTitle, document.fileName),
         )
         // Unsupported future schemas count as ABSENT for planning (bytes are
         // preserved untouched); corrupt evidence resolves null rather than
@@ -196,8 +194,6 @@ internal class DurableChapterStatusResolver(
             val read = ChapterStoreOpener.readDurableChapter(
                 document.parent,
                 document.fileName,
-                provider.privateJournalRoot,
-                provider.privateJournalIdentity(source, mangaTitle, document.fileName),
             )
         ) {
             is DurableChapterRead.Supported -> block(DurableChapterAccess.DurableRead(read.state))

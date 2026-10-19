@@ -55,15 +55,11 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     // Versioned sidecar directories. File names are
     // content-addressed `f-<sha256(contentFingerprint)>.json`; page-scoped
-    // kinds (OCR checkpoints, layout plans, color preparations) nest under the
-    // injective pageSegment(pageKey). All are managed so retention bounds them.
+    // kinds (OCR checkpoints) nest under the injective pageSegment(pageKey).
+    // All are managed so retention bounds them.
     private val runRecordsDirectoryName = "$artifactRootDirectoryName/runs"
     private val ocrCheckpointDirectoryName = "$artifactRootDirectoryName/ocr"
-    private val analysisChunkDirectoryName = "$artifactRootDirectoryName/analysis"
-    private val profileDirectoryName = "$artifactRootDirectoryName/profiles"
     private val envelopePlanDirectoryName = "$artifactRootDirectoryName/envelopes"
-    private val layoutPlanDirectoryName = "$artifactRootDirectoryName/layout"
-    private val colorPreparationDirectoryName = "$artifactRootDirectoryName/color"
 
     fun stageArtifactFile(pageKey: String, stage: ArtifactStage, fingerprint: String): String =
         listOf(
@@ -119,11 +115,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     val runRecordsRootDirectory: String get() = runRecordsDirectoryName
     val ocrCheckpointsRootDirectory: String get() = ocrCheckpointDirectoryName
-    val analysisChunksRootDirectory: String get() = analysisChunkDirectoryName
-    val profilesRootDirectory: String get() = profileDirectoryName
     val envelopePlansRootDirectory: String get() = envelopePlanDirectoryName
-    val layoutPlansRootDirectory: String get() = layoutPlanDirectoryName
-    val colorPreparationsRootDirectory: String get() = colorPreparationDirectoryName
 
     fun runRecordFile(contentFingerprint: String): String =
         contentAddressedFile(runRecordsDirectoryName, contentFingerprint)
@@ -131,20 +123,8 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     fun ocrCheckpointFile(pageKey: String, contentFingerprint: String): String =
         pageContentAddressedFile(ocrCheckpointDirectoryName, pageKey, contentFingerprint)
 
-    fun analysisChunkFile(contentFingerprint: String): String =
-        contentAddressedFile(analysisChunkDirectoryName, contentFingerprint)
-
-    fun profileFile(contentFingerprint: String): String =
-        contentAddressedFile(profileDirectoryName, contentFingerprint)
-
     fun envelopePlanFile(contentFingerprint: String): String =
         contentAddressedFile(envelopePlanDirectoryName, contentFingerprint)
-
-    fun layoutPlanFile(pageKey: String, contentFingerprint: String): String =
-        pageContentAddressedFile(layoutPlanDirectoryName, pageKey, contentFingerprint)
-
-    fun colorPreparationFile(pageKey: String, contentFingerprint: String): String =
-        pageContentAddressedFile(colorPreparationDirectoryName, pageKey, contentFingerprint)
 
     val contextRootDirectory: String get() = contextDirectoryName
 
@@ -170,11 +150,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
         attemptsDirectoryName,
         runRecordsDirectoryName,
         ocrCheckpointDirectoryName,
-        analysisChunkDirectoryName,
-        profileDirectoryName,
         envelopePlanDirectoryName,
-        layoutPlanDirectoryName,
-        colorPreparationDirectoryName,
     )
 
     /** True when [path] is equal to or contained inside a managed directory. */

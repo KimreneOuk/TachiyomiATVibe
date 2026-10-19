@@ -134,8 +134,8 @@ class ManifestPublicationReceiptTest {
         val docs = AtomicChapterDocuments(io)
         val initial = store.loadArtifact(seededSnapshot()).manifest
         val runName = layout.runRecordFile(hex64)
-        val profileName = layout.profileFile(hex64)
-        io.writeNamesToFail += "/profiles/"
+        val envelopeName = layout.envelopePlanFile(hex64)
+        io.writeNamesToFail += "/envelopes/"
 
         val outcome = store.publishSidecarPointers(
             manifest = initial,
@@ -143,7 +143,7 @@ class ManifestPublicationReceiptTest {
                 ChapterArtifactEngine.SidecarPublication(runName, hex64) {
                     docs.publishJson(runName, runRecord())
                 },
-                ChapterArtifactEngine.SidecarPublication(profileName, hex64) { false },
+                ChapterArtifactEngine.SidecarPublication(envelopeName, hex64) { false },
             ),
             updatePointers = { it },
         )

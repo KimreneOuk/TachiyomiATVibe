@@ -17,13 +17,8 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     val writtenNames = mutableListOf<String>()
     val writeAttempts = mutableListOf<WriteAttempt>()
     val listedDirectories = mutableListOf<String>()
-    val lastModifiedTimes = mutableMapOf<String, Long>()
     var failWrites = false
     var supportsNoReplaceRename = true
-    var renameChangesLastModified = false
-    var fileBacked = false
-
-    override fun isFileBacked(): Boolean = fileBacked
 
     /** Owned artifact moves remain available even when this double models URI/SAF. */
     val ownedRenamesToFail = mutableSetOf<String>()
@@ -66,8 +61,6 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun read(name: String): ByteArray? = files[name]?.copyOf()
 
-    override fun lastModified(name: String): Long = lastModifiedTimes[name] ?: 0L
-
     val syncedWrites = mutableListOf<String>()
 
     override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean {
@@ -89,9 +82,6 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
         if (files.containsKey(to) || directories.contains(to)) return RenameResult.DESTINATION_EXISTS
         if (!files.containsKey(from)) return RenameResult.FAILED
         files[to] = files.remove(from)!!
-        lastModifiedTimes.remove(from)?.let { modified ->
-            lastModifiedTimes[to] = if (renameChangesLastModified) modified + 1L else modified
-        }
         ensureParents(to)
         renamed += from to to
         return RenameResult.MOVED
@@ -104,9 +94,6 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
         beforeOwnedRenameAttempt?.invoke(from, to)
         files.remove(from)
         files[to] = bytes
-        lastModifiedTimes.remove(from)?.let { modified ->
-            lastModifiedTimes[to] = if (renameChangesLastModified) modified + 1L else modified
-        }
         ensureParents(to)
         renamed += from to to
         return true

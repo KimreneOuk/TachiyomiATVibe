@@ -15,7 +15,6 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /** Result of reading manifest metadata without opening page snapshots or sidecars. */
@@ -62,7 +61,7 @@ internal sealed interface DurableChapterRead {
  * One publication-free durable chapter read. Every map mirrors what an open
  * would seed into a live store ([ChapterTranslationStore.state]/[ChapterTranslationStore.display]
  * and the opening status ledger), assembled read-only through the opener and
- * the pure status projector — no store, writer, or journal bridge is built.
+ * the pure status projector — no store or writer is built.
  */
 internal class DurableChapterState(
     val manifest: ChapterArtifactManifest,
@@ -106,10 +105,8 @@ private class ReadOnlyChapterDocumentIo(
     override fun exists(name: String): Boolean = delegate.exists(name)
     override fun length(name: String): Long = delegate.length(name)
     override fun read(name: String): ByteArray? = delegate.read(name)
-    override fun lastModified(name: String): Long = delegate.lastModified(name)
     override fun openInputStream(name: String) = delegate.openInputStream(name)
     override fun list(directoryName: String): List<String>? = delegate.list(directoryName)
-    override fun isFileBacked(): Boolean = delegate.isFileBacked()
     override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean = false
     override fun renameNoReplace(from: String, to: String): RenameResult = RenameResult.UNSUPPORTED
     override fun renameOwned(from: String, to: String): Boolean = false
@@ -117,10 +114,10 @@ private class ReadOnlyChapterDocumentIo(
 }
 
 /**
- * Store-opening collaborator (Phase 7 S6). Owns the open mechanics that used to
+ * Store-opening collaborator. Owns the open mechanics that used to
  * live in [ChapterTranslationStore.Companion]: the per-artifact open-lock
  * registry, the durable open path with its recovery decision table
- * (authoritative journal vs union mode vs legacy manifest), the manifest
+ * (manifest snapshots vs legacy manifest), the manifest
  * probe, the publication-free durable read, and the lazy memory-first factory.
  * The facade companion keeps delegating shells so existing callers and tests
  * are unaffected.
@@ -186,13 +183,12 @@ internal object ChapterStoreOpener {
         }
 
     /**
-     * Publication-free durable chapter read (P3D). Classifies the chapter's
+     * Publication-free durable chapter read. Classifies the chapter's
      * durable truth through the same engine parsers the store open path uses —
      * over a read-only document layer, so supported/absent/corrupt/backup/
      * unsupported/future reads perform ZERO writes, deletes, quarantine
-     * renames, backup promotions, retention sweeps, journal seeding, or GC.
-     * The journal prefix is replayed read-only as projection evidence; no
-     * journal writer or store is ever constructed.
+     * renames, backup promotions, retention sweeps, or GC; no store is ever
+     * constructed.
      *
      * [Unavailable] is thrown, never returned: an environment failure must
      * stay visible and uncached instead of looking like a missing chapter.
@@ -200,8 +196,6 @@ internal object ChapterStoreOpener {
     internal suspend fun readDurableChapter(
         parent: UniFile,
         fileName: String,
-        privateStorageRoot: File?,
-        privateStorageIdentity: String?,
     ): DurableChapterRead {
         val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
         val manifest = when (val read = readManifestClassified(parent, layout)) {
@@ -254,9 +248,9 @@ internal object ChapterStoreOpener {
     }
 
     /**
-     * P3B reader fallback: restores saved OCR from a page's verified
+     * Reader fallback: restores saved OCR from a page's verified
      * recovery checkpoint into the projected page state — publication-free
-     * and writer-free (no store, no lease, no journal bridge; the P3C store
+     * and writer-free (no store, no lease; the store
      * hydration's provenance verification runs identically through
      * [ChapterArtifactEngine.readRecoveryCheckpoint], the one classified
      * checkpoint read). Eligibility is deliberately narrow:
@@ -267,9 +261,7 @@ internal object ChapterStoreOpener {
      *   without re-reading source bytes;
      * - the page has NO content-backed candidate or committed snapshot —
      *   newer/committed work always wins, the checkpoint is the recovery
-     *   authority only when nothing else carries content;
-     * - the journal replay recorded no outcome for the page — a tombstoned
-     *   or invalidated page is never resurrected from checkpoint bytes.
+     *   authority only when nothing else carries content.
      *
      * An unusable checkpoint never fails the read: the page keeps its
      * placeholder projection and the chapter stays supported.
@@ -301,16 +293,9 @@ internal object ChapterStoreOpener {
     internal suspend fun openArtifactSuspend(
         parent: UniFile,
         fileName: String,
-        privateStorageRoot: File? = null,
-        privateStorageIdentity: String? = null,
     ): ChapterTranslationStore = withContext(Dispatchers.IO) {
         withArtifactOpenLock(parent, fileName) { _ ->
-            openArtifactOnly(
-                parent,
-                fileName,
-                privateStorageRoot,
-                privateStorageIdentity,
-            )
+            openArtifactOnly(parent, fileName)
         }
     }
 
@@ -410,15 +395,11 @@ internal object ChapterStoreOpener {
     private suspend fun openArtifactOnly(
         parent: UniFile?,
         fileName: String,
-        privateStorageRoot: File?,
-        privateStorageIdentity: String?,
     ): ChapterTranslationStore {
         if (parent == null) {
             return ChapterTranslationStore(
                 artifactParent = null,
                 artifactFileName = fileName,
-                privateStorageRoot = privateStorageRoot,
-                privateStorageIdentity = privateStorageIdentity,
             )
         }
         val layout = ChapterArtifactLayout.fromArtifactFileName(fileName)
@@ -434,16 +415,12 @@ internal object ChapterStoreOpener {
             initialRetiredCleanedImages = hydration.retiredCleanedImages,
             artifactParent = parent,
             artifactFileName = fileName,
-            privateStorageRoot = privateStorageRoot,
-            privateStorageIdentity = privateStorageIdentity,
         )
     }
 
     internal fun lazy(
         artifactParent: UniFile? = null,
         artifactFileName: String? = null,
-        privateStorageRoot: File? = null,
-        privateStorageIdentity: String? = null,
         artifactParentResolver: (() -> UniFile)? = null,
     ): ChapterTranslationStore =
         ChapterTranslationStore(
@@ -451,7 +428,5 @@ internal object ChapterStoreOpener {
             artifactParent = artifactParent,
             artifactFileName = artifactFileName,
             artifactParentResolver = artifactParentResolver,
-            privateStorageRoot = privateStorageRoot,
-            privateStorageIdentity = privateStorageIdentity,
         )
 }

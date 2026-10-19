@@ -89,8 +89,6 @@ class DurableChapterReadProjectionTest {
     private suspend fun readChapter() = ChapterStoreOpener.readDurableChapter(
         root(),
         "Chapter 1.json",
-        privateStorageRoot = null,
-        privateStorageIdentity = null,
     )
 
     private fun hex(seed: String): String = StageFingerprints.sha256Hex(seed.toByteArray())

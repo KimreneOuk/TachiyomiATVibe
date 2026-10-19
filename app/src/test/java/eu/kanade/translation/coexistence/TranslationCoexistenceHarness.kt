@@ -1446,9 +1446,6 @@ internal class TranslationCoexistenceHarness private constructor(
             states
         }
         val chapterKey = store.artifactChapterKey()
-        val activeWriters = ActiveChapterStoreRegistry.allActiveWriters().filter { writer ->
-            writer.chapterId == CHAPTER_ID || (chapterKey != null && writer.chapterKey == chapterKey)
-        }
         val durableFailures = manifest?.durableFailures.orEmpty()
             .filterKeys { failureKey -> pageKeys.any { failureKey.startsWith("$it:") } }
             .mapValues { (_, failure) ->
@@ -1484,7 +1481,7 @@ internal class TranslationCoexistenceHarness private constructor(
             "BatchWriteGate.guardedBatchUpdate -> ChapterTranslationStore.updatePageGuarded, " +
             "batchWriteGateRejection=$batchWriteGateRejection, " +
             "guardedWriteRejection=$guardedWriteRejection, " +
-            "activeWriters=$activeWriters, guardedWriteState=$guardedWriteState, " +
+            "guardedWriteState=$guardedWriteState, " +
             "pageSnapshots=$pageSnapshots, artifactPages=$artifactPages, " +
             "durableFailures=$durableFailures, run=$runSummary, liveTracker={$liveTracker}, " +
             "tracker={$terminal}"

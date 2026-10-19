@@ -33,7 +33,7 @@ class AtomicChapterDocumentsPublicationLockTest {
 
     @Test
     fun `concurrent same-name publishes from different instances both succeed and keep one complete value`() {
-        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val io = FakeChapterDocumentIo()
         // Two instances over ONE backing IO — the exact shape of the device
         // race (a second store instance republishing behind the first one).
         val documentsA = AtomicChapterDocuments(io)
@@ -91,8 +91,8 @@ class AtomicChapterDocumentsPublicationLockTest {
         // SCOPE: publishes to different names proceed concurrently and both
         // succeed (they would also both succeed under a global lock, but the
         // same-name test would starve it — the pair pins per-name behavior).
-        val ioA = FakeChapterDocumentIo().apply { fileBacked = true }
-        val ioB = FakeChapterDocumentIo().apply { fileBacked = true }
+        val ioA = FakeChapterDocumentIo()
+        val ioB = FakeChapterDocumentIo()
         val documentsA = AtomicChapterDocuments(ioA)
         val documentsB = AtomicChapterDocuments(ioB)
         val start = CountDownLatch(1)

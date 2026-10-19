@@ -105,8 +105,6 @@ class ReaderCheckpointFallbackTest {
     private suspend fun readChapter() = ChapterStoreOpener.readDurableChapter(
         root(),
         "Chapter 1.json",
-        privateStorageRoot = null,
-        privateStorageIdentity = null,
     )
 
     private fun treeSnapshot(): Map<String, ByteArray> {

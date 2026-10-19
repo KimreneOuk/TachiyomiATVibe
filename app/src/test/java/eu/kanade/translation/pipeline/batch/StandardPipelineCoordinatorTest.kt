@@ -567,9 +567,7 @@ class StandardPipelineCoordinatorTest {
 
         // Zero AI-side manifest pointers.
         val manifest = artifactStore().readManifest().shouldNotBeNull()
-        manifest.profile.shouldBeNull()
         manifest.envelopePlan.shouldBeNull()
-        manifest.analysisChunks shouldBe emptyList()
         //  evidence: every page's translated snapshot stays durably
         // addressable through its open candidate pointer.
         pageKeys.forEach { key ->

@@ -25,13 +25,6 @@ class TranslationFileProvider(
         data object Unavailable : MangaDirectoryLookup
     }
 
-    /** Journal bytes are kept on internal app storage even for SAF-backed artifacts. */
-    internal val privateJournalRoot get() = context.filesDir
-
-    /** Stable artifact-path identity; the value is hashed before becoming a path. */
-    internal fun privateJournalIdentity(source: Source, mangaTitle: String, fileName: String): String =
-        "${getSourceDirName(source)}:${getMangaDirName(mangaTitle)}:$fileName"
-
     private val translationDir: UniFile?
         get() = storageManager.getTranslationsDirectory()
 

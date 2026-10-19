@@ -331,7 +331,6 @@ class OcrPreflightCoordinatorTest {
 
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
-        manifest.analysisChunks shouldBe emptyList()
         val record = runRecord(resumedStore).shouldNotBeNull()
         record.state shouldBe ChapterRunState.TRANSLATE
         // Same frozen configuration: the interrupted run is CONTINUED (same

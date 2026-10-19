@@ -183,7 +183,7 @@ class ChapterTranslationStoreRekeyTest {
     }
 
     @Test
-    fun `file rekey gate serializes chapter file and probe store admission`() = runTest {
+    fun `file rekey gate serializes chapter file and store admission`() = runTest {
         val registry = ActiveChapterStoreRegistry()
         val fileKey = "shared-rekey-open-gate"
         val maintenanceEntered = CompletableDeferred<Unit>()
@@ -211,12 +211,6 @@ class ChapterTranslationStoreRekeyTest {
                 ChapterTranslationStore()
             }
         }
-        val probeOpen = async {
-            registry.getOrCreateProbe(fileKey) {
-                createCount++
-                ChapterTranslationStore()
-            }
-        }
         runCurrent()
         createCount shouldBe 0
         registry.hasStoreForFile(fileKey) shouldBe false
@@ -225,13 +219,12 @@ class ChapterTranslationStoreRekeyTest {
         maintenance.await()
         val chapterStore = chapterOpen.await()
         chapterStore shouldBe fileOpen.await()
-        chapterStore shouldBe probeOpen.await()?.store
         createCount shouldBe 1
         registry.get(101) shouldBe chapterStore
         registry.getByFile(fileKey) shouldBe chapterStore
         registry.hasStoreForFile(fileKey) shouldBe true
 
-        // Existing chapter/file/probe fast paths must also wait behind the
+        // Existing chapter/file fast paths must also wait behind the
         // same gate; otherwise a concurrent opener can adopt the store after
         // maintenance has already passed its ownership check.
         val fastPathEntered = CompletableDeferred<Unit>()
@@ -249,42 +242,14 @@ class ChapterTranslationStoreRekeyTest {
         val fileFastPath = async {
             registry.getOrCreateFile(fileKey) { error("existing file fast path must be reused") }
         }
-        val probeFastPath = async {
-            registry.getOrCreateProbe(fileKey) { error("existing file must satisfy probe fast path") }
-        }
         runCurrent()
         chapterFastPath.isCompleted shouldBe false
         fileFastPath.isCompleted shouldBe false
-        probeFastPath.isCompleted shouldBe false
         releaseFastPathMaintenance.complete(Unit)
         fastPathMaintenance.await()
         chapterFastPath.await() shouldBe chapterStore
         fileFastPath.await() shouldBe chapterStore
-        probeFastPath.await()?.store shouldBe chapterStore
 
-        val probeKey = "shared-rekey-open-gate-probe"
-        val probeStore = ChapterTranslationStore()
-        registry.getOrCreateProbe(probeKey) { probeStore }?.store shouldBe probeStore
-        val probeMaintenanceEntered = CompletableDeferred<Unit>()
-        val releaseProbeMaintenance = CompletableDeferred<Unit>()
-        val probeMaintenance = async {
-            registry.withFileOpeningLock(probeKey) {
-                probeMaintenanceEntered.complete(Unit)
-                releaseProbeMaintenance.await()
-            }
-        }
-        probeMaintenanceEntered.await()
-        val existingProbeFastPath = async {
-            registry.getOrCreateProbe(probeKey) { error("existing probe fast path must be reused") }
-        }
-        runCurrent()
-        existingProbeFastPath.isCompleted shouldBe false
-        releaseProbeMaintenance.complete(Unit)
-        probeMaintenance.await()
-        existingProbeFastPath.await()?.store shouldBe probeStore
-
-        registry.releaseProbe(probeKey, probeStore) shouldBe true
-        probeStore.closeAndFlush()
         registry.remove(101)?.closeAndFlush()
     }
 }

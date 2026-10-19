@@ -115,22 +115,4 @@ class CancelBatchLeaseSkipTest {
         // Legacy behavior fully preserved once the batch no longer owns the page.
         store.state.value["released"]?.ocrStatus shouldBe StageStatus.CANCELLED
     }
-
-    // ------------------------------------------------------------------
-    // T2: the in-memory fast cancel skips BATCH-leased pages too.
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `fastCancelInFlightStagesInMemory flips only the lease-free page`() = runTest {
-        val store = newStore()
-        store.updatePage("leased") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.updatePage("free") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
-        store.holdBatchLease("leased")
-
-        val flipped = store.fastCancelInFlightStagesInMemory()
-
-        flipped shouldBe 1
-        store.state.value["leased"]?.ocrStatus shouldBe StageStatus.RUNNING
-        store.state.value["free"]?.ocrStatus shouldBe StageStatus.CANCELLED
-    }
 }

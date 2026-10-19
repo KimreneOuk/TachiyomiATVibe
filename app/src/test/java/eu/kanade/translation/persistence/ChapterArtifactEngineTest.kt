@@ -814,11 +814,7 @@ class ChapterArtifactEngineTest {
         // New additive pointer fields load with neutral defaults.
         manifest.activeRun shouldBe null
         manifest.ocrCheckpoints shouldBe emptyMap()
-        manifest.analysisChunks shouldBe emptyList()
-        manifest.profile shouldBe null
         manifest.envelopePlan shouldBe null
-        manifest.layoutPlans shouldBe emptyMap()
-        manifest.colorPreparations shouldBe emptyMap()
     }
 
     @Test

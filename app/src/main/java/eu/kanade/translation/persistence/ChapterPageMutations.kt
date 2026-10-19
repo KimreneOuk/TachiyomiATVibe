@@ -1,9 +1,7 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
-import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.blockFingerprints
@@ -30,8 +28,8 @@ internal data class PageWriteRejection(
 )
 
 /**
- * Owns guarded general writes, page mutation transactions, drift reconciliation,
- * and fast in-memory cancellation for [ChapterTranslationStore].
+ * Owns guarded general writes, page mutation transactions, and drift
+ * reconciliation for [ChapterTranslationStore].
  */
 internal class ChapterPageMutations(
     private val store: ChapterTranslationStore,
@@ -427,62 +425,6 @@ internal class ChapterPageMutations(
         description: String,
         update: (PageTranslation?) -> PageTranslation,
     ): PatchResult = updatePageGuarded(pageKey, store.snapshot(pageKey).toPrecondition(), description, update)
-
-    /**
-     * TachiyomiAT: fast non-blocking cancellation of in-flight stages in memory.
-     * Synchronously flips pages with [isStageRunning] to CANCELLED in [stateFlow] and [_display]
-     * without acquiring [mutex] or performing disk I/O. This allows the reader UI (e.g.
-     * auto-translation drawer toggle) to clear spinners and dim overlays instantly on the current
-     * frame (<16ms) without blocking the Main thread. Durable persistence can follow
-     * asynchronously.
-     *
-     *   pages holding an ACTIVE BATCH-origin stage lease are SKIPPED —
-     * this method mutates in-memory state outside the mutex with no lease
-     * check, and flipping a batch-owned page desyncs the run's version
-     * expectations mid-stage (the flagged lane then fails `checkpointOcr`/
-     * `mergeTranslation` on a healthy page). The batch cancel path owns those
-     * pages until their leases release. The lease query only takes the lease
-     * table's own monitor, never [mutex], so the fast path stays lock-cheap.
-     */
-    fun fastCancelInFlightStagesInMemory(
-        origin: PageWriteOrigin? = null,
-        cancellationReason: String = "Translation cancelled",
-    ): Int {
-        var flipped = 0
-        val current = store.pages
-        val hasRunning = current.values.any { it.isStageRunning }
-        if (!hasRunning) return 0
-        var updatedPages = current
-        val changedPageKeys = mutableSetOf<String>()
-        current.forEach { (pageKey, page) ->
-            if (page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
-                if (origin != null && store.pageLeaseOwner(pageKey)?.let { it != origin } == true) return@forEach
-                if (store.hasActiveBatchStageLease(pageKey)) {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
-                            "writer=fastCancelInFlightStagesInMemory pageKey=$pageKey"
-                    }
-                    // Preserve the page UNCHANGED — the batch owns its state.
-                } else {
-                    flipped++
-                    val updated = page.toDraft().apply {
-                        cancelInFlightStages()
-                        ocrError = cancellationReason
-                        updatedAt = System.currentTimeMillis()
-                    }
-                    updatedPages = updatedPages.put(pageKey, store.publishPage(updated))
-                    changedPageKeys += pageKey
-                }
-            }
-        }
-        // Every running page was batch-leased: nothing flipped, keep the
-        // current map/state as-is instead of republishing identical values.
-        if (flipped == 0) return 0
-        store.pages = updatedPages
-        store.stateFlow.value = store.snapshotPages()
-        store.displayPublication.displaySnapshotLocked(changedPageKeys)
-        return flipped
-    }
 
     internal suspend fun patchBlock(
         pageKey: String,

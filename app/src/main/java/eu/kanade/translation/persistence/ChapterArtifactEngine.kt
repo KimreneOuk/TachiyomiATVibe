@@ -55,8 +55,7 @@ enum class OcrCheckpointMode { CLOSE, REBASE }
 /**
  * Outcome of reading a generic sidecar document through
  * its manifest pointer — same semantics as [RunRecordRead]/[OcrCheckpointRead],
- * generalized over the document type for persisted layouts
- * (`layoutPlans` / `colorPreparations`).
+ * generalized over the document type for persisted sidecar documents.
  */
 typealias RunRecordRead = ChapterProgressRecords.RunRecordRead
 typealias OcrCheckpointRead = ChapterProgressRecords.OcrCheckpointRead
@@ -473,30 +472,17 @@ class ChapterArtifactEngine(
     }
 
     // ------------------------------------------------------------------
-    // Generic sidecar reading and publication support for persisted layouts
-    // (`layoutPlans` / `colorPreparations`
-    // pointers). Mirrors the readOcrCheckpoint/readRunRecord idioms exactly
-    // (quarantine on corrupt, unknown-version preservation) and the
-    // publishActiveRun sidecar-then-pointer pattern.
+    // Generic sidecar reading and publication support. Mirrors the
+    // readOcrCheckpoint/readRunRecord idioms exactly (quarantine on corrupt,
+    // unknown-version preservation) and the publishActiveRun
+    // sidecar-then-pointer pattern.
     // ------------------------------------------------------------------
-
-    /** Content-addressed `PageLayoutDrawPlan` sidecar name under `layout/`. */
-    internal fun layoutPlanSidecarName(pageKey: String, contentFingerprint: String): String =
-        layout.layoutPlanFile(pageKey, contentFingerprint)
-
-    /** Content-addressed chapter analysis sidecar name under `analysis/`. */
-    internal fun analysisChunkSidecarName(contentFingerprint: String): String =
-        layout.analysisChunkFile(contentFingerprint)
 
     /**
      * Content-addressed `EnvelopePlan` sidecar name under `envelopes/`.
      */
     internal fun envelopePlanSidecarName(contentFingerprint: String): String =
         layout.envelopePlanFile(contentFingerprint)
-
-    /** Content-addressed `ColorStylePreparation` sidecar name under `color/`. */
-    internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
-        layout.colorPreparationFile(pageKey, contentFingerprint)
 
     /**
      * Builds one immutable JSON sidecar publication for

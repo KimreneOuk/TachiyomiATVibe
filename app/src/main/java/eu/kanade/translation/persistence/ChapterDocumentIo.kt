@@ -35,9 +35,6 @@ interface ChapterDocumentIo {
     fun length(name: String): Long
     fun read(name: String): ByteArray?
 
-    /** Last-modified evidence for identity-aware preservation; zero means unavailable. */
-    fun lastModified(name: String): Long = 0L
-
     /** Opens [name] without forcing callers to retain the whole payload in memory. */
     fun openInputStream(name: String): InputStream? = read(name)?.inputStream()
 
@@ -61,17 +58,12 @@ interface ChapterDocumentIo {
 
     /** Immediate child names of a directory, or null when it does not exist. */
     fun list(directoryName: String): List<String>?
-
-    /** Indicates whether this IO is backed by a local java.io.File filesystem. */
-    fun isFileBacked(): Boolean = false
 }
 
 /** [ChapterDocumentIo] over a [UniFile] manga directory. */
 class UniFileChapterDocumentIo(
     private val root: UniFile,
 ) : ChapterDocumentIo {
-
-    override fun isFileBacked(): Boolean = root.filePath != null
 
     private val dirCache = java.util.concurrent.ConcurrentHashMap<String, UniFile>()
 
@@ -190,8 +182,6 @@ class UniFileChapterDocumentIo(
     override fun exists(name: String): Boolean = resolve(name)?.exists() == true
 
     override fun length(name: String): Long = resolve(name)?.length() ?: 0L
-
-    override fun lastModified(name: String): Long = resolve(name)?.lastModified() ?: 0L
 
     override fun read(name: String): ByteArray? = runCatching {
         resolve(name)?.takeIf { it.isFile }?.openInputStream()?.use { input ->

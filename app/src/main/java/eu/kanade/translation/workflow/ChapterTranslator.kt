@@ -284,8 +284,6 @@ class ChapterTranslator(
                     ChapterTranslationStore.openArtifactSuspend(
                         parent,
                         fileName,
-                        provider.privateJournalRoot,
-                        provider.privateJournalIdentity(translation.source, translation.manga.title, fileName),
                     )
                 }
                 store ?: return@withContext null
@@ -687,8 +685,6 @@ class ChapterTranslator(
                 store = ChapterTranslationStore.openArtifactSuspend(
                     parent,
                     fileName,
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(translation.source, translation.manga.title, fileName),
                 )
             }
 

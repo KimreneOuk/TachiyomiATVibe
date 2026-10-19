@@ -1272,8 +1272,6 @@ class TranslationManager private constructor(
                     val read = ChapterStoreOpener.readDurableChapter(
                         parent,
                         fileName,
-                        provider.privateJournalRoot,
-                        provider.privateJournalIdentity(source, title, fileName),
                     )
                 ) {
                     is DurableChapterRead.Supported -> read.state.pages
@@ -1382,8 +1380,6 @@ class TranslationManager private constructor(
                 ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     document.fileName,
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(source, mangaTitle, document.fileName),
                 )
             }
         } else {
@@ -1391,8 +1387,6 @@ class TranslationManager private constructor(
                 ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     document.fileName,
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(source, mangaTitle, document.fileName),
                 )
             }
         }
@@ -1638,8 +1632,6 @@ class TranslationManager private constructor(
                         ChapterTranslationStore.openArtifactSuspend(
                             parent,
                             fileName,
-                            provider.privateJournalRoot,
-                            provider.privateJournalIdentity(pending.source, pending.manga.title, fileName),
                         )
                     } catch (error: Throwable) {
                         if (error is kotlinx.coroutines.CancellationException) throw error
@@ -1682,11 +1674,7 @@ class TranslationManager private constructor(
                                     manifest.activeCandidateGenerationIds.isNotEmpty() ||
                                     manifest.activeRun != null ||
                                     manifest.ocrCheckpoints.isNotEmpty() ||
-                                    manifest.analysisChunks.isNotEmpty() ||
-                                    manifest.profile != null ||
                                     manifest.envelopePlan != null ||
-                                    manifest.layoutPlans.isNotEmpty() ||
-                                    manifest.colorPreparations.isNotEmpty() ||
                                     manifest.cutoverAtEpochMs != null
                             } == true
                             if (manifestHasPriorEvidence) {
@@ -1871,8 +1859,6 @@ class TranslationManager private constructor(
                 ChapterTranslationStore.openArtifactSuspend(
                     document.parent,
                     fileName,
-                    provider.privateJournalRoot,
-                    provider.privateJournalIdentity(source, mangaTitle, fileName),
                 )
             } else {
                 // Create a lazy artifact store: opening a chapter never
@@ -1881,8 +1867,6 @@ class TranslationManager private constructor(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
                     artifactParentResolver = { provider.getMangaDir(mangaTitle, source) },
-                    privateStorageRoot = provider.privateJournalRoot,
-                    privateStorageIdentity = provider.privateJournalIdentity(source, mangaTitle, fileName),
                 )
             }
         } ?: return null

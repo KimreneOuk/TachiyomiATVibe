@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence
 
-
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -11,19 +10,10 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
-import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -34,57 +24,14 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-
-
-
-/** Bounded scalar record of an attempt's own verified artifact drain progress. */
-sealed interface CheckpointOcrResult {
-    data class Committed(
-        val snapshot: ChapterTranslationStore.PageSnapshot,
-        val manifest: ChapterArtifactManifest,
-        val ocrContentFingerprint: String? = null,
-    ) : CheckpointOcrResult
-
-    data class Rejected(val reason: String) : CheckpointOcrResult
-}
-
-/** Durable admission result for a page mutation. */
-sealed interface MutationAdmission {
-    data object Granted : MutationAdmission
-
-    data class Rejected(
-        val code: Code,
-        val retryable: Boolean = true,
-        val message: String,
-    ) : MutationAdmission {
-        enum class Code {
-            ARTIFACT_PUBLICATION_FAILED,
-            STORE_DEFUNCT,
-            FENCE_REJECTED,
-        }
-    }
-}
-
-/**
- * Journal collaborators (Phase 7 S5): the journal capture bridge owns credit
- * reservation, the capture frames, bulk capture frames, inventory
- * snapshots, and the capture permit; the lazy flusher owns the queued
- * lazy-mutation drain and its journal-barrier interleave. This facade keeps
- * delegating shells so existing callers and tests are unaffected.
- * The bulk mutator collaborator (Phase 7 S7) owns the multi-page
- * transactions and re-key planning; the store keeps delegating shells for
- * them as well.
- */
 
 class ChapterTranslationStore internal constructor(
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -96,8 +43,6 @@ class ChapterTranslationStore internal constructor(
     internal val artifactFileName: String? = null,
     internal val artifactParentResolver: (() -> UniFile)? = null,
     internal val persistenceDispatcher: CoroutineDispatcher = Dispatchers.IO,
-    internal val privateStorageRoot: File? = null,
-    private val privateStorageIdentity: String? = null,
 ) {
     /** Explicit memory, lazy-durable, or opened-durable storage mode. */
     internal var engineMode: ChapterStoreEngineMode =
@@ -120,20 +65,18 @@ class ChapterTranslationStore internal constructor(
         artifactParent != null || artifactFileName != null || artifactParentResolver != null
 
     /**
-     * Monotonic store-side lock hierarchy (Phase 7 S2). Every acquisition in a
-     * write path moves DOWN this list; nothing ever acquires a lock higher in
-     * the list while holding a lower one:
+     * Store-side lock hierarchy: every acquisition in a write path moves DOWN
+     * this list; nothing ever acquires a lock higher in the list while
+     * holding a lower one:
      *
-     * 1. journal credit reservation (`reserveJournalCredit` — before [mutex]);
-     * 2. producer capture permit (`withJournalCapturePermit`);
-     * 3. the store [mutex] — suspending, so holders may await lower locks;
-     * 4. the per-artifact open lock (`withArtifactOpenLock`) — acquired only
+     * 1. the store [mutex] — suspending, so holders may await lower locks;
+     * 2. the per-artifact open lock (`withArtifactOpenLock`) — acquired only
      *    from inside [mutex] via publication admission, as a coroutine.
      *
-     * The open path (`openArtifactSuspend`) takes ONLY level 4 and never the
+     * The open path (`openArtifactSuspend`) takes ONLY level 2 and never the
      * store mutex, so the order cannot invert and a first write never blocks a
      * carrier thread under the store mutex. `runBlocking` is banned anywhere
-     * below level 3.
+     * below level 1.
      */
     internal val mutex = Mutex()
 
@@ -815,11 +758,6 @@ class ChapterTranslationStore internal constructor(
         update: (PageTranslation?) -> PageTranslation,
     ): PatchResult = pageMutations.updatePageFromCurrentSnapshot(pageKey, description, update)
 
-    fun fastCancelInFlightStagesInMemory(
-        origin: PageWriteOrigin? = null,
-        cancellationReason: String = "Translation cancelled",
-    ): Int = pageMutations.fastCancelInFlightStagesInMemory(origin, cancellationReason)
-
     internal suspend fun patchBlock(
         pageKey: String,
         blockIndex: Int,
@@ -1087,29 +1025,17 @@ class ChapterTranslationStore internal constructor(
     }
 
     companion object {
-        /**
-         * Open mechanics live on the opener collaborator (Phase 7 S6); these
-         * shells keep existing callers and tests unaffected. The open path
-         * takes only the per-artifact open lock and never the store mutex, so
-         * store mutex -> artifact-open lock cannot invert.
-         */
+        /** Open mechanics live on the opener collaborator; these shells keep existing callers unaffected. */
 
         /** Reads only the small manifest header; page snapshots stay unopened. */
         internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe =
             ChapterStoreOpener.probeArtifactManifest(parent, fileName)
 
-        /** Opens an artifact and installs only the state reconstructed from its ACKed journal prefix. */
+        /** Opens an artifact and installs the state reconstructed from its manifest and snapshots. */
         internal suspend fun openArtifactSuspend(
             parent: UniFile,
             fileName: String,
-            privateStorageRoot: File? = null,
-            privateStorageIdentity: String? = null,
-        ): ChapterTranslationStore = ChapterStoreOpener.openArtifactSuspend(
-            parent,
-            fileName,
-            privateStorageRoot,
-            privateStorageIdentity,
-        )
+        ): ChapterTranslationStore = ChapterStoreOpener.openArtifactSuspend(parent, fileName)
 
         internal suspend fun <T> withArtifactOpenLock(
             parent: UniFile?,
@@ -1126,41 +1052,12 @@ class ChapterTranslationStore internal constructor(
         fun lazy(
             artifactParent: UniFile? = null,
             artifactFileName: String? = null,
-            privateStorageRoot: File? = null,
-            privateStorageIdentity: String? = null,
             artifactParentResolver: (() -> UniFile)? = null,
         ): ChapterTranslationStore = ChapterStoreOpener.lazy(
             artifactParent = artifactParent,
             artifactFileName = artifactFileName,
-            privateStorageRoot = privateStorageRoot,
-            privateStorageIdentity = privateStorageIdentity,
             artifactParentResolver = artifactParentResolver,
         )
     }
-}
-
-/** Shared OCR merge for fenced and attempt writes. */
-
-/**
- * Explicit storage configuration for a chapter store.
- *
- * The mode is deliberately separate from the public [ChapterTranslationStore]
- * seam: memory-only stores are a supported test/runtime mode, while durable
- * stores may be eager or lazy.  Keeping the mode explicit lets the merge
- * remove nullable engine state without changing the durable artifact schema.
- */
-internal sealed interface ChapterStoreEngineMode {
-    /** No filesystem target; mutations remain in memory and retain dirty probes. */
-    data object Memory : ChapterStoreEngineMode
-
-    /** Filesystem target known, but the artifact engine is opened on first write. */
-    data class LazyDurable(
-        val artifactParent: UniFile?,
-        val artifactFileName: String?,
-        val artifactParentResolver: (() -> UniFile)?,
-    ) : ChapterStoreEngineMode
-
-    /** Eagerly opened artifact engine owned by the facade. */
-    data class Durable(val artifact: ChapterArtifactEngine) : ChapterStoreEngineMode
 }
 

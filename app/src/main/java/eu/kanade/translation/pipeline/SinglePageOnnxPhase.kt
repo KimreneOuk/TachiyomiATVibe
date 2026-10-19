@@ -261,8 +261,6 @@ internal class SinglePageOnnxPhase(
             ChapterTranslationStore.openArtifactSuspend(
                 parent,
                 saveFile,
-                provider.privateJournalRoot,
-                provider.privateJournalIdentity(source, manga.title, saveFile),
             ).also { ownStore = it }
         }
 

@@ -226,11 +226,7 @@ internal class ArtifactRetention(
         // remaining pointer are orphans and are reclaimed here.
         manifest.activeRun?.fileName?.let(::add)
         manifest.ocrCheckpoints.values.forEach { pointer -> add(pointer.fileName) }
-        manifest.analysisChunks.forEach { pointer -> add(pointer.fileName) }
-        manifest.profile?.fileName?.let(::add)
         manifest.envelopePlan?.fileName?.let(::add)
-        manifest.layoutPlans.values.forEach { pointer -> add(pointer.fileName) }
-        manifest.colorPreparations.values.forEach { pointer -> add(pointer.fileName) }
     }
 }
 

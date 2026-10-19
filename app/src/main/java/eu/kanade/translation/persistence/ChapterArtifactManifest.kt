@@ -45,16 +45,8 @@ data class ChapterArtifactManifest(
     val activeRun: SidecarPointer? = null,
     /** Origin-neutral per-page OCR checkpoints; key = pageKey. */
     val ocrCheckpoints: Map<String, SidecarPointer> = emptyMap(),
-    /** Validated analysis chunk results in chunk-ordinal order. */
-    val analysisChunks: List<SidecarPointer> = emptyList(),
-    /** The frozen chapter translation profile. */
-    val profile: ProfilePointer? = null,
     /** The durable whole-chapter envelope plan. */
     val envelopePlan: SidecarPointer? = null,
-    /** Persisted per-page layout draw plans; key = pageKey. */
-    val layoutPlans: Map<String, SidecarPointer> = emptyMap(),
-    /** Persisted per-page color/style preparations; key = pageKey. */
-    val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
     /**
      *  R2a (write-time digests): the durable per-page source SHA-256
      * (lowercase 64-hex), recorded AT FIRST ADMISSION — every OCR checkpoint
@@ -70,14 +62,6 @@ data class ChapterArtifactManifest(
      * manifest page record.
      */
     val sourceShaByPageKey: Map<String, String> = emptyMap(),
-    /**
-     * P3B schema5 preparation: the manifest-owned ordered page inventory
-     * (successor of the journal inventory's `expectedPageKeys`). Empty in
-     * every ordinary schema4 emission — the journal owns the live inventory
-     * until P4 activates the sole-manifest status projection. Neutral
-     * default, tolerated in both decode directions by `ignoreUnknownKeys`.
-     */
-    val expectedPageKeys: Set<String> = emptySet(),
 ) {
     companion object {
         /**
@@ -96,32 +80,6 @@ data class ChapterArtifactManifest(
          */
         const val MIN_SUPPORTED_SCHEMA_VERSION = 2
     }
-}
-
-/** Minimal version discrimination over a parsed manifest header (P3B). */
-enum class FormatSchemaSupport {
-    /** Decodable and writable by this build. */
-    SUPPORTED,
-
-    /**
-     * Older than [ChapterArtifactManifest.MIN_SUPPORTED_SCHEMA_VERSION]:
-     * bytes preserved untouched, never decoded further, never reported as
-     * missing data or a completed chapter.
-     */
-    UNSUPPORTED_OLDER,
-
-    /**
-     * Newer than [ChapterArtifactManifest.SCHEMA_VERSION]: a newer build owns
-     * the semantics; bytes preserved untouched, never downgraded.
-     */
-    UNSUPPORTED_NEWER,
-}
-
-/** Classifies one parsed schema version; null is not decodable evidence here. */
-fun schemaSupport(schemaVersion: Int): FormatSchemaSupport = when {
-    schemaVersion > ChapterArtifactManifest.SCHEMA_VERSION -> FormatSchemaSupport.UNSUPPORTED_NEWER
-    schemaVersion < ChapterArtifactManifest.MIN_SUPPORTED_SCHEMA_VERSION -> FormatSchemaSupport.UNSUPPORTED_OLDER
-    else -> FormatSchemaSupport.SUPPORTED
 }
 
 /**
@@ -174,50 +132,7 @@ data class PageArtifactRecord(
      */
     /** Last known display state; the migration-time initial state when legacy. */
     val displayState: PageDisplayState = PageDisplayState.ORIGINAL_ONLY,
-    /**
-     * P3B schema5 preparation: monotonic page/outcome/tombstone evidence
-     * (successor of the journal's TOMBSTONED/INVALID outcomes once P4 removes
-     * the journal). Null in every ordinary schema4 emission — the journal owns
-     * live outcomes until activation. A recorded tombstone makes the page
-     * durable-absent for planning: it is never resurrected from orphan bytes
-     * or an older pointer state.
-     */
-    val tombstone: PageTombstoneEvidence? = null,
 )
-
-/** Terminal page evidence kinds the sole manifest carries after journal retirement. */
-enum class PageTombstoneOutcome {
-    /** The page was explicitly removed from the chapter's durable page set. */
-    TOMBSTONED,
-
-    /** The page's durable record was proven invalid; it counts as absent, not new. */
-    INVALID,
-}
-
-/**
- * One monotonic page/outcome evidence record. [pageVersion] is the page's
- * version at recording time and is the monotonic guard: a newer evidence
- * never lowers it, and a writer may only install evidence whose
- * [pageVersion] is greater than or equal to the recorded one (a same-version
- * re-record with a different outcome is refused as a contradiction).
- */
-@Serializable
-data class PageTombstoneEvidence(
-    val outcome: PageTombstoneOutcome,
-    val pageVersion: Long,
-    val recordedAtEpochMs: Long = 0L,
-) {
-    /**
-     * True when [this] may replace [previous] without regressing monotonic
-     * evidence. A different outcome at the same version contradicts the
-     * earlier recording and is refused; identical re-records are idempotent.
-     */
-    fun supersedes(previous: PageTombstoneEvidence?): Boolean = when (previous) {
-        null -> true
-        else -> pageVersion > previous.pageVersion ||
-            (pageVersion == previous.pageVersion && outcome == previous.outcome)
-    }
-}
 
 /**
  * Immutable committed display bundle (lifecycle contract §9). A legacy

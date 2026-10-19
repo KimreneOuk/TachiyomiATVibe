@@ -582,7 +582,7 @@ class SinglePageOverlapBoundaryTest {
 
     private fun lazyStore(
         scheduler: TestCoroutineScheduler,
-        io: FakeChapterDocumentIo = FakeChapterDocumentIo().apply { fileBacked = true },
+        io: FakeChapterDocumentIo = FakeChapterDocumentIo(),
     ): ChapterTranslationStore {
         val layout = ChapterArtifactLayout("s5-attempt-lease")
         val documents = AtomicChapterDocuments(io)
@@ -610,7 +610,7 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     fun `lease absorbs real lazy drain then rejects artifact-only foreign cancellation`() = runTest {
-        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val io = FakeChapterDocumentIo()
         val store = lazyStore(testScheduler, io)
         try {
             val attempt = AttemptAuthority(store, "p0", store.snapshot("p0").toPrecondition())
@@ -689,7 +689,7 @@ class SinglePageOverlapBoundaryTest {
 
     @Test
     fun `coalesced own writes certify latest live version only after successful drain`() = runTest {
-        val io = FakeChapterDocumentIo().apply { fileBacked = true }
+        val io = FakeChapterDocumentIo()
         val store = lazyStore(testScheduler, io)
         try {
             val attempt = AttemptAuthority(store, "p0", store.snapshot("p0").toPrecondition())
