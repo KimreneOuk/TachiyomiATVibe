@@ -1,5 +1,7 @@
 package eu.kanade.translation.persistence.artifact
 
+import eu.kanade.translation.model.StageFingerprints
+
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation

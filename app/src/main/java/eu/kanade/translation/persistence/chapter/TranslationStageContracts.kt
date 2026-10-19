@@ -5,7 +5,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Lease-layer provenance of a page write. Priority on one page is

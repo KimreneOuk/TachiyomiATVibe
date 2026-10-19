@@ -1,12 +1,12 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
-import eu.kanade.translation.persistence.artifact.AnalysisChunkStatus
-import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkResult
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkStatus
+import eu.kanade.translation.context.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

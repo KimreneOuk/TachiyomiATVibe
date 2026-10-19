@@ -8,7 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
 import eu.kanade.translation.engines.translator.ProviderRequestClock
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.analysis.AnalysisResponseValidator.AnalysisResponseOutcome
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe

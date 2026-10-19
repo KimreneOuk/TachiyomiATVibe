@@ -1,5 +1,11 @@
 package eu.kanade.translation.persistence.artifact
 
+import eu.kanade.translation.context.*
+import eu.kanade.translation.model.StageFingerprints
+import eu.kanade.translation.model.TranslationProvenancePage
+import eu.kanade.translation.model.OcrBlockContent
+import eu.kanade.translation.model.EnvelopePlanInputPage
+
 import eu.kanade.translation.persistence.artifact.loadArtifact
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.nulls.shouldNotBeNull

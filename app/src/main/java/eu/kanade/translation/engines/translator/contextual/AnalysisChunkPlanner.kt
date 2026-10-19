@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkResult
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Deterministic hierarchical analysis chunking over the OCR corpus.

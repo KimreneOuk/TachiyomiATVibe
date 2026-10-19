@@ -6,9 +6,9 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestRecord
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.scheduling.InMemorySharedPreferences
+import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
+import eu.kanade.translation.scheduling.TranslationPendingRequestStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe

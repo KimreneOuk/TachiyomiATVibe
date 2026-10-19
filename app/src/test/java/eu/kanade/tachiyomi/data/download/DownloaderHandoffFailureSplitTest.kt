@@ -8,8 +8,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.scheduling.InMemorySharedPreferences
+import eu.kanade.translation.scheduling.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe

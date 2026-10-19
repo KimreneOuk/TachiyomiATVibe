@@ -25,8 +25,8 @@ import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.persistence.artifact.ArtifactOrigin
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
-import eu.kanade.translation.persistence.artifact.ColorStylePreparation
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.engines.rendering.ColorStylePreparation
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.StageArtifactRecord
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore

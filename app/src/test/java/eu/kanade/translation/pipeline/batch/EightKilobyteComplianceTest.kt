@@ -20,9 +20,9 @@ import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.EnvelopePlan
-import eu.kanade.translation.persistence.artifact.PlannedEnvelope
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
+import eu.kanade.translation.pipeline.batch.envelope.PlannedEnvelope
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.OcrStagePatch

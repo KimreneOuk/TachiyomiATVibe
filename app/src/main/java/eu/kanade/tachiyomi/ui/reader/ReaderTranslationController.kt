@@ -42,7 +42,7 @@ import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass

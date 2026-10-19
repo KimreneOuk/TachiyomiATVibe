@@ -33,13 +33,13 @@ import eu.kanade.translation.persistence.artifact.OcrCheckpointMode
 import eu.kanade.translation.persistence.artifact.PageOcrCheckpoint
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SourceIdentity
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.isSha256Hex
 import eu.kanade.translation.persistence.internal.ChapterAttemptLedger
 import eu.kanade.translation.persistence.internal.ChapterStoreEngineMode
 import eu.kanade.translation.persistence.internal.PageStageLeaseTable
 import eu.kanade.translation.persistence.internal.StoreWriteDrainCoordinator
-import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
+import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CompletableDeferred

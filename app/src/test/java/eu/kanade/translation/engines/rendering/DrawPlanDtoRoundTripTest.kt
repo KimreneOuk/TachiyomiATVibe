@@ -10,10 +10,10 @@ import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.ColorStylePreparation
+import eu.kanade.translation.engines.rendering.ColorStylePreparation
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import io.kotest.matchers.collections.shouldHaveSize

@@ -1,10 +1,10 @@
 package eu.kanade.translation.engines.translator.contextual
 
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.EnvelopePlan
-import eu.kanade.translation.persistence.artifact.EnvelopePlanInputPage
-import eu.kanade.translation.persistence.artifact.PlannedEnvelope
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
+import eu.kanade.translation.model.EnvelopePlanInputPage
+import eu.kanade.translation.pipeline.batch.envelope.PlannedEnvelope
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Global multi-budget whole-page envelope planning.
@@ -91,7 +91,7 @@ data class EnvelopePlannerPage(
     val naturalPageIndex: Int?,
     /**
      * The page's semantic content fingerprint
-     * ([eu.kanade.translation.persistence.artifact.StageFingerprints.pageOcrContentFingerprint],
+     * ([eu.kanade.translation.model.StageFingerprints.pageOcrContentFingerprint],
      * 02); feeds the per-envelope contributing corpus fingerprint.
      */
     val contentFingerprint: String,

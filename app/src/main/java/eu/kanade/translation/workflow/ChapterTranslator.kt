@@ -13,7 +13,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
-import eu.kanade.translation.persistence.queue.TranslationQueueStore
+import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult

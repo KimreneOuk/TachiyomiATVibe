@@ -22,7 +22,7 @@ import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
 import eu.kanade.translation.persistence.artifact.RunConfigSnapshot
 import eu.kanade.translation.persistence.artifact.SidecarPointer
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.workflow.withDurablePause
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe

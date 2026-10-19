@@ -1,4 +1,6 @@
-package eu.kanade.translation.persistence.artifact
+package eu.kanade.translation.engines.rendering
+
+import eu.kanade.translation.persistence.artifact.isSha256Hex
 
 import kotlinx.serialization.Serializable
 

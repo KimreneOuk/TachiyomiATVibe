@@ -19,7 +19,6 @@ import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
 import eu.kanade.translation.persistence.chapter.PageStageLease
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
-import eu.kanade.translation.persistence.internal.formatWriteDiagnostic
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.planning.BatchStage
 import java.util.concurrent.ConcurrentHashMap
@@ -577,4 +576,16 @@ internal class BatchWriteGate(
         }
         return result
     }
+}
+
+/**
+ * Formats the comma-separated write diagnostic fields shared by the chapter
+ * store and batch write gate.
+ */
+internal fun formatWriteDiagnostic(
+    pageKey: String,
+    vararg fields: Pair<String, Any?>,
+): String = buildString {
+    append("pageKey=").append(pageKey)
+    fields.forEach { (name, value) -> append(", ").append(name).append('=').append(value) }
 }

@@ -1,12 +1,12 @@
 package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.CleanedImageReference
-import eu.kanade.translation.persistence.artifact.ColorImageSourceKind
-import eu.kanade.translation.persistence.artifact.ColorStyleEntry
-import eu.kanade.translation.persistence.artifact.ColorStylePreparation
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.engines.rendering.CleanedImageReference
+import eu.kanade.translation.engines.rendering.ColorImageSourceKind
+import eu.kanade.translation.engines.rendering.ColorStyleEntry
+import eu.kanade.translation.engines.rendering.ColorStylePreparation
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Builds separately invalidatable geometry and color sidecars from the state

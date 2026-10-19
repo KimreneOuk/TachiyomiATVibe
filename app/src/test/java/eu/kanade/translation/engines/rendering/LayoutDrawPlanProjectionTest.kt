@@ -4,7 +4,7 @@ import eu.kanade.translation.model.BubbleMaskRle
 import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.MaskGeometry.RowSpan
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
+import eu.kanade.translation.engines.rendering.DrawPlanFontIdentity
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.ints.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe

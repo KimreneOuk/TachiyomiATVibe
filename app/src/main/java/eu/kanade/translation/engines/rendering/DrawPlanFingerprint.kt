@@ -1,8 +1,8 @@
 package eu.kanade.translation.engines.rendering
 
 import android.os.Build
-import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.engines.rendering.DrawPlanFontIdentity
+import eu.kanade.translation.model.StageFingerprints
 import java.security.MessageDigest
 
 /**
@@ -102,7 +102,7 @@ object DrawPlanFingerprint {
         .joinToString("") { "%02x".format(it) }
 
     /**
-     * The exact font/paint identity DTO persisted in every [eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan].
+     * The exact font/paint identity DTO persisted in every [eu.kanade.translation.engines.rendering.PageLayoutDrawPlan].
      */
     fun drawPlanFontIdentity(assetSha256: String): DrawPlanFontIdentity = DrawPlanFontIdentity(
         assetName = FONT_ASSET_NAME,

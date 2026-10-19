@@ -29,8 +29,8 @@ import eu.kanade.translation.persistence.chapter.OcrStagePatch
 import eu.kanade.translation.persistence.chapter.PageWriteOrigin
 import eu.kanade.translation.persistence.chapter.StagePatchResult
 import eu.kanade.translation.persistence.chapter.ocrBlockFingerprints
-import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
-import eu.kanade.translation.persistence.queue.TranslationQueueStore
+import eu.kanade.translation.scheduling.InMemorySharedPreferences
+import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.AttemptAuthority
 import eu.kanade.translation.pipeline.CleanedOwner
 import eu.kanade.translation.pipeline.CleanedPublication

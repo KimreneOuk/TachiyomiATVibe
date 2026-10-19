@@ -30,7 +30,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.context.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ArtifactStage
 import eu.kanade.translation.persistence.artifact.ArtifactStageStatus
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
@@ -38,7 +38,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.artifact.FailureCategory
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore

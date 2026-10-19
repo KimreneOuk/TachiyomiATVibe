@@ -15,7 +15,7 @@ import eu.kanade.translation.persistence.artifact.ChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.DurableFailureMetadata
 import eu.kanade.translation.persistence.artifact.RenameResult
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.artifact.toArtifactPageFallback
 import kotlinx.coroutines.Dispatchers

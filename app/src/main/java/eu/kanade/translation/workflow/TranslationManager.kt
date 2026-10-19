@@ -22,7 +22,7 @@ import eu.kanade.translation.persistence.chapter.ChapterStoreOpener
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.DurableChapterRead
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
-import eu.kanade.translation.persistence.queue.TranslationPendingRequestStore
+import eu.kanade.translation.scheduling.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker

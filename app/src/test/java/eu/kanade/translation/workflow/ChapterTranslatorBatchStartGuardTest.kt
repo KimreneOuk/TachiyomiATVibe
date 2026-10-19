@@ -5,8 +5,8 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.chapter.TranslationFileProvider
-import eu.kanade.translation.persistence.queue.InMemorySharedPreferences
-import eu.kanade.translation.persistence.queue.TranslationQueueStore
+import eu.kanade.translation.scheduling.InMemorySharedPreferences
+import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe

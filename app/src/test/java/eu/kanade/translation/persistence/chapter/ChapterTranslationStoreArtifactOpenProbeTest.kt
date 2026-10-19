@@ -12,7 +12,7 @@ import eu.kanade.translation.persistence.artifact.CommittedBundleMetadata
 import eu.kanade.translation.persistence.artifact.DisplayBaseKind
 import eu.kanade.translation.persistence.artifact.DisplayBaseReference
 import eu.kanade.translation.persistence.artifact.PageArtifactRecord
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe

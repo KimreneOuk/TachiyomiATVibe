@@ -10,7 +10,7 @@ import eu.kanade.translation.engines.translator.contextual.PlannedAnalysisChunk
  * The `pages` array preserves
  * CORE-THEN-CONTEXT order — the contributing set order of
  * [PlannedAnalysisChunk.contributingPageKeys], which the chunk planner defines
- * and the persisted [eu.kanade.translation.persistence.artifact.AnalysisChunkResult]
+ * and the persisted [eu.kanade.translation.engines.translator.analysis.AnalysisChunkResult]
  * fingerprints hash (`naturalOrderProven=true`). The request payload order
  * MUST reproduce that order exactly; it is pinned end-to-end by
  * `AnalysisRequestOrderTest`.

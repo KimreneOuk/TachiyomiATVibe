@@ -3,14 +3,14 @@ package eu.kanade.translation.engines.rendering
 import eu.kanade.translation.model.MaskGeometry
 import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
-import eu.kanade.translation.persistence.artifact.DrawPlanAlign
-import eu.kanade.translation.persistence.artifact.DrawPlanBlock
-import eu.kanade.translation.persistence.artifact.DrawPlanFontIdentity
-import eu.kanade.translation.persistence.artifact.DrawPlanMaskComponentRef
-import eu.kanade.translation.persistence.artifact.DrawPlanPositionedLine
-import eu.kanade.translation.persistence.artifact.DrawPlanRect
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.engines.rendering.DrawPlanAlign
+import eu.kanade.translation.engines.rendering.DrawPlanBlock
+import eu.kanade.translation.engines.rendering.DrawPlanFontIdentity
+import eu.kanade.translation.engines.rendering.DrawPlanMaskComponentRef
+import eu.kanade.translation.engines.rendering.DrawPlanPositionedLine
+import eu.kanade.translation.engines.rendering.DrawPlanRect
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Pure, additive projection between the

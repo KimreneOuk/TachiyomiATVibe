@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.artifact.EnvelopePlan
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
+import eu.kanade.translation.model.StageFingerprints
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain

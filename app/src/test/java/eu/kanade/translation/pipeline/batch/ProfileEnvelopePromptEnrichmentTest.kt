@@ -27,15 +27,15 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
+import eu.kanade.translation.context.AnalyzerProvenance
 import eu.kanade.translation.persistence.artifact.ArtifactDocumentJson
 import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.persistence.artifact.EvidenceRef
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.context.EvidenceRef
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
 import eu.kanade.translation.persistence.chapter.LeaseAcquisition
@@ -623,7 +623,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             planArtifactPageVersion = snapshot.artifactPageVersion,
             blocks = listOf(plannedBlock),
         )
-        val envelope = eu.kanade.translation.persistence.artifact.PlannedEnvelope(
+        val envelope = eu.kanade.translation.pipeline.batch.envelope.PlannedEnvelope(
             envelopeId = "e-0",
             orderedPageKeys = listOf(pageKey),
             blockIds = listOf("p0_b1"),
@@ -634,7 +634,7 @@ class ProfileEnvelopePromptEnrichmentTest {
             contributingPageCount = 1,
         )
         // The SC-10 plan fingerprint, computed exactly like the publication.
-        val hashingView = eu.kanade.translation.persistence.artifact.EnvelopePlan(
+        val hashingView = eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan(
             planFingerprint = "",
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,
@@ -642,11 +642,11 @@ class ProfileEnvelopePromptEnrichmentTest {
             createdAtEpochMs = 0L,
         )
         val canonical = ArtifactDocumentJson.encodeToString(
-            eu.kanade.translation.persistence.artifact.EnvelopePlan.serializer(),
+            eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan.serializer(),
             hashingView,
         )
         val planFingerprint = StageFingerprints.envelopePlanContentFingerprint(canonical)
-        val plan = eu.kanade.translation.persistence.artifact.EnvelopePlan(
+        val plan = eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan(
             planFingerprint = planFingerprint,
             planInputFingerprint = hex64("plan-input"),
             plannerVersion = 1,

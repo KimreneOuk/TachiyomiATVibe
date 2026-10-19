@@ -33,7 +33,7 @@ import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterRunRecord
 import eu.kanade.translation.persistence.artifact.ChapterRunState
 import eu.kanade.translation.persistence.artifact.EnvelopePolicySnapshot
-import eu.kanade.translation.persistence.artifact.EvidenceRef
+import eu.kanade.translation.context.EvidenceRef
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.chapter.ChapterTranslationStore
@@ -259,7 +259,7 @@ class Stage7FinalizeResumeCoordinatorTest {
                 response = response,
                 coverage = AnalysisCoverage(AnalysisCoverageKind.COMPLETE, emptyList()),
                 droppedAuthorityKeys = emptyList(),
-                provenance = eu.kanade.translation.persistence.artifact.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
+                provenance = eu.kanade.translation.context.AnalyzerProvenance("fake", "fake-model", 1, 1, "sig"),
             )
         }
     }

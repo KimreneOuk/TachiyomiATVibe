@@ -1,7 +1,7 @@
 package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 import eu.kanade.translation.persistence.artifact.SidecarRead
 import io.kotest.matchers.shouldBe

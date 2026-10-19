@@ -1,13 +1,13 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.artifact.AnalysisChunkResult
-import eu.kanade.translation.persistence.artifact.AnalysisChunkStatus
-import eu.kanade.translation.persistence.artifact.AnalyzerProvenance
-import eu.kanade.translation.persistence.artifact.EvidenceRef
-import eu.kanade.translation.persistence.artifact.ExtractedEntity
-import eu.kanade.translation.persistence.artifact.ExtractedRelationship
-import eu.kanade.translation.persistence.artifact.ExtractedTerm
-import eu.kanade.translation.persistence.artifact.ProfileScene
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkResult
+import eu.kanade.translation.engines.translator.analysis.AnalysisChunkStatus
+import eu.kanade.translation.context.AnalyzerProvenance
+import eu.kanade.translation.context.EvidenceRef
+import eu.kanade.translation.engines.translator.analysis.ExtractedEntity
+import eu.kanade.translation.engines.translator.analysis.ExtractedRelationship
+import eu.kanade.translation.engines.translator.analysis.ExtractedTerm
+import eu.kanade.translation.context.ProfileScene
 import eu.kanade.translation.persistence.artifact.SidecarPointer
 
 /**

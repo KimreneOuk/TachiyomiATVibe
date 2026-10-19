@@ -1,4 +1,4 @@
-package eu.kanade.translation.persistence.queue
+package eu.kanade.translation.scheduling
 
 import android.content.Context
 import io.kotest.matchers.collections.shouldContainExactly

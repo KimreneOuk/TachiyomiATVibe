@@ -1,6 +1,6 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.artifact.StageFingerprints
+import eu.kanade.translation.model.StageFingerprints
 
 /**
  * Assembles the chapter-wide OCR corpus manifest.

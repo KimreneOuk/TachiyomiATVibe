@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.artifact.AtomicChapterDocuments
 import eu.kanade.translation.persistence.artifact.ChapterArtifactEngine
 import eu.kanade.translation.persistence.artifact.ChapterArtifactLayout
 import eu.kanade.translation.persistence.artifact.ChapterArtifactManifest
-import eu.kanade.translation.persistence.artifact.EnvelopePlan
+import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
 import eu.kanade.translation.persistence.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlanPublication
 import io.kotest.matchers.nulls.shouldNotBeNull

@@ -2,7 +2,7 @@ package eu.kanade.translation.engines.rendering
 
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationBlockView
-import eu.kanade.translation.persistence.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.engines.rendering.PageLayoutDrawPlan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.AfterEach
