@@ -1,9 +1,9 @@
 package eu.kanade.translation.engines.translator.contextual
 
 import eu.kanade.translation.persistence.ArtifactDocumentJson
-import eu.kanade.translation.pipeline.batch.envelope.EnvelopePlan
+import eu.kanade.translation.model.EnvelopePlan
 import eu.kanade.translation.model.EnvelopePlanInputPage
-import eu.kanade.translation.pipeline.batch.envelope.PlannedEnvelope
+import eu.kanade.translation.model.PlannedEnvelope
 import eu.kanade.translation.model.StageFingerprints
 
 /**
