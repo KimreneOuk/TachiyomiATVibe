@@ -291,7 +291,7 @@ class ChapterTranslationStore internal constructor(
 
     // Attempt records are written under the store mutex; persistence failures
     // fail open, and memory-only stores keep no durable ledger.
-    private val attemptLedger = ChapterAttemptLedger(this)
+    internal val attemptLedger = ChapterAttemptLedger(this)
 
     /**
      * Publication collaborator (Phase 7 S4). Owns mutation admission, lazy
@@ -536,96 +536,24 @@ class ChapterTranslationStore internal constructor(
         origin: AttemptOrigin,
         generation: Long = currentGeneration,
         requestContextFingerprint: String? = null,
-    ): Boolean = mutex.withLock {
-        attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation, requestContextFingerprint)
-    }
+    ): Boolean = ChapterStoreAttempts.recordAttemptStart(
+        this, pageKey, providerKeyHash, origin, generation, requestContextFingerprint,
+    )
 
-    /** Checks the auto retry cap before dispatch; the request boundary writes the fingerprinted ledger entry. */
-    suspend fun autoAttemptAllowed(pageKey: String): Boolean = mutex.withLock {
-        attemptLedger.autoAttemptAllowedLocked(pageKey)
-    }
+    suspend fun autoAttemptAllowed(pageKey: String): Boolean =
+        ChapterStoreAttempts.autoAttemptAllowed(this, pageKey)
 
-    /**
-     * A completed call for [pageKey] — commit success OR typed provider
-     * failure. Resolves the page's pending entries and resets its consecutive
-     * counter; only a process death leaves an entry behind.
-     */
-    suspend fun resolveAttempt(pageKey: String) {
-        mutex.withLock { attemptLedger.resolveLocked(pageKey) }
-    }
+    suspend fun resolveAttempt(pageKey: String) =
+        ChapterStoreAttempts.resolveAttempt(this, pageKey)
 
-    /**
-     * Startup reconciliation: consume every pending entry as one counted
-     * interrupted attempt per page and persist the counters. Returns the
-     * post-consume consecutive counters; the caller (TranslationManager)
-     * applies the cap for pages at/over the bound.
-     */
-    suspend fun consumeUnresolvedAttemptsAtStartup(): Map<String, Int> = mutex.withLock {
-        attemptLedger.consumeAtStartupLocked()
-    }
+    suspend fun consumeUnresolvedAttemptsAtStartup(): Map<String, Int> =
+        ChapterStoreAttempts.consumeUnresolvedAttemptsAtStartup(this)
 
-    /**
-     * Applies the crash-loop cap to one page: records an INTERRUPTED-class
-     * durable failure (never auto-retryable) and marks the page PARTIAL.
-     * Returns true when the cap state is durably recorded.
-     */
-    suspend fun applyAttemptCapPause(pageKey: String, consecutiveUnresolved: Int): Boolean {
-        val failure = DurableFailureMetadata(
-            pageKey = pageKey,
-            stage = ArtifactStage.TRANSLATION,
-            status = ArtifactStageStatus.FAILED_RETRYABLE,
-            category = FailureCategory.INTERRUPTED,
-            retryCount = consecutiveUnresolved,
-            lastFailureMessage = "repeatedly interrupted before completing; manual retry required",
-            lastFailedAtEpochMs = System.currentTimeMillis(),
-            nextEligibleRetryAtEpochMs = null,
-        )
-        val expected = snapshot(pageKey).toPrecondition()
-        val result = persistDurableStageFailure(
-            pageKey = pageKey,
-            expected = expected,
-            failure = failure,
-            description = "D9 attempt cap reached ($consecutiveUnresolved consecutive interrupted attempts)",
-        ) { current ->
-            (current ?: PageTranslation(sourceFileName = pageKey)).apply {
-                translationStatus = StageStatus.PARTIAL
-            }
-        }
-        return result is PatchResult.Accepted
-    }
+    suspend fun applyAttemptCapPause(pageKey: String, consecutiveUnresolved: Int): Boolean =
+        ChapterStoreAttempts.applyAttemptCapPause(this, pageKey, consecutiveUnresolved)
 
-    /**
-     * Explicit user force: clear the page's consecutive counter and remove the
-     * INTERRUPTED-class cap failure from the manifest, so the user's retry is
-     * admitted and the cap restarts from zero.
-     */
-    suspend fun clearAttemptCapForManualRetry(pageKey: String): Boolean = mutex.withLock {
-        val counterCleared = attemptLedger.clearCapLocked(pageKey)
-        removeInterruptedCapFailureLocked(pageKey)
-        counterCleared
-    }
-
-    /** Caller holds the store mutex. */
-    private fun removeInterruptedCapFailureLocked(pageKey: String) {
-        val artifact = artifactEngine ?: return
-        val manifest = artifactManifest ?: return
-        val key = "$pageKey:${ArtifactStage.TRANSLATION.name}"
-        val existing = manifest.durableFailures[key] ?: return
-        if (existing.category != FailureCategory.INTERRUPTED) return
-        val updated = manifest.copy(
-            durableFailures = manifest.durableFailures - key,
-            updatedAtEpochMs = System.currentTimeMillis(),
-        )
-        if (artifact.publishManifest(updated)) {
-            artifactManifest = updated
-            stateFlow.value = snapshotPages()
-            displayPublication.displaySnapshotLocked(emptyList<String>())
-        } else {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT D9: cap-failure clear publish failed (fail-open): pageKey=$pageKey"
-            }
-        }
-    }
+    suspend fun clearAttemptCapForManualRetry(pageKey: String): Boolean =
+        ChapterStoreAttempts.clearAttemptCapForManualRetry(this, pageKey)
 
     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
         generation++
