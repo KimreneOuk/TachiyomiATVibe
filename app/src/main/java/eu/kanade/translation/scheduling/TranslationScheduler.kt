@@ -106,6 +106,7 @@ class TranslationScheduler(
         val token: ReaderSessionToken,
         val chapterId: Long,
         val sessionKey: String,
+        val session: TranslationSession?,
         val store: ChapterTranslationStore?,
         val computeClass: TranslatorComputeClass,
     )
@@ -169,9 +170,13 @@ class TranslationScheduler(
         )
         queue.bindSession(fresh, session.manga, session.chapter, session.source, computeClass)
         currentToken.set(fresh)
-        sessions[chapterId] = ActiveQueueSession(fresh, chapterId, session.key, session.store, computeClass)
+        sessions[chapterId] = ActiveQueueSession(fresh, chapterId, session.key, session, session.store, computeClass)
         return fresh
     }
+
+    /** Resolves the session captured by [token] for the coordinator-facing manager facade. */
+    internal fun sessionFor(token: ReaderSessionToken): TranslationSession? =
+        sessions.values.firstOrNull { it.token == token }?.session
 
     /** Typed manual or viewport page submission for a captured reader session. */
     fun submitReaderPage(
@@ -292,7 +297,14 @@ class TranslationScheduler(
             )
             queue.bindSession(fresh, manga, chapter, source, TranslatorComputeClass.REMOTE_IO)
             currentToken.set(fresh)
-            sessions[chapterId] = ActiveQueueSession(fresh, chapterId, fresh.chapterIdentity, null, TranslatorComputeClass.REMOTE_IO)
+            sessions[chapterId] = ActiveQueueSession(
+                fresh,
+                chapterId,
+                fresh.chapterIdentity,
+                null,
+                null,
+                TranslatorComputeClass.REMOTE_IO,
+            )
             fresh
         }
         // The controller registers the reader stream in the stream registry

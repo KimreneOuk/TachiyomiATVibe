@@ -1,6 +1,7 @@
 package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,7 @@ internal class ReaderTeardownCoordinator(
     private val disposeBatchTrackerFn: (Long) -> Unit,
     private val clearAllPendingTranslationRequestsFn: () -> Unit,
     private val retryPendingDownloadRekeysAfterReaderLeaveFn: suspend () -> Unit = {},
+    private val readerCoordinatorProvider: (() -> ReaderTranslationCoordinator)? = null,
 ) {
 
     // Resolve lifecycle owners on demand; teardown must operate on the current session.
@@ -41,6 +43,8 @@ internal class ReaderTeardownCoordinator(
     private val activeStores get() = activeStoresProvider()
 
     private val translator get() = translatorProvider()
+
+    private val readerCoordinator get() = readerCoordinatorProvider?.invoke()
 
     private val sessionCoordinator get() = sessionCoordinatorProvider()
 
@@ -96,6 +100,7 @@ internal class ReaderTeardownCoordinator(
                 // Scheduler-owned teardown cancels every queue session and
                 // awaits each session's PendingNativeDrain handle to physical
                 // worker exit (native stragglers included) before returning.
+                readerCoordinator?.cancelAllAndJoin()
                 // Store eviction below must never precede that drain: an
                 // evicted (defunct) store would strand a still-live paid
                 // worker's commit.
@@ -127,7 +132,8 @@ internal class ReaderTeardownCoordinator(
      * Returns true if a job was actually cancelled, false if none was running for that page.
      */
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
-        scheduler.cancelPageTranslation(chapterId, pageKey)
+        (readerCoordinator?.cancelPageAsync(chapterId.toString(), pageKey) ?: false) ||
+            scheduler.cancelPageTranslation(chapterId, pageKey)
 
     /**
      * Cancels all in-flight single-page translation jobs for [chapterId] and evicts the shared
@@ -139,6 +145,7 @@ internal class ReaderTeardownCoordinator(
         chapterId: Long,
         reason: String = "Translation cancelled",
     ) {
+        readerCoordinator?.cancelChapter(chapterId.toString())
         scheduler.cancelPageTranslations(chapterId)
         if (isChapterBatchActive(chapterId, includePaused = true)) {
             return
@@ -161,6 +168,7 @@ internal class ReaderTeardownCoordinator(
         cancelBatchQueue: Boolean = false,
         reason: String = "All translation cancelled",
     ) {
+        readerCoordinator?.cancelAllAndJoin()
         scheduler.cancelAllPageTranslations()
         val chapterIdsToEvict = activeStores.chapterIds()
             .filter { cancelBatchQueue || !isChapterBatchActive(it, includePaused = true) }

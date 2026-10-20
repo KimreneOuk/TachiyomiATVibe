@@ -53,6 +53,7 @@ class ReaderTranslationCoordinatorTest {
     @Test
     fun `enqueuePage enqueues manual request and preempts auto`() = runTest {
         val coord = createCoordinator()
+        coord.setAutoEnabled("ch1", true)
         val store: ChapterTranslationStore = mockk(relaxed = true) {
             every { state } returns MutableStateFlow(emptyMap())
         }
@@ -99,6 +100,7 @@ class ReaderTranslationCoordinatorTest {
     @Test
     fun `updateViewportWindow trims distant auto pages`() = runTest {
         val coord = createCoordinator()
+        coord.setAutoEnabled("ch1", true)
         val store: ChapterTranslationStore = mockk(relaxed = true) {
             every { state } returns MutableStateFlow(emptyMap())
         }

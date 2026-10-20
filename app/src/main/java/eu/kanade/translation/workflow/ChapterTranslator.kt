@@ -17,6 +17,7 @@ import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -123,7 +124,7 @@ internal fun selectChapterWave(queue: List<Translation>): List<Translation> {
         .flatMap { (_, translations) -> translations.take(2) }
 }
 
-class ChapterTranslator(
+internal class ChapterTranslator(
     private val context: Context,
     private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider = Injekt.get(),
@@ -138,6 +139,7 @@ class ChapterTranslator(
         translationPreferences,
         streamRegistry,
     ),
+    private val batchCoordinator: BatchTranslationCoordinator? = null,
 ) {
 
     companion object {
@@ -781,15 +783,29 @@ class ChapterTranslator(
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {
-                    batchReconciliation = pipeline.translateBatch(
-                        translation.manga,
-                        translation.chapter,
-                        translation.source,
-                        store,
-                        orderedStreams,
-                        tracker,
-                        naturalPageIndexes,
-                    )
+                    val coordinator = batchCoordinator
+                    if (coordinator == null) {
+                        batchReconciliation = pipeline.translateBatch(
+                            translation.manga,
+                            translation.chapter,
+                            translation.source,
+                            store,
+                            orderedStreams,
+                            tracker,
+                            naturalPageIndexes,
+                        )
+                    } else {
+                        batchReconciliation = executeQueuedBatchWithCoordinator(
+                            coordinator,
+                            pipeline,
+                            provider,
+                            translation,
+                            orderedStreams,
+                            batchOrderedPageKeys,
+                            store,
+                            tracker,
+                        )
+                    }
                 }
             } finally {
                 try {

@@ -45,6 +45,7 @@ internal class BatchTranslationCoordinator(
     private val processor: TranslationProcessor,
     private val recognitionEngineProvider: () -> PageRecognitionEngine,
     private val translatorProvider: () -> TextTranslator,
+    private val prepareEngines: suspend () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
 ) : Closeable {
 
@@ -81,6 +82,7 @@ internal class BatchTranslationCoordinator(
         companionDir: UniFile? = null,
         inpaintingEnabled: Boolean = true,
         chunkSize: Int = 5,
+        onProgress: ((BatchProgress) -> Unit)? = null,
     ): BatchProgress {
         if (!activeChapters.add(chapterKey)) {
             logcat(LogPriority.WARN) { "BatchTranslationCoordinator: chapter $chapterKey already active" }
@@ -96,6 +98,7 @@ internal class BatchTranslationCoordinator(
             )
         )
         _progressFlows[chapterKey] = progress
+        onProgress?.invoke(progress.value)
 
         try {
             return executeBatch(
@@ -107,6 +110,7 @@ internal class BatchTranslationCoordinator(
                 inpaintingEnabled = inpaintingEnabled,
                 chunkSize = chunkSize,
                 progress = progress,
+                onProgress = onProgress,
             )
         } finally {
             activeChapters.remove(chapterKey)
@@ -122,6 +126,7 @@ internal class BatchTranslationCoordinator(
         inpaintingEnabled: Boolean,
         chunkSize: Int,
         progress: MutableStateFlow<BatchProgress>,
+        onProgress: ((BatchProgress) -> Unit)?,
     ): BatchProgress {
         val totalCount = orderedPageKeys.size
         val currentState = store.state.value
@@ -133,7 +138,7 @@ internal class BatchTranslationCoordinator(
         }.toSet()
 
         var completedCount = completedKeys.size
-        progress.value = BatchProgress(chapterKey, completedCount, totalCount, "RESUME_CHECK")
+        publish(progress, BatchProgress(chapterKey, completedCount, totalCount, "RESUME_CHECK"), onProgress)
         logcat(LogPriority.INFO) {
             "BatchTranslationCoordinator: chapter $chapterKey has $completedCount/$totalCount pages already completed"
         }
@@ -141,15 +146,16 @@ internal class BatchTranslationCoordinator(
         val remainingKeys = orderedPageKeys.filter { it !in completedKeys }
         if (remainingKeys.isEmpty()) {
             val finalProgress = BatchProgress(chapterKey, totalCount, totalCount, "COMPLETED", isFinished = true)
-            progress.value = finalProgress
+            publish(progress, finalProgress, onProgress)
             return finalProgress
         }
 
+        prepareEngines()
         val recognitionEngine = recognitionEngineProvider()
         val translator = translatorProvider()
 
         // 2. Full-Chapter OCR Barrier
-        progress.value = BatchProgress(chapterKey, completedCount, totalCount, "OCR_BARRIER")
+        publish(progress, BatchProgress(chapterKey, completedCount, totalCount, "OCR_BARRIER"), onProgress)
         val analyzedPages = LinkedHashMap<String, PageTranslation>()
 
         for (pageKey in remainingKeys) {
@@ -162,8 +168,17 @@ internal class BatchTranslationCoordinator(
                 if (decoded == null) {
                     val err = "Failed to decode page image for $pageKey during OCR pass"
                     logcat(LogPriority.ERROR) { err }
+                    store.updatePageFromCurrentSnapshot(pageKey, "batch:decode-failed") { current ->
+                        (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                            ocrStatus = StageStatus.FAILED
+                            translationStatus = StageStatus.FAILED
+                            inpaintStatus = StageStatus.FAILED
+                            renderStatus = StageStatus.FAILED
+                            errorMessage = err
+                        }
+                    }
                     val failProgress = BatchProgress(chapterKey, completedCount, totalCount, "FAILED", isFinished = true, error = err)
-                    progress.value = failProgress
+                    publish(progress, failProgress, onProgress)
                     return failProgress
                 }
 
@@ -176,7 +191,7 @@ internal class BatchTranslationCoordinator(
                 // Textless pages are complete immediately!
                 if (page.blocks.isEmpty() || page.isTextlessTerminal) {
                     completedCount++
-                    progress.value = BatchProgress(chapterKey, completedCount, totalCount, "OCR_BARRIER")
+                    publish(progress, BatchProgress(chapterKey, completedCount, totalCount, "OCR_BARRIER"), onProgress)
                 }
             }
         }
@@ -185,12 +200,12 @@ internal class BatchTranslationCoordinator(
         val pagesNeedingWork = analyzedPages.filterValues { it.blocks.isNotEmpty() && !it.isTextlessTerminal }
         if (pagesNeedingWork.isEmpty()) {
             val finalProgress = BatchProgress(chapterKey, totalCount, totalCount, "COMPLETED", isFinished = true)
-            progress.value = finalProgress
+            publish(progress, finalProgress, onProgress)
             return finalProgress
         }
 
         // 3. Bounded 2-Task Concurrency: Translation loop + Sequential Inpainting loop
-        progress.value = BatchProgress(chapterKey, completedCount, totalCount, "TRANSLATING_AND_INPAINTING")
+        publish(progress, BatchProgress(chapterKey, completedCount, totalCount, "TRANSLATING_AND_INPAINTING"), onProgress)
         val inpaintChannel = Channel<PageTranslation>(capacity = 2)
 
         coroutineScope {
@@ -231,11 +246,15 @@ internal class BatchTranslationCoordinator(
                     store.updatePageFromCurrentSnapshot(pageKey, "batch:commit") { translatedPage }
 
                     completedCount++
-                    progress.value = BatchProgress(
-                        chapterKey = chapterKey,
-                        completedPages = completedCount,
-                        totalPages = totalCount,
-                        currentStage = "INPAINTING",
+                    publish(
+                        progress,
+                        BatchProgress(
+                            chapterKey = chapterKey,
+                            completedPages = completedCount,
+                            totalPages = totalCount,
+                            currentStage = "INPAINTING",
+                        ),
+                        onProgress,
                     )
                 }
             }
@@ -245,8 +264,17 @@ internal class BatchTranslationCoordinator(
         }
 
         val finalProgress = BatchProgress(chapterKey, totalCount, totalCount, "COMPLETED", isFinished = true)
-        progress.value = finalProgress
+        publish(progress, finalProgress, onProgress)
         return finalProgress
+    }
+
+    private fun publish(
+        progress: MutableStateFlow<BatchProgress>,
+        value: BatchProgress,
+        onProgress: ((BatchProgress) -> Unit)?,
+    ) {
+        progress.value = value
+        onProgress?.invoke(value)
     }
 
     override fun close() {

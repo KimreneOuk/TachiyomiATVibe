@@ -2,10 +2,10 @@ package eu.kanade.translation.workflow
 
 import android.content.Context
 import androidx.annotation.VisibleForTesting
-import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.diagnostics.ReaderEntryTrace
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
@@ -13,17 +13,12 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.persistence.ArtifactManifestProbe
-import eu.kanade.translation.persistence.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterResetPreflight
-import eu.kanade.translation.persistence.ChapterStoreOpener
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.scheduling.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
@@ -42,14 +37,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -66,13 +58,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class TranslationManager private constructor(
-    private val context: Context,
-    private val provider: TranslationFileProvider,
-    private val sourceManager: SourceManager,
-    private val translationPreferences: TranslationPreferences,
+    internal val context: Context,
+    internal val provider: TranslationFileProvider,
+    internal val sourceManager: SourceManager,
+    internal val translationPreferences: TranslationPreferences,
     // File truth for startup reconciliation (pending + valid files -> admit once).
     // DownloadProvider only resolves directories, avoiding a callback into this manager.
-    private val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider,
+    internal val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider,
     private val testConstruction: TestConstruction?,
 ) {
     constructor(
@@ -93,7 +85,9 @@ class TranslationManager private constructor(
         val streamRegistry: TranslationStreamRegistry,
     )
 
-    private enum class AdmissionResult {
+    internal val testScheduler = testConstruction?.scheduler
+
+    internal enum class AdmissionResult {
         STALE_GENERATION,
         QUEUED,
         QUEUE_FAILED,
@@ -132,8 +126,8 @@ class TranslationManager private constructor(
         )
     }
 
-    private val pipeline = testConstruction?.pipeline ?: TranslationPipeline(context, provider)
-    private val translator = testConstruction?.translator ?: ChapterTranslator(context, provider, pipeline = pipeline)
+    internal val pipeline = testConstruction?.pipeline ?: TranslationPipeline(context, provider)
+    internal val isProductionConstruction: Boolean get() = testConstruction == null
 
     /** Single owner for reader/batch admission; lifecycle coordinators delegate here. */
     val sessionCoordinator = testConstruction?.sessionCoordinator ?: TranslationSessionCoordinator(
@@ -141,16 +135,29 @@ class TranslationManager private constructor(
     )
 
     // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
-    private val streamRegistry: TranslationStreamRegistry = testConstruction?.streamRegistry ?: Injekt.get()
+    internal val streamRegistry: TranslationStreamRegistry = testConstruction?.streamRegistry ?: Injekt.get()
 
     /**
      * Application-lifetime scope for one-off init work (queue rehydration). SupervisorJob so a
      * failure in restoreQueue does not cancel unrelated work; IO dispatcher because restoreQueue does DB reads.
      */
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    internal val coordinatorRuntime = createCoordinatorRuntime()
+
+    /** Both lanes share one TranslationProcessor owned by the manager. */
+    internal val readerCoordinator: ReaderTranslationCoordinator get() = coordinatorRuntime.readerCoordinator
+    internal val batchCoordinator: BatchTranslationCoordinator get() = coordinatorRuntime.batchCoordinator
+
+    internal val translator = testConstruction?.translator ?: ChapterTranslator(
+        context = context,
+        provider = provider,
+        pipeline = pipeline,
+        batchCoordinator = batchCoordinator,
+    )
 
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
-    private val readerTeardownMutex = Mutex()
+    internal val readerTeardownMutex = Mutex()
 
     /**
      * Reader, batch, and download-rekey store binding share a chapter admission
@@ -159,13 +166,13 @@ class TranslationManager private constructor(
      * the mutation.
      */
     private val chapterStoreAdmissionLocks = ConcurrentHashMap<Long, Mutex>()
-    private val chaptersUnderDownloadRekey = ConcurrentHashMap.newKeySet<Long>()
+    internal val chaptersUnderDownloadRekey = ConcurrentHashMap.newKeySet<Long>()
 
-    private suspend fun <T> withChapterStoreAdmissionLock(chapterId: Long, block: suspend () -> T): T =
+    internal suspend fun <T> withChapterStoreAdmissionLock(chapterId: Long, block: suspend () -> T): T =
         chapterStoreAdmissionLocks.computeIfAbsent(chapterId) { Mutex() }.withLock { block() }
 
-    private val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
-    private val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
+    internal val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
+    internal val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
 
     /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
@@ -176,7 +183,7 @@ class TranslationManager private constructor(
         get() = pipeline.nativeStall
 
     /** Serializes request versioning, state publication, and durable writes. */
-    private val pendingRequestMutationLock = Any()
+    internal val pendingRequestMutationLock = Any()
 
     // One-shot marks for pending requests startup reconciliation
     // admitted (process-local is sufficient — the reconciler and the later
@@ -185,38 +192,21 @@ class TranslationManager private constructor(
     // auto-start translation when its download completes (Director policy: no
     // OCR/LLM after a restart without an explicit user action); a live
     // in-session request never carries the mark and starts unchanged.
-    private val restoreAdmittedChapterIds = ConcurrentHashMap.newKeySet<Long>()
+    internal val restoreAdmittedChapterIds = ConcurrentHashMap.newKeySet<Long>()
 
     // Startup reconciliation waits for both the downloader and translation
     // queue restores to complete.
     @Volatile
-    private var downloadQueueRestoredChapterIds: Set<Long>? = null
+    internal var downloadQueueRestoredChapterIds: Set<Long>? = null
 
     @Volatile
-    private var translationQueueRestoreJob: Job? = null
+    internal var translationQueueRestoreJob: Job? = null
 
-    private val startupReconciliationOnce = AtomicBoolean(false)
+    internal val startupReconciliationOnce = AtomicBoolean(false)
 
     // The coordinator owns request-version and generation counters; the manager
     // retains the request state and mutation lock that these operations synchronize.
-    private val requestCoordinator: TranslationRequestCoordinator by lazy {
-        TranslationRequestCoordinator(
-            pendingRequestStoreProvider = { pendingRequestStore },
-            pendingTranslationRequestsStateProvider = { pendingTranslationRequestsState },
-            pendingRequestMutationLockProvider = { pendingRequestMutationLock },
-            storeScopeProvider = { storeScope },
-            queueStateProvider = { queueState },
-            translatorProvider = { translator },
-            getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
-            translateChapter = { manga, chapter, expectedRequestGeneration, autoStart ->
-                translateChapter(manga, chapter, expectedRequestGeneration, autoStart = autoStart)
-            },
-            hasPendingDownloadRekeyFn = { chapterId -> hasPendingDownloadRekey(chapterId) },
-            reconcilePendingDownloadRekeyFn = { chapterId ->
-                reconcilePendingDownloadRekeyForAdmission(chapterId)
-            },
-        )
-    }
+    internal val requestCoordinator: TranslationRequestCoordinator by lazy { createRequestCoordinator() }
 
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
@@ -224,158 +214,28 @@ class TranslationManager private constructor(
      * The scheduler resolves the per-chapter store back through this manager via [storeResolver]
      * — store instances are shared between reader and translator, so they must not be owned by the scheduler.
      */
-    val scheduler = testConstruction?.scheduler ?: eu.kanade.translation.scheduling.TranslationScheduler(
-        executor = pipeline,
-        storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
-            activeStores.get(chapterId)
-        },
-        immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
-        manualStreamProvider = { manga, chapter, source, pageKey ->
-            // Registry first: the controller registers the live reader stream
-            // right before tapping. Downloaded-chapter fallback resolves the
-            // chapter dir and page stream lazily on the worker, mirroring the
-            // pipeline's own downloaded-dir resolution.
-            streamRegistry.peek(manga, chapter, source, pageKey)
-                ?: downloadedPageStreamFactory(manga, chapter, source, pageKey)
-        },
-        readerSessionRejectionReason = { chapterId ->
-            if (chapterId in chaptersUnderDownloadRekey) {
-                "completed download re-key in progress"
-            } else {
-                when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
-                    is SessionAdmission.Rejected -> admission.reason.name
-                    else -> null
-                }
-            }
-        },
-    )
+    val scheduler = createScheduler()
 
-    /**
-     * Source factory for a manual tap on a downloaded chapter without a live
-     * reader stream. Each invocation rescans the chapter dir on the worker and
-     * opens a fresh stream; a missing dir or page throws so the attempt fails
-     * with a typed pipeline failure instead of a null dereference.
-     */
-    private fun downloadedPageStreamFactory(
+    internal fun downloadedPageStreamFactory(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
-    ): (() -> java.io.InputStream)? {
-        val chapterId = chapter.id ?: return null
-        return {
-            val chapterPath = downloadProvider.findChapterDir(
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            ) ?: throw java.io.IOException(
-                "downloaded chapter dir not found for manual tap: chapterId=$chapterId pageKey=$pageKey",
-            )
-            eu.kanade.translation.util.getChapterPages(context, chapterPath)
-                .firstOrNull { it.first == pageKey }
-                ?.second?.invoke()
-                ?: throw java.io.IOException(
-                    "downloaded page not found for manual tap: chapterId=$chapterId pageKey=$pageKey",
-                )
-        }
-    }
+    ): (() -> java.io.InputStream)? = downloadedPageStreamFactoryImpl(manga, chapter, source, pageKey)
 
-    init {
-        if (testConstruction == null) {
-            // Share the store instance between reader and translator so live updates do not need a chapter reload.
-            pipeline.activeStoreResolver = { translation ->
-                openOrCreateActiveChapterTranslationStoreSuspend(
-                    translation.chapter.id!!,
-                    translation.chapter.name,
-                    translation.chapter.scanlator,
-                    translation.manga.title,
-                    translation.source,
-                    translation.manga.id,
-                )
-            }
-            pipeline.onBatchClosed = { manga, chapter, source, store ->
-                chapter.id?.let { chapterId ->
-                    sweepOrphanedCleanedImages(
-                        store = store,
-                        chapterId = chapterId,
-                        chapterName = chapter.name,
-                        scanlator = chapter.scanlator,
-                        mangaTitle = manga.title,
-                        source = source,
-                        mangaId = manga.id,
-                    )
-                }
-                if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
-                    sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
-                }
-            }
-            // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
-            // each single-page translation broke live updates (reader captured the
-            // StateFlow once; next translate got a fresh unobserved store). Eviction
-            // now happens only on chapter change / reader exit (cancelPageTranslations /
-            // cancelAllPageTranslations callers).
+    init { initializeTranslationManager() }
 
-            // Native quarantine reports timeout only after the underlying call exits;
-            // evict the stale job so a subsequent request can be admitted safely.
-            pipeline.onPageStuck = { chapterId, pageKey ->
-                if (chapterId != null && pageKey.isNotEmpty()) {
-                    scheduler.markPageJobStuck(chapterId, pageKey)
-                }
-            }
-
-            // Batch tracker factory: lets the pipeline create and register a tracker per active batch (observable via observeBatchProgress).
-            pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
-                createBatchTracker(chapterId, store, orderedPageKeys)
-            }
-
-            // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
-            // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
-            applicationScope.launch {
-                // Any queue emission can follow a durable transition (completion,
-                // failure, cancel). Membership-set comparison is not enough: a
-                // conflated remove→re-add of the same chapter reproduces the same
-                // membership set while durable truth changed in between, and the
-                // arm-after-pause path re-emits the same list verbatim. Wipe on
-                // every emission — the clear is two map clears, and emissions only
-                // fire on queue mutations, never on batch progress ticks.
-                translator.queueState.collect {
-                    durableStatusResolver.clearDurableStatusCache()
-                }
-            }
-            applicationScope.launch {
-                // A paused chapter is not an active foreground job, but its durable
-                // outcome still deserves a visible notification after process
-                // restart. The service owns only the active QUEUE/TRANSLATING
-                // predicate; this collector owns the detached paused projection.
-                statusFlow().collect { translation ->
-                    if (translation.status == Translation.State.PAUSED && !isAnyBatchTranslationActive) {
-                        val snapshot = translation.chapter.id?.let { chapterId ->
-                            getTranslationProgress(chapterId)?.firstOrNull()
-                        }
-                        TranslationForegroundService.showPaused(
-                            context = context,
-                            chapterName = translation.chapter.name,
-                            chapterId = translation.chapter.id,
-                            snapshot = snapshot,
-                        )
-                    }
-                }
-            }
-            applicationScope.launch {
-                // After the downloader reports its restore too, run the one-shot
-                // pending-request reconciliation pass.
-                translator.restoreQueue()
-                runStartupReconciliationIfReady()
-            }.also { translationQueueRestoreJob = it }
-        }
-    }
-
-    private val activeStores = ActiveChapterStoreRegistry()
-    private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
+    internal val activeStores = ActiveChapterStoreRegistry()
+    internal val batchTrackerRegistry = TranslationBatchTrackerRegistry()
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
-    private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    internal val readerViewportLocks = ConcurrentHashMap<Long, Mutex>()
+    internal val readerViewportRevisions = ConcurrentHashMap<Long, AtomicLong>()
+    internal val readerViewportStates = ConcurrentHashMap<Long, Pair<Int, Int>>()
+    @Volatile
+    internal var activeReaderCoordinatorChapterId: Long? = null
 
     val isRunning: Boolean
         get() = translator.isRunning
@@ -386,21 +246,7 @@ class TranslationManager private constructor(
     val isAnyBatchTranslationActive: Boolean
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
 
-    private fun admitBatchSession(chapterIds: Set<Long>): Boolean {
-        if (chapterIds.isEmpty()) return false
-        return when (val admission = sessionCoordinator.requestBatchSession(BatchSessionIntent(chapterIds))) {
-            is SessionAdmission.Admitted,
-            is SessionAdmission.Switched,
-            -> true
-
-            is SessionAdmission.Rejected -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT batch admission rejected: reason=${admission.reason} chapters=$chapterIds"
-                }
-                false
-            }
-        }
-    }
+    internal fun admitBatchSession(chapterIds: Set<Long>): Boolean = admitBatchSessionImpl(chapterIds)
 
     /**
      * Quiesce the batch owner before admitting a confirmed reader request.
@@ -422,11 +268,7 @@ class TranslationManager private constructor(
         )
     }
 
-    fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
-        // A live request supersedes any restore-admitted mark.
-        chapter.id?.let { chapterId -> restoreAdmittedChapterIds.remove(chapterId) }
-        requestCoordinator.queueTranslationAfterDownload(manga, chapter)
-    }
+    fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) = queueTranslationAfterDownloadImpl(manga, chapter)
 
     /** Drops the WAITING write when the request was cancelled or replaced. */
     fun queueTranslationAfterDownloadIfCurrent(
@@ -435,17 +277,9 @@ class TranslationManager private constructor(
         expectedGeneration: Long,
     ): Boolean = requestCoordinator.queueTranslationAfterDownloadIfCurrent(manga, chapter, expectedGeneration)
 
-    fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
-        // Live acknowledgements supersede restore-admitted marks.
-        chapters.forEach { chapter ->
-            chapter.id?.let { chapterId -> restoreAdmittedChapterIds.remove(chapterId) }
-        }
-        requestCoordinator.acknowledgeTranslationRequests(chapters)
-    }
+    fun acknowledgeTranslationRequests(chapters: List<Chapter>) = acknowledgeTranslationRequestsImpl(chapters)
 
-    fun markTranslationRequestPreparing(chapterId: Long) {
-        requestCoordinator.markTranslationRequestPreparing(chapterId)
-    }
+    fun markTranslationRequestPreparing(chapterId: Long) = markTranslationRequestPreparingImpl(chapterId)
 
     /** Drops the PREPARING write when the request was cancelled or replaced. */
     fun markTranslationRequestPreparingIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean =
@@ -463,48 +297,23 @@ class TranslationManager private constructor(
         chapterId: Long,
         reason: String? = null,
         failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.DOWNLOAD_FAILED,
-    ) {
-        requestCoordinator.markTranslationDownloadFailed(chapterId, reason, failureKind)
-    }
+    ) = markTranslationDownloadFailedImpl(chapterId, reason, failureKind)
 
-    /**
-     * The chapter's files were finalized, but translation startup failed during
-     * rekey, handoff, or admission. The download keeps its `DOWNLOADED` status;
-     * the request receives R10 admission-failure typing instead of a false
-     * download failure. No-op without a pending request, so ordinary downloads
-     * are unaffected.
-     */
     fun markTranslationHandoffFailed(
         chapterId: Long,
         reason: String? = null,
-    ) {
-        requestCoordinator.markTranslationHandoffFailed(chapterId, reason)
-    }
+    ) = markTranslationHandoffFailedImpl(chapterId, reason)
 
-    // Download lifecycle notifications. Each method is a
-    // no-op without a pending request, so ordinary downloads are unaffected.
+    fun onDownloadCancelledForTranslation(chapterId: Long) = onDownloadCancelledForTranslationImpl(chapterId)
 
-    /** The chapter's download was cancelled or removed from the download queue. */
-    fun onDownloadCancelledForTranslation(chapterId: Long) {
-        requestCoordinator.onDownloadCancelled(chapterId)
-    }
+    fun onDownloadQueueClearedForTranslation(chapterId: Long) = onDownloadQueueClearedForTranslationImpl(chapterId)
 
-    /** The whole download queue was cleared while the chapter's request waited. */
-    fun onDownloadQueueClearedForTranslation(chapterId: Long) {
-        requestCoordinator.onDownloadQueueCleared(chapterId)
-    }
-
-    /** The downloader stopped (offline / Wi-Fi policy / generic) with the chapter unfinished. */
-    fun onDownloadStoppedForTranslation(chapterId: Long, reason: String?) {
-        requestCoordinator.onDownloadStopped(chapterId, reason)
-    }
+    fun onDownloadStoppedForTranslation(chapterId: Long, reason: String?) = onDownloadStoppedForTranslationImpl(chapterId, reason)
 
     fun cancelTranslationRequest(chapterId: Long): Boolean =
         requestCoordinator.cancelTranslationRequest(chapterId)
 
-    fun clearStaleDownloadFailedRequest(chapterId: Long) {
-        requestCoordinator.clearStaleDownloadFailedRequest(chapterId)
-    }
+    fun clearStaleDownloadFailedRequest(chapterId: Long) = clearStaleDownloadFailedRequestImpl(chapterId)
 
     /** Requeues a request after a download failure. */
     fun rearmDownloadFailedRequest(chapterId: Long): Boolean =
@@ -518,22 +327,16 @@ class TranslationManager private constructor(
 
     fun protectedChapterIds(): Set<Long> = requestCoordinator.protectedChapterIds()
 
-    private fun setPendingTranslationRequest(
+    internal fun setPendingTranslationRequest(
         chapterId: Long,
         phase: TranslationRequestPhase,
         reason: String? = null,
         failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.NONE,
-    ) {
-        requestCoordinator.setPendingTranslationRequest(chapterId, phase, reason, failureKind)
-    }
+    ) = setPendingTranslationRequestImpl(chapterId, phase, reason, failureKind)
 
-    private fun clearPendingTranslationRequest(chapterId: Long) {
-        requestCoordinator.clearPendingTranslationRequest(chapterId)
-    }
+    internal fun clearPendingTranslationRequest(chapterId: Long) = clearPendingTranslationRequestImpl(chapterId)
 
-    private fun clearAllPendingTranslationRequests() {
-        requestCoordinator.clearAllPendingTranslationRequests()
-    }
+    internal fun clearAllPendingTranslationRequests() = clearAllPendingTranslationRequestsImpl()
 
     private fun loadPendingTranslationRequests(): Map<Long, TranslationRequestState> =
         pendingRequestStore.load().associateWith { chapterId ->
@@ -547,64 +350,12 @@ class TranslationManager private constructor(
             )
         }
 
-    suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
-        // One-shot gate. A pending request startup reconciliation
-        // admitted is enqueued PAUSED when its download completes in this
-        // process; live requests carry no mark and auto-start unchanged.
-        val chapterId = chapter.id
-        val restoreAdmitted = chapterId != null && restoreAdmittedChapterIds.remove(chapterId)
-        requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter, !restoreAdmitted)
-    }
+    suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) = startTranslationAfterDownloadIfRequestedImpl(manga, chapter)
 
-    // Startup reconciliation ------------------------------------------------
+    fun onDownloadQueueRestored(queuedChapterIds: Set<Long>) = onDownloadQueueRestoredImpl(queuedChapterIds)
 
-    /**
-     * Called by the downloader once its asynchronous queue restore has
-     * completed (both sides of the readiness barrier). Idempotent.
-     */
-    fun onDownloadQueueRestored(queuedChapterIds: Set<Long>) {
-        downloadQueueRestoredChapterIds = queuedChapterIds
-        applicationScope.launch { runStartupReconciliationIfReady() }
-    }
+    internal fun runStartupReconciliationIfReady() = runStartupReconciliationIfReadyImpl()
 
-    /**
-     * Readiness barrier: runs once after BOTH queue restores completed. The
-     * once-guard is only consumed when the downloader snapshot is present, so
-     * a late downloader restore still triggers the pass.
-     */
-    private fun runStartupReconciliationIfReady() {
-        val downloadSnapshot = downloadQueueRestoredChapterIds ?: return
-        if (!startupReconciliationOnce.compareAndSet(false, true)) return
-        applicationScope.launch {
-            translationQueueRestoreJob?.join()
-            reconcilePendingRequestsForStartup(downloadQueueChapterIds = downloadSnapshot)
-            // Consume interrupted-attempt ledger entries for this bounded
-            // chapter set; never scan the whole library.
-            reconcileAttemptLedgersForStartup(
-                chapterIds = translator.persistedQueueChapterIds() +
-                    pendingTranslationRequestsState.value.keys +
-                    pendingRequestStore.load(),
-            )
-        }
-    }
-
-    /**
-     * One idempotent, bounded pass over the durable pending requests:
-     * - pending + translation-queue member -> queue wins: clear pending;
-     * - pending + download-queue member -> normalize to WAITING;
-     * - pending + valid downloaded files (no owner) -> admit translation once;
-     * - pending + neither -> explicit FAILED (interrupted), never deleted;
-     * - chapter/source missing -> purge stale ownership.
-     *
-     * Race-safe against a concurrently completing download or cancel: the
-     * record (with its generation) is re-read at decision time and every
-     * durable mutation is fenced on that generation, so a stale decision
-     * cannot resurrect a cancelled request or double-admit.
-     *
-     * Admission intentionally does NOT auto-start OCR/LLM: the chapter lands
-     * in the translation queue as QUEUE and the user resumes explicitly,
-     * matching the restored-work policy.
-     */
     internal suspend fun reconcilePendingRequestsForStartup(
         downloadQueueChapterIds: Set<Long>,
         resolveTranslation: suspend (Long) -> Translation? = { chapterId ->
@@ -618,169 +369,19 @@ class TranslationManager private constructor(
                 translation.source,
             ) != null
         },
-    ) {
-        val pendingIds = (pendingRequestStore.load() + pendingTranslationRequestsState.value.keys)
-            .distinct()
-        if (pendingIds.isEmpty()) return
-        val translationQueueIds = queueState.value.mapNotNull { it.chapter.id }.toSet()
-        pendingIds.forEach { chapterId ->
-            val current = pendingTranslationRequestsState.value[chapterId]
-                ?: pendingRequestStore.record(chapterId)?.let { record ->
-                    TranslationRequestState(
-                        chapterId = record.chapterId,
-                        phase = record.phase,
-                        reason = record.reason,
-                        generation = record.generation,
-                        failureKind = record.failureKind,
-                    )
-                }
-            if (current == null || current.isTerminal) return@forEach
-            val translation = resolveTranslation(chapterId)
-            when {
-                translation == null -> {
-                    logcat(LogPriority.INFO) {
-                        "T911 reconcile: purging stale pending request $chapterId (chapter/source missing)"
-                    }
-                    clearPendingTranslationRequest(chapterId)
-                }
-                chapterId in translationQueueIds -> {
-                    logcat(LogPriority.INFO) {
-                        "T911 reconcile: pending $chapterId is owned by the translation queue; clearing pending"
-                    }
-                    clearPendingTranslationRequest(chapterId)
-                }
-                chapterId in downloadQueueChapterIds -> {
-                    // A restore-admitted WAITING request is marked
-                    // one-shot so the download handoff in this process enqueues
-                    // PAUSED instead of auto-starting translation.
-                    restoreAdmittedChapterIds.add(chapterId)
-                    if (current.phase != TranslationRequestPhase.WAITING_FOR_DOWNLOAD) {
-                        setPendingTranslationRequest(
-                            chapterId,
-                            TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
-                        )
-                    }
-                }
-                hasDownloadedFiles(translation) -> {
-                    logcat(LogPriority.INFO) {
-                        "T911 reconcile: pending $chapterId has downloaded files and no owner; admitting translation"
-                    }
-                    admitRestoredPendingTranslation(translation, current.generation)
-                }
-                else -> {
-                    logcat(LogPriority.INFO) {
-                        "T911 reconcile: pending $chapterId has no queue owner and no files; failing as interrupted"
-                    }
-                    markTranslationDownloadFailed(
-                        chapterId,
-                        "Interrupted before the chapter download or translation could run",
-                        TranslationRequestFailureKind.INTERRUPTED,
-                    )
-                }
-            }
-        }
-    }
+    ) = reconcilePendingRequestsForStartupImpl(downloadQueueChapterIds, resolveTranslation, hasDownloadedFiles)
 
-    /**
-     *  Startup reconciliation for the
-     * durable attempt ledger. Bounded to the caller-supplied chapter set
-     * (persisted translation-queue members ∪ pending request ids ∪ active
-     * stores) — NEVER a library scan. Every unresolved entry is a paid call a
-     * process death interrupted; each consumes one consecutive attempt for its
-     * page. A page reaching the cap records an INTERRUPTED-class durable
-     * failure (never auto-retryable) and flips the page PARTIAL, and the
-     * chapter's queue entry moves to the existing PAUSED state so the user
-     * sees it needs attention.
-     */
     internal suspend fun reconcileAttemptLedgersForStartup(
         chapterIds: Set<Long>,
         resolveStore: TranslationStoreResolver = TranslationStoreResolver { chapterId ->
             activeStores.get(chapterId)
         },
-    ) {
-        if (chapterIds.isEmpty()) return
-        chapterIds.forEach { chapterId ->
-            val store = resolveStore.resolve(chapterId) ?: return@forEach
-            val counters = runCatching { store.consumeUnresolvedAttemptsAtStartup() }
-                .onFailure {
-                    logcat(LogPriority.WARN) {
-                        "T917 D9: startup attempt-ledger consume failed (fail-open): chapterId=$chapterId"
-                    }
-                }
-                .getOrNull() ?: return@forEach
-            val cappedPages = counters
-                .filterValues { count -> count >= ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED }
-            if (cappedPages.isEmpty()) return@forEach
-            cappedPages.forEach { (pageKey, count) ->
-                runCatching { store.applyAttemptCapPause(pageKey, count) }
-                    .onFailure {
-                        logcat(LogPriority.WARN) {
-                            "T917 D9: attempt-cap pause failed (fail-open): " +
-                                "chapterId=$chapterId pageKey=$pageKey"
-                        }
-                    }
-            }
-            translator.queueState.value
-                .firstOrNull { entry ->
-                    entry.chapter.id == chapterId && entry.status == Translation.State.QUEUE
-                }
-                ?.let { entry ->
-                    entry.status = Translation.State.PAUSED
-                    logcat(LogPriority.INFO) {
-                        "T917 D9: chapter paused after repeated interrupted attempts: chapterId=$chapterId"
-                    }
-                }
-        }
-    }
+    ) = reconcileAttemptLedgersForStartupImpl(chapterIds, resolveStore)
 
-    /** Generation-fenced admission of a restored pending request (no auto-start). */
-    private fun admitRestoredPendingTranslation(translation: Translation, expectedGeneration: Long) {
-        val manga = translation.manga
-        val chapter = translation.chapter
-        val chapterId = chapter.id ?: return
-        if (!admitBatchSession(setOf(chapterId))) return
-        synchronized(pendingRequestMutationLock) {
-            // After a restart, the request may exist only in the durable record.
-            // Cancellation or replacement changes the generation and drops admission.
-            val current = pendingTranslationRequestsState.value[chapterId]
-            val currentGeneration = current?.generation
-                ?: pendingRequestStore.record(chapterId)?.generation
-            if (currentGeneration != expectedGeneration) return
-            scheduler.invalidateQueueSession(chapterId)
-            markTranslationRequestPreparing(chapterId)
-            translator.queueChapter(manga, chapter)
-            if (queueState.value.any { it.chapter.id == chapterId }) {
-                // Mark the admission one-shot so any later
-                // handoff for this chapter cannot auto-start it either.
-                restoreAdmittedChapterIds.add(chapterId)
-                clearPendingTranslationRequest(chapterId)
-            } else {
-                markTranslationQueueFailureIfAcknowledged(manga, chapterId)
-            }
-        }
-        // Deliberately no startTranslation(): restored work never auto-resumes
-        // OCR/LLM; the admitted QUEUE entry is resumed by the user.
-    }
+    internal fun admitRestoredPendingTranslation(translation: Translation, expectedGeneration: Long) = admitRestoredPendingTranslationImpl(translation, expectedGeneration)
 
     // The mutex stays on the manager so both public stop paths serialize through the same owner.
-    private val readerTeardown: ReaderTeardownCoordinator by lazy {
-        ReaderTeardownCoordinator(
-            applicationScopeProvider = { applicationScope },
-            readerTeardownMutexProvider = { readerTeardownMutex },
-            schedulerProvider = { scheduler },
-            activeStoresProvider = { activeStores },
-            translatorProvider = { translator },
-            sessionCoordinatorProvider = { sessionCoordinator },
-            isAnyBatchTranslationActiveProvider = { isAnyBatchTranslationActive },
-            isChapterBatchActiveFn = { chapterId, includePaused ->
-                isChapterBatchActive(chapterId, includePaused)
-            },
-            unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
-            disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
-            clearAllPendingTranslationRequestsFn = { clearAllPendingTranslationRequests() },
-            retryPendingDownloadRekeysAfterReaderLeaveFn = { retryPendingDownloadRekeysAfterReaderLeave() },
-        )
-    }
+    private val readerTeardown: ReaderTeardownCoordinator by lazy { createReaderTeardown() }
 
     fun stopReaderTranslations(reason: String) = readerTeardown.stopReaderTranslations(reason)
 
@@ -794,67 +395,25 @@ class TranslationManager private constructor(
 
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
-    fun onMemoryPressure(level: Int) {
-        val pressureClass = MemoryPressurePolicy.classify(level)
-        translator.onMemoryPressure(level, pressureClass)
-        // The queue defers prefetch on the live memory gate; a pressure event
-        // (including recovery) rearms deferred demand through reconcile. The
-        // same-chapter batch-active guard keeps a suppressed window dormant.
-        scheduler.reconcileReaderQueues(admissionGuard = { chapterId ->
-            !isChapterBatchActive(chapterId, includePaused = true)
-        })
-    }
+    fun onMemoryPressure(level: Int) = onMemoryPressureImpl(level)
 
-    fun startTranslation() {
-        if (!admitBatchSession(queueState.value.mapNotNull { it.chapter.id }.toSet())) return
-        if (!translator.isRunning) {
-            translator.start()
-        }
-        if (isAnyBatchTranslationActive) {
-            TranslationForegroundService.start(context)
-        }
-    }
+    fun startTranslation() = startTranslationImpl()
 
-    fun pauseTranslation() {
-        translator.pause()
-    }
+    fun pauseTranslation() = pauseTranslationImpl()
 
-    /** Re-admits retryable paused work without disturbing another active chapter. */
-    suspend fun requeueTranslation(chapterId: Long, force: Boolean = false): Boolean {
-        if (!admitBatchSession(setOf(chapterId))) return false
-        return translator.requeueExisting(chapterId, force)
-    }
+    suspend fun requeueTranslation(chapterId: Long, force: Boolean = false): Boolean = requeueTranslationImpl(chapterId, force)
 
-    fun clearQueue() {
-        translator.clearQueue()
-        translator.stop()
-        clearAllPendingTranslationRequests()
-        sessionCoordinator.finishSession()
-    }
+    fun clearQueue() = clearQueueImpl()
 
-    fun getQueuedTranslationOrNull(chapterId: Long): Translation? {
-        return queueState.value.find { it.chapter.id == chapterId }
-    }
+    fun getQueuedTranslationOrNull(chapterId: Long): Translation? = getQueuedTranslationOrNullImpl(chapterId)
 
-    /** Moves the specified chapter to the head of the pending queue. */
-    fun prioritizeChapter(chapterId: Long) {
-        translator.prioritizeChapter(chapterId)
-    }
+    fun prioritizeChapter(chapterId: Long) = prioritizeChapterImpl(chapterId)
 
-    /** Warms engine sessions before translation work enters the critical path. */
-    suspend fun warmUp() {
-        pipeline.warmUp()
-    }
+    suspend fun warmUp() = warmUpImpl()
 
-    /** Reader-session-only provider choice; the pipeline never persists it. */
-    fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) {
-        pipeline.setInpaintingHardwareOverride(override)
-    }
+    fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) = setInpaintingHardwareOverrideImpl(override)
 
-    /** Applies only to reader OCR; chapter batches continue to use the saved default. */
-    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) {
-        pipeline.setReaderPaddleOcrComputeDeviceOverride(device)
-    }
+    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) = setReaderPaddleOcrComputeDeviceOverrideImpl(device)
 
     /**
      * Whether a chapter owns batch work under the requested activity policy.
@@ -868,61 +427,14 @@ class TranslationManager private constructor(
                     (includePaused && translation.status == Translation.State.PAUSED)
                 )
     }
-
-    /** Performs only the queue mutation sequence while the caller holds the request lock. */
-    private fun admitChapterThroughQueue(
+    internal fun admitChapterThroughQueue(
         manga: Manga,
         chapter: Chapter,
         expectedGeneration: Long?,
         admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext?,
         evictStaleQueuedEntry: Boolean,
-    ): AdmissionResult {
-        val chapterId = chapter.id ?: return AdmissionResult.QUEUE_FAILED
-        if (expectedGeneration != null) {
-            val current = pendingTranslationRequestsState.value[chapterId]
-            if (current == null || current.generation != expectedGeneration) {
-                if (evictStaleQueuedEntry) {
-                    val expectedRequestGeneration = expectedGeneration
-                    logcat(LogPriority.INFO) {
-                        "T911 dropped stale translate admission for chapter $chapterId " +
-                            "(expectedGeneration=$expectedRequestGeneration)"
-                    }
-                } else {
-                    val expected = expectedGeneration
-                    logcat(LogPriority.INFO) {
-                        "T911 dropped stale translate admission for chapter $chapterId " +
-                            "(expectedGeneration=$expected currentGeneration=${current?.generation})"
-                    }
-                }
-                return AdmissionResult.STALE_GENERATION
-            }
-        }
-        scheduler.invalidateQueueSession(chapterId)
-        if (evictStaleQueuedEntry) {
-            evictStaleQueuedChapters(chapterId, manga.source)
-        }
-        markTranslationRequestPreparing(chapterId)
-        translator.queueChapter(
-            manga,
-            chapter,
-            admissionContext?.probedSourcePageCount,
-            admissionContext?.sourceCountKnown ?: false,
-        )
-        return if (queueState.value.any { it.chapter.id == chapterId }) {
-            clearPendingTranslationRequest(chapterId)
-            AdmissionResult.QUEUED
-        } else {
-            markTranslationQueueFailureIfAcknowledged(manga, chapterId)
-            AdmissionResult.QUEUE_FAILED
-        }
-    }
+    ): AdmissionResult = admitChapterThroughQueueImpl(manga, chapter, expectedGeneration, admissionContext, evictStaleQueuedEntry)
 
-    /**
-     * When [expectedRequestGeneration] is supplied, the
-     * whole admit sequence runs under the request mutation lock and is
-     * aborted when the live request's generation moved (user cancel between
-     * check and use). Existing callers keep the unfenced behavior.
-     */
     fun translateChapter(
         manga: Manga,
         chapters: Chapter,
@@ -933,226 +445,35 @@ class TranslationManager private constructor(
         // False for a restore-admitted request handed over by the
         // download completion — enqueue without starting.
         autoStart: Boolean = true,
-    ) {
-        val chapterId = chapters.id ?: return
-        if (!admitBatchSession(setOf(chapterId))) return
-        val admissionResult = synchronized(pendingRequestMutationLock) {
-            admitChapterThroughQueue(
-                manga = manga,
-                chapter = chapters,
-                expectedGeneration = expectedRequestGeneration,
-                admissionContext = admissionContext,
-                evictStaleQueuedEntry = true,
-            )
-        }
-        if (admissionResult == AdmissionResult.STALE_GENERATION) return
-        if (autoStart) {
-            // An explicit per-chapter request is the only gate
-            // that re-arms a PAUSED/ERROR queue entry (queueChapter is a no-op
-            // for an existing entry); a generic queue start must not resurrect
-            // that work.
-            queueState.value.firstOrNull {
-                it.chapter.id == chapterId &&
-                    (
-                        it.status == Translation.State.PAUSED ||
-                            it.status == Translation.State.ERROR
-                        )
-            }?.status = Translation.State.QUEUE
-            startTranslation()
-        } else {
-            // Restore-admitted work is enqueued but stays paused —
-            // the UI shows paused, not a fake-active spinner, and no OCR/LLM
-            // runs without an explicit user action.
-            queueState.value.firstOrNull {
-                it.chapter.id == chapterId && it.status == Translation.State.QUEUE
-            }?.status = Translation.State.PAUSED
-        }
-    }
+    ) = translateChapterImpl(manga, chapters, expectedRequestGeneration, admissionContext, autoStart)
 
-    fun translateChapters(manga: Manga, chapters: List<Chapter>) {
-        translateChaptersInternal(manga, chapters, expectedGenerations = null)
-    }
+    fun translateChapters(manga: Manga, chapters: List<Chapter>) = translateChaptersImpl(manga, chapters)
 
-    /**
-     * List admission is fenced per chapter by the request
-     * generation captured by the confirmation probe. Chapters whose request
-     * was cancelled or re-requested after the acknowledgement are dropped;
-     * the surviving set is admitted atomically against cancel.
-     *
-     * [admissionContexts] carries the per-chapter
-     * download-probe cross-check for subset admissions; chapters without an
-     * entry keep the current no-cross-check behavior.
-     */
     fun translateChaptersIfCurrent(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>,
         admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
-    ): Boolean {
-        if (chapters.isEmpty()) return false
-        return translateChaptersInternal(manga, chapters, expectedGenerations, admissionContexts).isNotEmpty()
-    }
+    ): Boolean = translateChaptersIfCurrentImpl(manga, chapters, expectedGenerations, admissionContexts)
 
-    private fun translateChaptersInternal(
+    internal fun translateChaptersInternal(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>?,
         admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
-    ): List<Chapter> {
-        if (chapters.isEmpty()) return emptyList()
-        if (!admitBatchSession(chapters.mapNotNull { it.id }.toSet())) return emptyList()
-        val admitted = mutableListOf<Chapter>()
-        synchronized(pendingRequestMutationLock) {
-            chapters.forEach { chapter ->
-                val chapterId = chapter.id ?: return@forEach
-                val expectedGeneration = expectedGenerations?.get(chapterId)
-                if (expectedGenerations != null && expectedGeneration == null) return@forEach
-                val result = admitChapterThroughQueue(
-                    manga = manga,
-                    chapter = chapter,
-                    expectedGeneration = expectedGeneration,
-                    admissionContext = admissionContexts[chapterId],
-                    evictStaleQueuedEntry = false,
-                )
-                if (result == AdmissionResult.QUEUED) {
-                    // An explicit selection re-arms a PAUSED/ERROR
-                    // queue entry (queueChapter is a no-op for an existing
-                    // entry); a generic queue start must not resurrect that work.
-                    queueState.value.firstOrNull {
-                        it.chapter.id == chapterId &&
-                            (
-                                it.status == Translation.State.PAUSED ||
-                                    it.status == Translation.State.ERROR
-                                )
-                    }?.status = Translation.State.QUEUE
-                    admitted += chapter
-                }
-            }
-        }
-        if (admitted.isNotEmpty()) {
-            startTranslation()
-        }
-        return admitted
-    }
+    ): List<Chapter> = translateChaptersInternalImpl(manga, chapters, expectedGenerations, admissionContexts)
 
-    /**
-     * A translation-queue admission rejection is never a
-     * download failure. The phase is [TranslationRequestPhase.ADMISSION_FAILED]
-     * with a typed kind (source unsupported / config invalid / admission).
-     */
-    private fun markTranslationQueueFailureIfAcknowledged(manga: Manga, chapterId: Long) {
-        if (pendingTranslationRequestsState.value.containsKey(chapterId)) {
-            val failureKind = translationQueueAdmissionFailureKind(
-                sourceIsHttp = sourceManager.get(manga.source) is HttpSource,
-                configValid = translator.isQueueConfigValid(),
-            )
-            setPendingTranslationRequest(
-                chapterId,
-                TranslationRequestPhase.ADMISSION_FAILED,
-                "Translation could not be queued",
-                failureKind,
-            )
-        }
-    }
+    internal fun markTranslationQueueFailureIfAcknowledged(manga: Manga, chapterId: Long) = markTranslationQueueFailureIfAcknowledgedImpl(manga, chapterId)
 
-    /**
-     * TachiyomiAT bug 3 fix: preflight check for an explicit Start Batch action.
-     * Returns the running conflict (if any) so the UI can ask the user before
-     * cancelling in-flight work on a different chapter of the same source.
-     *
-     * Stale QUEUE entries are NOT reported here; they are evicted automatically
-     * by [translateChapter] since dropping a not-yet-started queue entry never
-     * loses accepted artifacts. Only an actively TRANSLATING chapter needs user
-     * confirmation because cancelling it mid-OCR/inpaint discards the in-flight
-     * page's native work.
-     */
-    fun translateChapterPreflight(manga: Manga, chapter: Chapter): ChapterQueuePreflight {
-        val chapterId = chapter.id
-            ?: return ChapterQueuePreflight.NoConflict
-        val view = queueState.value.map { it.toQueuedChapterView() }
-        val conflict = findRunningSameSourceConflict(view, chapterId, manga.source)
-            ?: return ChapterQueuePreflight.NoConflict
-        return ChapterQueuePreflight.RunningConflict(
-            chapterId = conflict.chapterId,
-            chapterName = conflict.chapterName,
-        )
-    }
+    fun translateChapterPreflight(manga: Manga, chapter: Chapter): ChapterQueuePreflight = translateChapterPreflightImpl(manga, chapter)
 
-    /**
-     * Evicts every queued (status == QUEUE) chapter of [sourceId] other than
-     * [keepChapterId] from the batch queue. Preserves accepted artifacts:
-     * [removeFromTranslationQueue] only drops the queue entry; the chapter's
-     * ChapterTranslationStore and its persisted OCR/inpaint/translation data
-     * stay intact, so a later Start Batch on that chapter resumes via the
-     * BatchResumeGateDecider's artifact scan without redoing completed work.
-     */
-    private fun evictStaleQueuedChapters(keepChapterId: Long, sourceId: Long) {
-        val staleIds = staleQueuedChaptersToEvict(
-            queueState.value.map { it.toQueuedChapterView() },
-            keepChapterId,
-            sourceId,
-        ).map { it.chapterId }.toSet()
-        if (staleIds.isEmpty()) return
-        val stale = queueState.value
-            .filter { it.chapter.id != null && it.chapter.id in staleIds }
-            .map { it.chapter }
-        stale.forEach { chapter ->
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT evicting stale queued chapter ${chapter.id} (source=$sourceId) in favor of $keepChapterId; artifacts preserved"
-            }
-            removeFromTranslationQueue(chapter)
-        }
-    }
+    internal fun evictStaleQueuedChapters(keepChapterId: Long, sourceId: Long) = evictStaleQueuedChaptersImpl(keepChapterId, sourceId)
 
-    /**
-     * TachiyomiAT bug 3 fix: cancels an actively running translation of
-     * [chapterId] (same source) so a subsequent [translateChapter] can start on
-     * a different chapter. Used after the UI confirms a [ChapterQueuePreflight.RunningConflict].
-     * Cancels in-flight page jobs, durably clears transient queue pages
-     * (preserving rendered/terminal artifacts), and drops the queue entry.
-     * Suspending: awaits each leg in order; callers must invoke from a coroutine.
-     */
-    suspend fun cancelRunningChapterForReplace(chapterId: Long) {
-        val chapter = queueState.value
-            .firstOrNull { it.chapter.id == chapterId }
-            ?.chapter
-            ?: return
-        scheduler.cancelPageTranslations(chapterId)
-        activeStores.get(chapterId)?.let { store ->
-            store.clearTransientQueuePages("Replaced by another chapter's batch")
-        }
-        removeFromTranslationQueue(chapter)
-    }
+    suspend fun cancelRunningChapterForReplace(chapterId: Long) = cancelRunningChapterForReplaceImpl(chapterId)
 
     // Progress flow orchestration lives in TranslationProgressProjection;
     // page/display/status truth is projected by ChapterTranslationStore.
-    private val progressProjection: TranslationProgressProjection by lazy {
-        TranslationProgressProjection(
-            activeStoresProvider = { activeStores },
-            batchTrackerRegistryProvider = { batchTrackerRegistry },
-            queueStateProvider = { queueState },
-            pendingTranslationRequestsProvider = { pendingTranslationRequests },
-            pipelineProvider = { pipeline },
-            getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
-            persistedChapterStatus = { chapterId, chapterName, chapterScanlator, mangaTitle, sourceId ->
-                persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
-            },
-            openOrCreateStoreSuspend = { chapterId, chapterName, scanlator, mangaTitle, source, mangaId ->
-                openOrCreateActiveChapterTranslationStoreSuspend(
-                    chapterId,
-                    chapterName,
-                    scanlator,
-                    mangaTitle,
-                    source,
-                    mangaId,
-                )
-            },
-            observeActiveDisplayStore = { chapterId -> observeActiveDisplayStore(chapterId) },
-            reconstructDurableTerminalSnapshot = { chapterId ->
-                reconstructDurableTerminalSnapshot(chapterId)
-            },
-        )
-    }
+    private val progressProjection: TranslationProgressProjection by lazy { createProgressProjection() }
 
     //  ANR fix: suspend — delegates to the projector whose durable leg
     // performs SAF/FUSE I/O. Callers (ReaderViewModel.loadChapter,
@@ -1186,20 +507,14 @@ class TranslationManager private constructor(
     )
 
     // Durable status and document lookup share these manager-lifetime caches and invalidation rules.
-    private val durableStatusResolver: DurableChapterStatusResolver by lazy {
-        DurableChapterStatusResolver(
-            providerProvider = { provider },
-            sourceManagerProvider = { sourceManager },
-            activeStoresProvider = { activeStores },
-        )
-    }
+    internal val durableStatusResolver: DurableChapterStatusResolver by lazy { createDurableStatusResolver() }
 
     //  ANR fix: suspend — this used to be reached synchronously from the
     // main thread (ReaderViewModel.loadChapter inside withUIContext,
     // MangaScreenModel's chapter-list build) and parked Main in
     // runBlocking(Dispatchers.IO) inside DurableChapterStatusResolver for
     // 5-9s on a large translated chapter. The chain is now fully suspend.
-    private suspend fun persistedChapterStatus(
+    internal suspend fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
@@ -1208,86 +523,17 @@ class TranslationManager private constructor(
     ): Translation.State? =
         durableStatusResolver.persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
 
-    /**
-     * Read-through terminal reconstruction.
-     * When the bounded tracker registry misses (process death, 20-entry
-     * eviction) and no queue owner exists, the projection rebuilds a
-     * completed/failed chapter's terminal snapshot from the durable read —
-     * active store first, otherwise the opener's publication-free durable
-     * read through the pure projector. Read-only by design: it never creates
-     * an active store and adds no new cache — the existing durable-status
-     * cache is the only intermediary.
-     *
-     * [resolveTranslation] is injectable so focused unit tests can drive the
-     * gate without the database.
-     */
     internal suspend fun reconstructDurableTerminalSnapshot(
         chapterId: Long,
         resolveTranslation: suspend (Long) -> Translation? = { resolveTranslationFromChapterId(it) },
-    ): TranslationProgressSnapshot? {
-        val translation = resolveTranslation(chapterId) ?: return null
-        val chapter = translation.chapter
-        val sourceId = translation.manga.source
-        val state = persistedChapterStatus(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            translation.manga.title,
-            sourceId,
-        ) ?: return null
-        if (!isReconstructibleDurableState(state)) return null
-        return durableStatusResolver.withDurableRead(
-            chapterId = chapterId,
-            chapterName = chapter.name,
-            chapterScanlator = chapter.scanlator,
-            mangaTitle = translation.manga.title,
-            sourceId = sourceId,
-        ) { access ->
-            when (access) {
-                is DurableChapterAccess.ActiveStore ->
-                    access.store.terminalProgressSnapshot(chapterId, state)
-                is DurableChapterAccess.DurableRead ->
-                    access.read.terminalProgressSnapshot(chapterId, state)
-            }
-        }
-    }
+    ): TranslationProgressSnapshot? = reconstructDurableTerminalSnapshotImpl(chapterId, resolveTranslation)
 
-    /** Synchronous reader entry point; document discovery and open run on IO. */
     fun getChapterTranslation(
         chapterName: String,
         scanlator: String?,
         title: String,
         source: Source,
-    ): Map<String, PageTranslationView> {
-        try {
-            return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                val parent = provider.findMangaDir(title, source) ?: return@runBlocking emptyMap()
-                val fileName = provider.getTranslationFileName(chapterName, scanlator)
-                // File-only fallback reads are publication-free: the opener's
-                // durable read supplies the verified page truth and no writer
-                // store, registry entry, or journal bridge is created. No
-                // durable truth can advance here, so no status-cache clear
-                // fires; an active chapter keeps its live store semantics.
-                when (
-                    val read = ChapterStoreOpener.readDurableChapter(
-                        parent,
-                        fileName,
-                    )
-                ) {
-                    is DurableChapterRead.Supported -> read.state.pages
-                    is DurableChapterRead.Missing,
-                    is DurableChapterRead.Unsupported,
-                    is DurableChapterRead.Corrupt,
-                    -> emptyMap()
-                }
-            }
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) {
-                "TachiyomiAT failed to read chapter translation for $chapterName"
-            }
-        }
-        return emptyMap()
-    }
+    ): Map<String, PageTranslationView> = getChapterTranslationImpl(chapterName, scanlator, title, source)
 
     suspend fun getChapterTranslationForReader(
         chapterId: Long,
@@ -1295,33 +541,9 @@ class TranslationManager private constructor(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): Map<String, PageTranslationView> {
-        val entryStage = ReaderEntryTrace.begin("translation.getForReader", chapterId)
-        return try {
-            withContext(Dispatchers.IO) {
-                activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
-                val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-                    ?: return@withContext emptyMap()
-                val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-                if (manifestProbe.exists) {
-                    return@withContext openExistingChapterTranslationStore(
-                        chapterId,
-                        chapterName,
-                        scanlator,
-                        mangaTitle,
-                        source,
-                        prefoundDocument = document,
-                        preflightManifestProbe = manifestProbe,
-                    )?.state?.value.orEmpty()
-                }
-                return@withContext emptyMap()
-            }
-        } finally {
-            entryStage.end()
-        }
-    }
+    ): Map<String, PageTranslationView> = getChapterTranslationForReaderImpl(chapterId, chapterName, scanlator, mangaTitle, source)
 
-    private suspend fun openExistingChapterTranslationStore(
+    internal suspend fun openExistingChapterTranslationStore(
         chapterId: Long?,
         chapterName: String,
         scanlator: String?,
@@ -1361,59 +583,17 @@ class TranslationManager private constructor(
         source: Source,
         prefoundDocument: TranslationDocument? = null,
         preflightManifestProbe: ArtifactManifestProbe? = null,
-    ): ChapterTranslationStore? {
-        // Callers that already resolved the document and probed the manifest
-        // (getChapterTranslationForReader) hand them through — re-running the
-        // SAF walks here doubled the cost on every artifact-chapter open.
-        val document = prefoundDocument ?: findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-            ?: return null
-        val manifestProbe = preflightManifestProbe
-            ?: ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        if (!manifestProbe.exists) return null
-        val hadActive = if (chapterId != null) {
-            activeStores.get(chapterId) != null
-        } else {
-            activeStores.getByFile(document.registryKey) != null
-        }
-        val store = if (chapterId != null) {
-            activeStores.getOrCreate(chapterId, document.registryKey) {
-                ChapterTranslationStore.openArtifactSuspend(
-                    document.parent,
-                    document.fileName,
-                )
-            }
-        } else {
-            activeStores.getOrCreateFile(document.registryKey) {
-                ChapterTranslationStore.openArtifactSuspend(
-                    document.parent,
-                    document.fileName,
-                )
-            }
-        }
-        if (!hadActive) {
-            // See the hadActive comment above: only a fresh open can have
-            // advanced durable truth through recovery or seeding.
-            durableStatusResolver.clearDurableStatusCache()
-        }
-        return store
-    }
+    ): ChapterTranslationStore? = openExistingChapterTranslationStoreLockedImpl(chapterId, chapterName, scanlator, mangaTitle, source, prefoundDocument, preflightManifestProbe)
 
     // Document lookup uses the same cache invalidation protocol as durable status resolution.
-    private fun findTranslationDocument(
+    internal fun findTranslationDocument(
         chapterName: String,
         scanlator: String?,
         mangaTitle: String,
         source: Source,
     ): TranslationDocument? =
         durableStatusResolver.findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-
-    /** Returns whether this chapter has an existing or active translation store. */
-    fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean {
-        chapter.id?.let { activeStores.get(it) }?.let { return it.state.value.isNotEmpty() }
-        val parent = provider.findMangaDir(manga.title, source) ?: return false
-        val fileName = provider.getTranslationFileName(chapter.name, chapter.scanlator)
-        return ChapterTranslationStore.probeArtifactManifest(parent, fileName).exists
-    }
+    fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean = hasTranslationStoreImpl(chapter, manga, source)
 
     /**
      * Typed result of the completed-download re-key handoff. [Performed] with
@@ -1445,7 +625,7 @@ class TranslationManager private constructor(
      * only: process death loses the pending mapping — the stale online-key
      * records remain typed diagnostics, not durable corruption.
      */
-    private data class PendingDownloadRekey(
+    internal data class PendingDownloadRekey(
         val chapter: Chapter,
         val manga: Manga,
         val source: Source,
@@ -1455,8 +635,8 @@ class TranslationManager private constructor(
         val requestGeneration: Long?,
     )
 
-    private val pendingDownloadRekeys = ConcurrentHashMap<Long, PendingDownloadRekey>()
-    private val pendingDownloadRekeyRevision = AtomicLong()
+    internal val pendingDownloadRekeys = ConcurrentHashMap<Long, PendingDownloadRekey>()
+    internal val pendingDownloadRekeyRevision = AtomicLong()
 
     /** Re-key reconciliation attempted and mapped to the handoff outcome space. */
     @VisibleForTesting
@@ -1470,326 +650,36 @@ class TranslationManager private constructor(
      * Deferred/Rejected retains the mapping so a later joined release retries.
      */
     @VisibleForTesting
-    internal suspend fun reconcilePendingDownloadRekeyForAdmission(chapterId: Long): Boolean {
-        val pending = pendingDownloadRekeys[chapterId] ?: return true
-        val outcome = attemptDownloadRekey(pending)
-        if (!outcome.isFullyReconciled()) return false
-        return consumeReconciledMapping(chapterId, pending)
-    }
+    internal suspend fun reconcilePendingDownloadRekeyForAdmission(chapterId: Long): Boolean = reconcilePendingDownloadRekeyForAdmissionImpl(chapterId)
 
-    /**
-     * Retries every retained download re-key after a FULL joined reader leave
-     * (teardown mutex released, page/native jobs joined, stores evicted).
-     * Rechecks live ownership before each attempt; a racing new reader bind or
-     * an in-flight batch re-defers the mapping (retained + observable).
-     */
-    private suspend fun retryPendingDownloadRekeysAfterReaderLeave() {
-        pendingDownloadRekeys.keys.toList().forEach { chapterId ->
-            val pending = pendingDownloadRekeys[chapterId] ?: return@forEach
-            val outcome = attemptDownloadRekey(pending)
-            if (outcome.isFullyReconciled() && consumeReconciledMapping(chapterId, pending)) {
-                pending.requestGeneration?.let { expectedGeneration ->
-                    val autoStart = chapterId !in restoreAdmittedChapterIds
-                    val admitted = requestCoordinator.retryRekeyFailedAdmissionIfCurrent(
-                        manga = pending.manga,
-                        chapter = pending.chapter,
-                        expectedGeneration = expectedGeneration,
-                        autoStart = autoStart,
-                    )
-                    if (admitted && !autoStart) restoreAdmittedChapterIds.remove(chapterId)
-                }
-            } else {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT download re-key retry retained for chapter $chapterId: ${outcome::class.simpleName}"
-                }
-            }
-        }
-    }
+    internal suspend fun retryPendingDownloadRekeysAfterReaderLeave() = retryPendingDownloadRekeysAfterReaderLeaveImpl()
 
-    /** Re-keys source URL pages to the names written by a completed download. */
     suspend fun rekeyTranslationForCompletedDownload(
         chapter: Chapter,
         manga: Manga,
         source: Source,
         onlineKeyByPageIndex: List<String>,
         onDiskKeyByPageIndex: List<String>,
-    ): DownloadRekeyOutcome {
-        val chapterId = chapter.id ?: return DownloadRekeyOutcome.Rejected("chapter id missing")
-        if (onlineKeyByPageIndex.size != onDiskKeyByPageIndex.size || onlineKeyByPageIndex.isEmpty()) {
-            return DownloadRekeyOutcome.Rejected("mapping size mismatch")
-        }
-        val pending = PendingDownloadRekey(
-            chapter = chapter,
-            manga = manga,
-            source = source,
-            onlineKeyByPageIndex = onlineKeyByPageIndex.toList(),
-            onDiskKeyByPageIndex = onDiskKeyByPageIndex.toList(),
-            revision = pendingDownloadRekeyRevision.incrementAndGet(),
-            requestGeneration = requestCoordinator.downloadAttachGeneration(chapterId),
-        )
-        stashPendingDownloadRekey(chapterId, pending)
-        val outcome = attemptDownloadRekey(pending)
-        if (!outcome.isFullyReconciled()) return outcome
-        if (consumeReconciledMapping(chapterId, pending)) return outcome
-        return if (pendingDownloadRekeys[chapterId]?.revision?.let { it > pending.revision } == true) {
-            DownloadRekeyOutcome.Deferred("a newer completed-download mapping needs reconciliation")
-        } else {
-            // A concurrent attempt already consumed this revision.
-            outcome
-        }
-    }
+    ): DownloadRekeyOutcome = rekeyTranslationForCompletedDownloadImpl(chapter, manga, source, onlineKeyByPageIndex, onDiskKeyByPageIndex)
 
-    private fun stashPendingDownloadRekey(chapterId: Long, pending: PendingDownloadRekey) {
-        pendingDownloadRekeys.compute(chapterId) { _, current ->
-            if (current == null || pending.revision > current.revision) pending else current
-        }
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT download re-key mapping retained for chapter $chapterId revision=${pending.revision}"
-        }
-    }
+    internal fun stashPendingDownloadRekey(chapterId: Long, pending: PendingDownloadRekey) = stashPendingDownloadRekeyImpl(chapterId, pending)
 
-    private fun consumeReconciledMapping(chapterId: Long, pending: PendingDownloadRekey): Boolean {
-        if (pendingDownloadRekeys.remove(chapterId, pending)) return true
-        return pendingDownloadRekeys[chapterId] == null
-    }
+    internal fun consumeReconciledMapping(chapterId: Long, pending: PendingDownloadRekey): Boolean = consumeReconciledMappingImpl(chapterId, pending)
 
-    private fun DownloadRekeyOutcome.isFullyReconciled(): Boolean =
+    internal fun DownloadRekeyOutcome.isFullyReconciled(): Boolean =
         this is DownloadRekeyOutcome.Noop ||
             this is DownloadRekeyOutcome.NoTranslationRecords ||
             (this is DownloadRekeyOutcome.Performed && skippedCollisions == 0)
 
-    /**
-     * The guarded migration itself. The chapter admission lock covers manager
-     * reader/batch binding; the registry's per-file opening lock covers chapter,
-     * file, and probe opens. Existing owners are checked before this temporary
-     * instance opens, and every reconcile entry takes these same guards.
-     */
-    private suspend fun attemptDownloadRekey(pending: PendingDownloadRekey): DownloadRekeyOutcome {
-        val chapterId = pending.chapter.id ?: return DownloadRekeyOutcome.Rejected("chapter id missing")
-        val directoryLookup = try {
-            provider.findMangaDirForCompletedDownload(pending.manga.title, pending.source)
-        } catch (error: Throwable) {
-            if (error is kotlinx.coroutines.CancellationException) throw error
-            return DownloadRekeyOutcome.Rejected("manga artifact directory lookup failed: ${error.message}", error)
-        }
-        val parent = when (directoryLookup) {
-            is TranslationFileProvider.MangaDirectoryLookup.Found -> directoryLookup.directory
-            TranslationFileProvider.MangaDirectoryLookup.NoPriorTranslationRecords -> {
-                return withChapterStoreAdmissionLock(chapterId) {
-                    if (activeStores.get(chapterId) != null) {
-                        deferForRegisteredReaderStore(
-                            pending,
-                            chapterId,
-                            "active chapter ownership exists while manga artifacts are unavailable",
-                        )
-                    } else if (
-                        translator.isChapterTranslationInFlight(chapterId) ||
-                        isChapterBatchActive(chapterId, includePaused = true)
-                    ) {
-                        DownloadRekeyOutcome.Deferred(
-                            "active chapter ownership exists while manga artifacts are unavailable",
-                        )
-                    } else {
-                        DownloadRekeyOutcome.NoTranslationRecords
-                    }
-                }
-            }
-            TranslationFileProvider.MangaDirectoryLookup.Unavailable ->
-                return DownloadRekeyOutcome.Rejected("manga artifact storage directory is unavailable")
-        }
-        val fileName = provider.getTranslationFileName(pending.chapter.name, pending.chapter.scanlator)
-        val registryKey = "${parent.filePath ?: parent.uri}:$fileName"
-        return try {
-            withChapterStoreAdmissionLock(chapterId) {
-                activeStores.withFileOpeningLock(registryKey) {
-                    // Capture pre-existing chapter, file, or probe ownership
-                    // before resolving our own store. Existing readers defer.
-                    if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
-                        return@withFileOpeningLock deferForRegisteredReaderStore(
-                            pending,
-                            chapterId,
-                            "translation store registered for chapter or artifact",
-                        )
-                    }
-                    if (translator.isChapterTranslationInFlight(chapterId)) {
-                        return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
-                            "batch translation in flight for chapter",
-                        )
-                    }
-                    val manifestProbe = try {
-                        ChapterTranslationStore.probeArtifactManifest(parent, fileName)
-                    } catch (error: Throwable) {
-                        if (error is kotlinx.coroutines.CancellationException) throw error
-                        return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
-                            "translation manifest probe failed: ${error.message}",
-                            error,
-                        )
-                    }
-                    if (!manifestProbe.exists) {
-                        return@withFileOpeningLock DownloadRekeyOutcome.NoTranslationRecords
-                    }
-                    val store = try {
-                        ChapterTranslationStore.openArtifactSuspend(
-                            parent,
-                            fileName,
-                        )
-                    } catch (error: Throwable) {
-                        if (error is kotlinx.coroutines.CancellationException) throw error
-                        return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
-                            "translation artifact open failed: ${error.message}",
-                            error,
-                        )
-                    }
-                    var primaryFailure: Throwable? = null
-                    try {
-                        // Recheck before mutation: a batch may claim this chapter
-                        // while its resolver waits on the shared open lock.
-                        if (activeStores.get(chapterId) != null || activeStores.hasStoreForFile(registryKey)) {
-                            return@withFileOpeningLock deferForRegisteredReaderStore(
-                                pending,
-                                chapterId,
-                                "translation store registered during handoff admission",
-                            )
-                        }
-                        if (translator.isChapterTranslationInFlight(chapterId)) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
-                                "batch translation became in flight during handoff admission",
-                            )
-                        }
-                        val artifactManifest = store.readArtifactManifest()
-                        if (manifestProbe.exists && artifactManifest == null) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
-                                "translation manifest disappeared or could not be recovered after a positive probe",
-                            )
-                        }
-                        val pages = store.state.value
-                        if (pages.isEmpty()) {
-                            val manifestHasPriorEvidence = artifactManifest?.let { manifest ->
-                                manifest.pages.isNotEmpty() ||
-                                    manifest.sourceShaByPageKey.isNotEmpty() ||
-                                    manifest.durableFailures.isNotEmpty() ||
-                                    manifest.expectedPageCount != null ||
-                                    manifest.expectedPageCountTrusted ||
-                                    manifest.partialBatchInfo != null ||
-                                    manifest.activeCandidateGenerationIds.isNotEmpty() ||
-                                    manifest.activeRun != null ||
-                                    manifest.ocrCheckpoints.isNotEmpty() ||
-                                    manifest.envelopePlan != null ||
-                                    manifest.cutoverAtEpochMs != null
-                            } == true
-                            if (manifestHasPriorEvidence) {
-                                return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
-                                    "translation manifest contains prior evidence but no live page records were recovered",
-                                )
-                            }
-                            return@withFileOpeningLock if (!manifestProbe.exists) {
-                                DownloadRekeyOutcome.NoTranslationRecords
-                            } else {
-                                DownloadRekeyOutcome.Noop
-                            }
-                        }
-                        if (pages.keys.all { it in pending.onDiskKeyByPageIndex }) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Noop
-                        }
-                        if (pages.keys.none { it in pending.onlineKeyByPageIndex }) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Rejected(
-                                "no stored online page keys match the completed-download mapping",
-                            )
-                        }
+    internal suspend fun attemptDownloadRekey(pending: PendingDownloadRekey): DownloadRekeyOutcome = attemptDownloadRekeyImpl(pending)
 
-                        val reserved = synchronized(pendingRequestMutationLock) {
-                            if (
-                                translator.isChapterTranslationInFlight(chapterId) ||
-                                isChapterBatchActive(chapterId, includePaused = true)
-                            ) {
-                                false
-                            } else {
-                                chaptersUnderDownloadRekey.add(chapterId)
-                            }
-                        }
-                        if (!reserved) {
-                            return@withFileOpeningLock DownloadRekeyOutcome.Deferred(
-                                "chapter batch became active before handoff reservation",
-                            )
-                        }
-                        try {
-                            // Queue-session invalidation only; the
-                            // reservation rejects fresh page dispatch until the
-                            // new store identity is published. Unrelated batch
-                            // work is never cancelled.
-                            scheduler.invalidateQueueSession(chapterId)
-                            store.beginGeneration("completed download re-key")
-                            when (
-                                val outcome = store.rekeyPages(
-                                    pending.onlineKeyByPageIndex,
-                                    pending.onDiskKeyByPageIndex,
-                                )
-                            ) {
-                                is ChapterTranslationStore.PageRekeyOutcome.Moved -> {
-                                    if (outcome.moves.isNotEmpty()) {
-                                        store.flush()
-                                        val companionDir = provider.findCompanionImageDir(
-                                            pending.manga.title,
-                                            pending.source,
-                                            pending.chapter.name,
-                                            pending.chapter.scanlator,
-                                        )
-                                        outcome.moves.forEach { (oldKey, newKey) ->
-                                            val oldImage = provider.companionImageNameForPage(oldKey)
-                                            val newImage = provider.companionImageNameForPage(newKey)
-                                            companionDir?.findFile(oldImage)?.renameTo(newImage)
-                                        }
-                                    }
-                                    DownloadRekeyOutcome.Performed(outcome.moves.size, outcome.skippedCollisions)
-                                }
-                                ChapterTranslationStore.PageRekeyOutcome.Noop -> DownloadRekeyOutcome.Noop
-                                is ChapterTranslationStore.PageRekeyOutcome.Rejected ->
-                                    DownloadRekeyOutcome.Rejected(outcome.reason, outcome.cause)
-                            }
-                        } finally {
-                            chaptersUnderDownloadRekey.remove(chapterId)
-                        }
-                    } catch (error: Throwable) {
-                        primaryFailure = error
-                        if (error is kotlinx.coroutines.CancellationException) throw error
-                        DownloadRekeyOutcome.Rejected("translation re-key failed: ${error.message}", error)
-                    } finally {
-                        try {
-                            withContext(kotlinx.coroutines.NonCancellable) { store.closeAndFlush() }
-                        } catch (closeFailure: Throwable) {
-                            primaryFailure?.addSuppressed(closeFailure) ?: throw closeFailure
-                        }
-                    }
-                }
-            }
-        } catch (error: Throwable) {
-            if (error is kotlinx.coroutines.CancellationException) throw error
-            DownloadRekeyOutcome.Rejected("translation re-key transaction failed: ${error.message}", error)
-        }
-    }
-
-    /** Caller holds the chapter admission lock so teardown cannot retry before PREPARING is visible. */
-    private fun deferForRegisteredReaderStore(
+    internal fun deferForRegisteredReaderStore(
         pending: PendingDownloadRekey,
         chapterId: Long,
         reason: String,
-    ): DownloadRekeyOutcome.Deferred {
-        val requestPreserved = pending.requestGeneration?.let { expectedGeneration ->
-            requestCoordinator.markRegisteredReaderStoreWaitIfCurrent(chapterId, expectedGeneration)
-        } ?: false
-        return DownloadRekeyOutcome.Deferred(
-            reason = reason,
-            waitingForRegisteredStoreRelease = true,
-            requestPreserved = requestPreserved,
-        )
-    }
+    ): DownloadRekeyOutcome.Deferred = deferForRegisteredReaderStoreImpl(pending, chapterId, reason)
 
-    suspend fun unregisterActiveTranslationStore(chapterId: Long) {
-        // Remove it before joining persistence so new lookups cannot bind to the store being
-        // evicted. Once the bounded join ends, markDefunct fences workers that still hold it.
-        activeStores.remove(chapterId)?.markDefunct()
-        durableStatusResolver.clearDurableStatusCache()
-    }
+    suspend fun unregisterActiveTranslationStore(chapterId: Long) = unregisterActiveTranslationStoreImpl(chapterId)
 
     /**
      * Resolves the existing active [ChapterTranslationStore] for [chapterId],
@@ -1823,13 +713,6 @@ class TranslationManager private constructor(
         }
     }
 
-    /**
-     * Shared open-or-create body. The registry monitor is held only for the
-     * map operations themselves — never during store opening or artifact
-     * probing through SAF. A concurrent open for the same chapter resolves
-     * through the registry's keep-existing semantics: exactly one instance
-     * survives and both callers observe it.
-     */
     private suspend fun openOrCreateActiveChapterTranslationStoreImpl(
         chapterId: Long,
         chapterName: String,
@@ -1837,54 +720,12 @@ class TranslationManager private constructor(
         mangaTitle: String,
         source: Source,
         mangaId: Long?,
-    ): ChapterTranslationStore? {
-        // Registry fast path: the live store for this chapter needs no
-        // document walk or manifest probe — both ran when it was opened and
-        // their result is already baked into the registry entry.
-        activeStores.get(chapterId)?.let { registered ->
-            registered.enableLazyPersistence()
-            scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
-            return registered
-        }
-        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-        val fileName = document?.fileName ?: provider.getTranslationFileName(chapterName, scanlator)
-        val manifestProbe = document?.let {
-            ChapterTranslationStore.probeArtifactManifest(it.parent, it.fileName)
-        }
-        val registered = activeStores.getOrCreate(
-            chapterId,
-            document?.registryKey,
-        ) {
-            if (manifestProbe?.exists == true) {
-                ChapterTranslationStore.openArtifactSuspend(
-                    document.parent,
-                    fileName,
-                )
-            } else {
-                // Create a lazy artifact store: opening a chapter never
-                // creates an empty manifest; the first real write materializes it.
-                ChapterTranslationStore.lazy(
-                    artifactParent = document?.parent,
-                    artifactFileName = fileName,
-                    artifactParentResolver = { provider.getMangaDir(mangaTitle, source) },
-                )
-            }
-        } ?: return null
-        registered.enableLazyPersistence()
-        scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
-        return registered
-    }
+    ): ChapterTranslationStore? = openOrCreateActiveChapterTranslationStoreImplImpl(chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
 
     // Cleaned-image lookup and retirement are owned by the lifecycle collaborator.
-    private val cleanedImageLifecycle: CleanedImageLifecycleController by lazy {
-        CleanedImageLifecycleController(
-            applicationScopeProvider = { applicationScope },
-            streamRegistryProvider = { streamRegistry },
-            providerProvider = { provider },
-        )
-    }
+    private val cleanedImageLifecycle: CleanedImageLifecycleController by lazy { createCleanedImageLifecycle() }
 
-    private fun scheduleRetiredCleanedImageCleanup(
+    internal fun scheduleRetiredCleanedImageCleanup(
         store: ChapterTranslationStore,
         chapterId: Long,
         chapterName: String,
@@ -1902,7 +743,7 @@ class TranslationManager private constructor(
         mangaId,
     )
 
-    private fun sweepOrphanedCleanedImages(
+    internal fun sweepOrphanedCleanedImages(
         store: ChapterTranslationStore,
         chapterId: Long,
         chapterName: String,
@@ -1920,13 +761,13 @@ class TranslationManager private constructor(
         mangaId,
     )
 
-    private fun retireChapterCompanionImages(
+    internal fun retireChapterCompanionImages(
         manga: Manga,
         chapter: Chapter,
         source: Source,
     ) = cleanedImageLifecycle.retireChapterCompanionImages(manga, chapter, source)
 
-    private fun retirePageCompanionImage(
+    internal fun retirePageCompanionImage(
         manga: Manga,
         chapter: Chapter,
         source: Source,
@@ -1946,100 +787,38 @@ class TranslationManager private constructor(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
-    ): TranslationSession? {
-        val chapterId = chapter.id ?: return null
-        // Rolling-auto owns the chapter from here; a stale DOWNLOAD_FAILED
-        // batch request must not keep projecting its failed state.
-        clearStaleDownloadFailedRequest(chapterId)
-        val store = openOrCreateActiveChapterTranslationStoreSuspend(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-            manga.id,
-        ) ?: return null
-        val key = "${source.id}:${manga.id}:$chapterId"
-        return TranslationSession(key, manga, chapter, source, store)
-    }
+    ): TranslationSession? = openTranslationSessionImpl(manga, chapter, source)
 
-    /**
-     * Typed reader queue facade (Phase 4 S3). Binds or reuses the queue session
-     * admitted for [session]'s chapter and returns its token, applying the same
-     * workflow admission and BATCH-suppression gates as the window entry. Null
-     * when admission is denied.
-     */
     fun bindReaderQueue(
         session: TranslationSession,
         computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
-    ): ReaderSessionToken? {
-        val chapterId = session.chapter.id ?: return null
-        when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
-            is SessionAdmission.Admitted,
-            is SessionAdmission.Switched,
-            -> Unit
+    ): ReaderSessionToken? = bindReaderQueueImpl(session, computeClass)
 
-            is SessionAdmission.Rejected -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader auto admission rejected: reason=${admission.reason} " +
-                        "chapterId=$chapterId"
-                }
-                return null
-            }
-        }
-        if (isChapterBatchActive(chapterId, includePaused = true)) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$chapterId"
-            }
-            return null
-        }
-        return scheduler.bindReaderQueueSession(chapterId, session, computeClass)
-    }
-
-    /** Submits one page of work for the captured reader session. */
-    fun submitReaderPage(
+    suspend fun submitReaderPage(
         token: ReaderSessionToken,
         work: eu.kanade.translation.scheduling.ReaderPageWork,
         trigger: ReaderTrigger,
         force: Boolean = false,
-    ): ReaderSubmission = scheduler.submitReaderPage(token, work, trigger, force)
+    ): ReaderSubmission = submitReaderPageImpl(token, work, trigger, force)
 
-    /** Arms or refreshes the auto viewport demand set (exactly N, N+1) for the captured session. */
     fun updateReaderViewport(
         token: ReaderSessionToken,
         chapterId: Long,
         pageIndex: Int,
         pageCount: Int,
         resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
-    ) {
-        if (isChapterBatchActive(chapterId, includePaused = true)) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$chapterId"
-            }
-            return
-        }
-        scheduler.updateReaderViewport(token, pageIndex, pageCount, resolve)
-    }
+    ) = updateReaderViewportImpl(token, chapterId, pageIndex, pageCount, resolve)
 
-    /** Queue-native auto toggle for the captured reader session. */
-    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean): Boolean =
-        scheduler.setReaderAutoEnabled(token, enabled)
+    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean): Boolean = setReaderAutoEnabledImpl(token, enabled)
 
     /** Typed queue outcomes for the reader's per-page UI projection. */
     fun readerOutcomes(token: ReaderSessionToken) = scheduler.readerOutcomes(token)
 
-    /**
-     * Re-drives queued demands for the captured session after a source-ready,
-     * memory or foreground event. A stale window is not re-admitted mid-batch.
-     */
     fun reconcileReaderQueue(
         token: ReaderSessionToken,
         chapterId: Long,
         resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
-    ) {
-        if (isChapterBatchActive(chapterId, includePaused = true)) return
-        scheduler.reconcileReaderQueue(token, resolve)
-    }
+    ) = reconcileReaderQueueImpl(token, chapterId, resolve)
 
     /**
      * Source factory for a manual tap on a downloaded chapter without live page
@@ -2081,9 +860,7 @@ class TranslationManager private constructor(
         permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
     )
 
-    fun disposeBatchTracker(chapterId: Long) {
-        batchTrackerRegistry.dispose(chapterId)
-    }
+    fun disposeBatchTracker(chapterId: Long) = disposeBatchTrackerImpl(chapterId)
 
     fun observeBatchProgress(
         chapterId: Long,
@@ -2092,33 +869,7 @@ class TranslationManager private constructor(
         progressProjection.observeBatchProgress(chapterId, durableStateHint)
 
     // Chapter and page deletion/reset ordering is owned by this collaborator.
-    private val chapterDataReset: ChapterDataResetController by lazy {
-        ChapterDataResetController(
-            findTranslationDocumentFn = { chapterName, scanlator, mangaTitle, source ->
-                findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-            },
-            schedulerProvider = { scheduler },
-            cancelPageTranslationsFn = { chapterId -> cancelPageTranslations(chapterId) },
-            cancelPageTranslationFn = { chapterId, pageKey -> cancelPageTranslation(chapterId, pageKey) },
-            removeFromTranslationQueueFn = { chapter -> removeFromTranslationQueue(chapter) },
-            translatorProvider = { translator },
-            disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
-            unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
-            streamRegistryProvider = { streamRegistry },
-            providerProvider = { provider },
-            retireChapterCompanionImagesFn = { manga, chapter, source ->
-                retireChapterCompanionImages(manga, chapter, source)
-            },
-            retirePageCompanionImageFn = { manga, chapter, source, pageKey, imageName, isReferencedElsewhere ->
-                retirePageCompanionImage(manga, chapter, source, pageKey, imageName, isReferencedElsewhere)
-            },
-            durableStatusResolverProvider = { durableStatusResolver },
-            activeStoresProvider = { activeStores },
-            openExistingChapterTranslationStoreFn = { chapterId, chapterName, scanlator, mangaTitle, source ->
-                openExistingChapterTranslationStore(chapterId, chapterName, scanlator, mangaTitle, source)
-            },
-        )
-    }
+    private val chapterDataReset: ChapterDataResetController by lazy { createChapterDataReset() }
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
         chapterDataReset.deleteTranslation(chapter, manga, source)
@@ -2151,27 +902,9 @@ class TranslationManager private constructor(
     suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
         chapterDataReset.resetOcrData(chapter, manga, source, pageKey)
 
-    fun cancelQueuedTranslation(translation: Translation) {
-        removeFromTranslationQueue(translation.chapter)
-    }
+    fun cancelQueuedTranslation(translation: Translation) = cancelQueuedTranslationImpl(translation)
 
-    private fun removeFromTranslationQueue(chapter: Chapter) {
-        val wasRunning = translator.isRunning
-        if (wasRunning) {
-            translator.pause()
-        }
-        translator.removeFromQueue(chapter)
-        if (wasRunning) {
-            if (queueState.value.isEmpty()) {
-                translator.stop()
-            } else if (queueState.value.isNotEmpty()) {
-                translator.start()
-            }
-        }
-        if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
-            sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
-        }
-    }
+    internal fun removeFromTranslationQueue(chapter: Chapter) = removeFromTranslationQueueImpl(chapter)
 
     // The manager exposes the cleaned-image stream through the lifecycle collaborator.
     fun getCleanedImageStream(
