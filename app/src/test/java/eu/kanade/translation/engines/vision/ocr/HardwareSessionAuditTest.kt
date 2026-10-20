@@ -12,8 +12,8 @@ import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.pipeline.EngineLane
-import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
+import eu.kanade.translation.processing.EngineLane
+import eu.kanade.translation.processing.execution.NativeRunQuarantine
 import eu.kanade.translation.util.ShortHash
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope

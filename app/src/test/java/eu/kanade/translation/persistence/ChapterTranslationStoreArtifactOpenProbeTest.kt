@@ -7,7 +7,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf

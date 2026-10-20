@@ -4,7 +4,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify

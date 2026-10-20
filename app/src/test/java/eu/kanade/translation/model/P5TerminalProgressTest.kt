@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe

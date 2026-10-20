@@ -12,7 +12,7 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.LeaseAcquisition
 import eu.kanade.translation.persistence.PageWriteOrigin
-import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.processing.adaptive.DevicePermitPriority
 import eu.kanade.translation.processing.TranslationProcessor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope

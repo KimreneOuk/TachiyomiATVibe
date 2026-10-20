@@ -17,8 +17,8 @@ import eu.kanade.translation.persistence.toUiPauseReason
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterState
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow

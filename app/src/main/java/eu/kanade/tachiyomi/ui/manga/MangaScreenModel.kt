@@ -1200,18 +1200,18 @@ class MangaScreenModel(
             // a settled download has none, so there is nothing to probe and
             // the pre- truth stands. Local-only: the probe reads the
             // Download the UI already observes — no network.
-            val partialProbes: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision> =
+            val partialProbes: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionDecision> =
                 pendingDownloaded.mapNotNull { candidate ->
                     val chapterId = candidate.chapter.id ?: return@mapNotNull null
                     val queuedDownload = downloadManager.getQueuedDownloadOrNull(chapterId)
                         ?: return@mapNotNull null
-                    val decision = eu.kanade.translation.pipeline.batch.BatchAdmissionProbe.evaluate(
+                    val decision = eu.kanade.translation.processing.batch.BatchAdmissionProbe.evaluate(
                         downloadedPageCount = queuedDownload.pages?.count {
                             it.status == eu.kanade.tachiyomi.source.model.Page.State.READY
                         } ?: 0,
                         sourcePageList = queuedDownload.pages,
                     )
-                    if (decision == eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Complete) {
+                    if (decision == eu.kanade.translation.processing.batch.BatchAdmissionDecision.Complete) {
                         null
                     } else {
                         chapterId to decision
@@ -1379,7 +1379,7 @@ class MangaScreenModel(
         val manga = successState?.manga ?: return
         screenModelScope.launchNonCancellable {
             val generations = mutableMapOf<Long, Long>()
-            val contexts = mutableMapOf<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext>()
+            val contexts = mutableMapOf<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext>()
             val chapters = mutableListOf<Chapter>()
             dialog.group.forEach { item ->
                 val chapterId = item.chapter.id ?: return@forEach
@@ -1387,18 +1387,18 @@ class MangaScreenModel(
                 val decision = dialog.decisions[chapterId] ?: return@forEach
                 generations[chapterId] = generation
                 contexts[chapterId] = when (decision) {
-                    is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
-                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(
+                    is eu.kanade.translation.processing.batch.BatchAdmissionDecision.Partial ->
+                        eu.kanade.translation.processing.batch.BatchAdmissionContext(
                             probedSourcePageCount = decision.expectedSourcePageCount,
                             sourceCountKnown = true,
                         )
-                    eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.UnknownCount ->
-                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(
+                    eu.kanade.translation.processing.batch.BatchAdmissionDecision.UnknownCount ->
+                        eu.kanade.translation.processing.batch.BatchAdmissionContext(
                             probedSourcePageCount = null,
                             sourceCountKnown = true,
                         )
-                    eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Complete ->
-                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(null, false)
+                    eu.kanade.translation.processing.batch.BatchAdmissionDecision.Complete ->
+                        eu.kanade.translation.processing.batch.BatchAdmissionContext(null, false)
                 }
                 chapters += item.chapter
             }
@@ -1839,7 +1839,7 @@ class MangaScreenModel(
         // id. Functional Phase-4 structure; final copy is Phase 5.
         data class PartialDownloadTranslation(
             val group: List<ChapterList.Item>,
-            val decisions: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision>,
+            val decisions: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionDecision>,
         ) : Dialog
     }
 

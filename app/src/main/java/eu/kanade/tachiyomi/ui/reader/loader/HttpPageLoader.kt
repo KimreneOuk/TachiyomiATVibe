@@ -8,7 +8,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.diagnostics.TelemetryTrace
-import eu.kanade.translation.pipeline.onlinePageTranslationKey
+import eu.kanade.translation.model.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
 import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

@@ -3,7 +3,7 @@ package eu.kanade.translation.presentation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

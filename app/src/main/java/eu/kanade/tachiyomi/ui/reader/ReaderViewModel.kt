@@ -58,7 +58,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.TranslationSessionState

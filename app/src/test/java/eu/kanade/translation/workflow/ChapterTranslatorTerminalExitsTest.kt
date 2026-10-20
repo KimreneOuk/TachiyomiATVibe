@@ -9,9 +9,9 @@ import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
 import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.util.getChapterPages
 import io.kotest.matchers.shouldBe

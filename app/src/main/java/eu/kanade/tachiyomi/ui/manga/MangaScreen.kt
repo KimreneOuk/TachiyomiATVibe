@@ -415,7 +415,7 @@ class MangaScreen(
                 val body = eu.kanade.translation.presentation.TranslationUiTruth.partialDownloadBody(
                     dialog.group.map { chapterItem ->
                         when (val decision = dialog.decisions[chapterItem.chapter.id]) {
-                            is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
+                            is eu.kanade.translation.processing.batch.BatchAdmissionDecision.Partial ->
                                 eu.kanade.translation.presentation.TranslationUiTruth.PartialDecision(
                                     downloaded = decision.downloadedPageCount,
                                     expectedSourceTotal = decision.expectedSourcePageCount,

@@ -13,7 +13,7 @@ import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

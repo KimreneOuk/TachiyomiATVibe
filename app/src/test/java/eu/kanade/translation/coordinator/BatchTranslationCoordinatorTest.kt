@@ -9,7 +9,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPublishedPage
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.processing.DecodedPage
 import eu.kanade.translation.processing.TranslationProcessor
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery

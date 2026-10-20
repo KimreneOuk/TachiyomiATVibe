@@ -10,7 +10,7 @@ import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterResetReceipt
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority

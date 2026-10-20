@@ -25,10 +25,10 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.MemoryPressurePolicy
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.coordinator.ReaderSubmission
 import eu.kanade.translation.coordinator.ReaderTrigger

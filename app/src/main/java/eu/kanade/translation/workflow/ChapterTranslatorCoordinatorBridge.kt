@@ -4,9 +4,9 @@ import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
-import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.BatchProgressReconciler
+import eu.kanade.translation.processing.batch.progress.ReconciliationResult
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import android.util.Log
 import java.io.InputStream
 import eu.kanade.tachiyomi.source.online.HttpSource

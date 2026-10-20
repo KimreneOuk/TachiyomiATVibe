@@ -9,7 +9,7 @@ import eu.kanade.translation.persistence.DisplayBaseReference
 import eu.kanade.translation.persistence.PageArtifactRecord
 import eu.kanade.translation.persistence.StageArtifactRecord
 import eu.kanade.translation.persistence.toArtifactDisplayProjection
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

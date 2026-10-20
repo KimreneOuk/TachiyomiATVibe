@@ -20,9 +20,9 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -437,7 +437,7 @@ class TranslationManager private constructor(
         manga: Manga,
         chapter: Chapter,
         expectedGeneration: Long?,
-        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext?,
+        admissionContext: eu.kanade.translation.processing.batch.BatchAdmissionContext?,
         evictStaleQueuedEntry: Boolean,
     ): AdmissionResult = admitChapterThroughQueueImpl(manga, chapter, expectedGeneration, admissionContext, evictStaleQueuedEntry)
 
@@ -447,7 +447,7 @@ class TranslationManager private constructor(
         expectedRequestGeneration: Long? = null,
         // The trigger's admission-probe cross-check; null
         // keeps the existing no-cross-check path.
-        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
+        admissionContext: eu.kanade.translation.processing.batch.BatchAdmissionContext? = null,
         // False for a restore-admitted request handed over by the
         // download completion — enqueue without starting.
         autoStart: Boolean = true,
@@ -459,14 +459,14 @@ class TranslationManager private constructor(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>,
-        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
+        admissionContexts: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext> = emptyMap(),
     ): Boolean = translateChaptersIfCurrentImpl(manga, chapters, expectedGenerations, admissionContexts)
 
     internal fun translateChaptersInternal(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>?,
-        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
+        admissionContexts: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext> = emptyMap(),
     ): List<Chapter> = translateChaptersInternalImpl(manga, chapters, expectedGenerations, admissionContexts)
 
     internal fun markTranslationQueueFailureIfAcknowledged(manga: Manga, chapterId: Long) = markTranslationQueueFailureIfAcknowledgedImpl(manga, chapterId)

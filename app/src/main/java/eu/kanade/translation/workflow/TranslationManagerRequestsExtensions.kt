@@ -25,11 +25,11 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.MemoryPressurePolicy
+import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.coordinator.ReaderSubmission
 import eu.kanade.translation.coordinator.ReaderTrigger
@@ -279,7 +279,7 @@ internal fun TranslationManager.admitChapterThroughQueueImpl(
         manga: Manga,
         chapter: Chapter,
         expectedGeneration: Long?,
-        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext?,
+        admissionContext: eu.kanade.translation.processing.batch.BatchAdmissionContext?,
         evictStaleQueuedEntry: Boolean,
     ): TranslationManager.AdmissionResult {
         val chapterId = chapter.id ?: return TranslationManager.AdmissionResult.QUEUE_FAILED
@@ -336,7 +336,7 @@ internal fun TranslationManager.translateChapterImpl(
         expectedRequestGeneration: Long? = null,
         // The trigger's admission-probe cross-check; null
         // keeps the existing no-cross-check path.
-        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
+        admissionContext: eu.kanade.translation.processing.batch.BatchAdmissionContext? = null,
         // False for a restore-admitted request handed over by the
         // download completion — enqueue without starting.
         autoStart: Boolean = true,
@@ -397,7 +397,7 @@ internal fun TranslationManager.translateChaptersIfCurrentImpl(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>,
-        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
+        admissionContexts: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext> = emptyMap(),
     ): Boolean {
         if (chapters.isEmpty()) return false
         return translateChaptersInternal(manga, chapters, expectedGenerations, admissionContexts).isNotEmpty()
@@ -408,7 +408,7 @@ internal fun TranslationManager.translateChaptersInternalImpl(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>?,
-        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
+        admissionContexts: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext> = emptyMap(),
     ): List<Chapter> {
         if (chapters.isEmpty()) return emptyList()
         if (!admitBatchSession(chapters.mapNotNull { it.id }.toSet())) return emptyList()

@@ -24,7 +24,7 @@ import eu.kanade.translation.diagnostics.BatchDownloadTerminalState
 import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
 import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
 import eu.kanade.translation.model.TranslationRequestFailureKind
-import eu.kanade.translation.pipeline.onlinePageTranslationKey
+import eu.kanade.translation.model.onlinePageTranslationKey
 import eu.kanade.translation.workflow.TranslationManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope

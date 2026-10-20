@@ -39,10 +39,10 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
-import eu.kanade.translation.pipeline.MemoryPressureClass
-import eu.kanade.translation.pipeline.MemoryPressurePolicy
+import eu.kanade.translation.processing.MemoryPressureClass
+import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessingTimeouts
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.coordinator.ReaderPageWork
 import eu.kanade.translation.coordinator.ReaderSessionToken

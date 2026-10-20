@@ -14,11 +14,11 @@ import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationQueueStore
-import eu.kanade.translation.pipeline.MemoryPressureClass
+import eu.kanade.translation.processing.MemoryPressureClass
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
+import eu.kanade.translation.processing.batch.progress.ReconciliationResult
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,7 +135,7 @@ internal class ChapterTranslator(
     private val processor: TranslationProcessor,
     private val batchCoordinator: BatchTranslationCoordinator,
     private val resolveStore: suspend (Translation) -> ChapterTranslationStore? = { null },
-    private val batchTrackerFactory: (Long, ChapterTranslationStore, List<String>) -> eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker? = { _, _, _ -> null },
+    private val batchTrackerFactory: (Long, ChapterTranslationStore, List<String>) -> eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker? = { _, _, _ -> null },
     private val onBatchClosed: suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit = { _, _, _, _ -> },
 ) {
 
@@ -668,7 +668,7 @@ internal class ChapterTranslator(
     // async queue worker.
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         var store: ChapterTranslationStore? = null
-        var tracker: eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker? = null
+        var tracker: eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
         var batchOrderedPageKeys: List<String> = emptyList()
         try {
@@ -823,7 +823,7 @@ internal class ChapterTranslator(
                     // the queue entry ERROR (same  class as the pass-1
                     // post-pass projection).
                     val reconciliation =
-                        eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
+                        eu.kanade.translation.processing.batch.progress.BatchProgressReconciler
                             .reconcileFlaggedCompleted(
                                 pageMap = pageStates,
                                 orderedKeys = batchOrderedPageKeys,

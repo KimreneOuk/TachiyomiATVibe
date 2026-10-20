@@ -9,7 +9,7 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.processing.TranslationProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

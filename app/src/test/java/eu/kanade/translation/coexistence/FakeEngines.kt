@@ -8,10 +8,10 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.DecodedPage
-import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
-import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecision
-import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.processing.DecodedPage
+import eu.kanade.translation.processing.memory.TranslationMemoryBudget
+import eu.kanade.translation.processing.memory.TranslationMemoryBudget.DecodeDecision
+import eu.kanade.translation.processing.memory.TranslationMemoryBudget.DecodeDecisionKind
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred

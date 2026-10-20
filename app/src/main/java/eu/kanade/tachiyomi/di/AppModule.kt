@@ -130,7 +130,7 @@ class AppModule(val app: Application) : InjektModule {
 
         // TachiyomiAT
         addSingletonFactory { TranslationFileProvider(app) }
-        addSingletonFactory { eu.kanade.translation.pipeline.execution.TranslationStreamRegistry() }
+        addSingletonFactory { eu.kanade.translation.processing.execution.TranslationStreamRegistry() }
         addSingletonFactory { TranslationManager(app) }
 
         addSingletonFactory { TrackerManager() }

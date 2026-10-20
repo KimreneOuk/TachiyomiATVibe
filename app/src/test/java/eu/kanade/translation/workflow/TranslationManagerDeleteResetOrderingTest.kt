@@ -6,8 +6,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import io.mockk.coEvery
 import io.mockk.every

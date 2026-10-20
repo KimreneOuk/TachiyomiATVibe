@@ -4,7 +4,7 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.processing.toPrecondition
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
