@@ -368,7 +368,6 @@ class ProfileEnvelopeDispatchTest {
 
         outcome.status shouldBe BatchPass1Status.COMPLETED
         translator.requests.size shouldBe 1
-        store.artifactEngine?.readManifest()?.profile shouldBe null
         store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
     }
 

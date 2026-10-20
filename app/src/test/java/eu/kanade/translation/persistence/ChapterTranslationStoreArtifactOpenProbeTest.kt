@@ -171,8 +171,6 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
         val store = ChapterTranslationStore.openArtifactSuspend(
             root,
             "Chapter 1.json",
-            journalRoot,
-            "fixture-source:Manga:Chapter 1.json",
         )
 
         File(mangaDir, "Chapter 1.json").exists() shouldBe false

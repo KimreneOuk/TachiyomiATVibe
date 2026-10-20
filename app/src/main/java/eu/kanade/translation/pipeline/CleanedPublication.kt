@@ -624,7 +624,7 @@ internal class CleanedPublication(
         val contentSha256: String,
     )
 
-    private fun writeVerifiedCleanedImage(
+    internal fun writeVerifiedCleanedImage(
         directory: UniFile,
         pageKey: String,
         bitmap: Bitmap,
