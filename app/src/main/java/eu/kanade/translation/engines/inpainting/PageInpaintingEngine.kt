@@ -6,7 +6,6 @@ import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngi
 import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.recordAttemptFailure
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -135,9 +134,8 @@ class PageInpaintingEngine(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            // First terminal stage in the inpaint→render cascade owns the attempt
-            // charge; downstream render path no-ops via attemptCharged (idempotent).
-            pageTranslation.recordAttemptFailure()
+            // Inpainting only affects the displayed background. It must not
+            // consume translation retry budget or change translation status.
             pageTranslation.errorMessage = e.message
             pageTranslation.updatedAt = System.currentTimeMillis()
             logcat(LogPriority.WARN, e) { "Page inpainting failed" }

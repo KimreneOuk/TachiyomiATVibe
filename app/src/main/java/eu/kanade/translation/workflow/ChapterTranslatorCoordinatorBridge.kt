@@ -4,17 +4,19 @@ import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.BatchProgressReconciler
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import android.util.Log
 import java.io.InputStream
+import eu.kanade.tachiyomi.source.online.HttpSource
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
 
 /** Bridges queued chapter execution into the ordered batch coordinator. */
 internal suspend fun executeQueuedBatchWithCoordinator(
     coordinator: BatchTranslationCoordinator,
-    pipeline: TranslationPipeline,
+    onBatchClosed: suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit = { _, _, _, _ -> },
     provider: TranslationFileProvider,
     translation: Translation,
     orderedStreams: List<Pair<String, () -> InputStream>>,
@@ -60,7 +62,7 @@ internal suspend fun executeQueuedBatchWithCoordinator(
         return reconciliation
     } finally {
         try {
-            pipeline.onBatchClosed?.invoke(
+            onBatchClosed(
                 translation.manga,
                 translation.chapter,
                 translation.source,

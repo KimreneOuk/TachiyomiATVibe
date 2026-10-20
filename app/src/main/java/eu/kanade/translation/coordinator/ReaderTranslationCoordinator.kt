@@ -1,21 +1,25 @@
 package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.model.PageRejectionKind
+import eu.kanade.translation.model.PageStage
+import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.LeaseAcquisition
 import eu.kanade.translation.persistence.PageWriteOrigin
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.processing.TranslationProcessor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -26,6 +30,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -46,7 +51,7 @@ import java.util.concurrent.atomic.AtomicLong
  * 5. Direct commit of completed pages to [ChapterTranslationStore].
  */
 internal class ReaderTranslationCoordinator(
-    private val executor: TranslationExecutor,
+    private val processor: TranslationProcessor,
     private val isBatchActiveForChapter: (String) -> Boolean = { false },
     private val resolveSessionStore: suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore? = { _, _, _ -> null },
     private val admitReaderSession: (Long) -> Boolean = { true },
@@ -158,8 +163,8 @@ internal class ReaderTranslationCoordinator(
 
                     // Check if already completed in store
                     val currentState = nextRequest.session.store.state.value[nextRequest.pageKey]
-                    if (!nextRequest.force && currentState?.translationStatus == StageStatus.READY &&
-                        (currentState.hasRenderedResult || currentState.isTextlessTerminal)
+                    if (!nextRequest.force &&
+                        (currentState?.translationStatus == StageStatus.READY || currentState?.isTextlessTerminal == true)
                     ) {
                         logcat(LogPriority.DEBUG) {
                             "ReaderTranslationCoordinator: page $fullKey already complete, skipping"
@@ -385,18 +390,67 @@ internal class ReaderTranslationCoordinator(
         }
     }
 
-    private suspend fun processRequest(request: PageRequest): SinglePageOutcome = executor.translateSinglePage(
-        manga = request.session.manga,
-        chapter = request.session.chapter,
-        source = request.session.source,
-        pageKey = request.pageKey,
-        force = request.force,
-        origin = if (request.isManual) PageWriteOrigin.MANUAL else PageWriteOrigin.AUTO,
-        readerStreamFn = request.streamFn,
-        readerPriority = {
-            if (request.isManual) AdmissionPriority.INTERACTIVE else AdmissionPriority.BACKGROUND
-        },
-    )
+    private suspend fun processRequest(request: PageRequest): SinglePageOutcome {
+        val stream = request.streamFn ?: return SinglePageOutcome.Failed(request.pageKey, "Page image stream is unavailable")
+        val origin = if (request.isManual) PageWriteOrigin.MANUAL else PageWriteOrigin.AUTO
+        val store = request.session.store
+        val lease = when (val acquired = store.tryAcquirePageStageLease(request.pageKey, PageStage.Ocr, origin)) {
+            is LeaseAcquisition.Granted -> acquired.lease
+            is LeaseAcquisition.Denied -> return SinglePageOutcome.Rejected(
+                owner = acquired.owner,
+                kind = PageRejectionKind.ALREADY_OWNED,
+                diagnosticDetail = acquired.reason,
+            )
+        }
+        try {
+            // Fence against writes that happen while decode/native/remote work is running.
+            // Refreshing this at commit time would let an older candidate overwrite them.
+            val expected = store.snapshot(request.pageKey).toPrecondition().copy(leaseToken = lease.token)
+            val result = processor.processSinglePage(
+                pageKey = request.pageKey,
+                streamFn = stream,
+                recognitionEngine = processor.recognitionEngine,
+                translator = processor.textTranslator,
+                companionDir = processor.companionDirectory(
+                    request.session.manga,
+                    request.session.chapter,
+                    request.session.source,
+                ),
+                chapterId = request.session.chapter.id,
+                chapterName = request.session.chapter.name,
+                priority = if (request.isManual) DevicePermitPriority.FOREGROUND else DevicePermitPriority.BACKGROUND,
+            )
+            val candidate = when (result) {
+                is TranslationProcessor.ProcessResult.Success -> result.page
+                is TranslationProcessor.ProcessResult.Failure -> result.page ?: PageTranslation(
+                    sourceFileName = request.pageKey,
+                ).apply {
+                    ocrStatus = StageStatus.FAILED
+                    errorMessage = result.errorMessage
+                }
+            }
+            val write = store.updatePageGuarded(
+                pageKey = request.pageKey,
+                expected = expected,
+                description = "reader:${result::class.simpleName}",
+            ) { candidate.detachedCopy() }
+            if (write is ChapterTranslationStore.PatchResult.Rejected) {
+                return SinglePageOutcome.Rejected(
+                    owner = origin,
+                    kind = PageRejectionKind.PERSISTENCE_FAILED,
+                    diagnosticDetail = write.reason,
+                )
+            }
+            return when (result) {
+                is TranslationProcessor.ProcessResult.Success -> SinglePageOutcome.Completed
+                is TranslationProcessor.ProcessResult.Failure -> SinglePageOutcome.Failed(request.pageKey, result.errorMessage)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                store.releasePageStageLease(request.pageKey, origin)
+            }
+        }
+    }
 
     fun outcomeFor(chapterId: Long, pageKey: String): SinglePageOutcome? =
         outcomeStates[chapterId.toString()]?.value?.get(pageKey)

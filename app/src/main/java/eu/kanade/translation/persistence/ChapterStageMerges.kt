@@ -12,7 +12,6 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.toDraft
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -467,7 +466,6 @@ internal class ChapterStageMerges(
         page.translationStatus = patch.translationStatus
         page.sourceFingerprint = patch.sourceFingerprint ?: page.sourceFingerprint
         page.errorMessage = patch.errorMessage
-        if (page.stampRenderTerminalIfDisplayComplete()) page.updatedAt = System.currentTimeMillis()
         val updated = store.ownedPage(patch.pageKey, page)
         store.pages = store.pages.put(patch.pageKey, store.publishPage(updated))
         if (!store.pageMutations.publishLocked(current, updated, patch.toPrecondition())) {

@@ -4,7 +4,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -188,7 +188,7 @@ class ChapterTranslationStatusOffMainThreadTest {
         batchTrackerRegistryProvider = { TranslationBatchTrackerRegistry() },
         queueStateProvider = { MutableStateFlow(emptyList()) },
         pendingTranslationRequestsProvider = { MutableStateFlow(emptyMap()) },
-        pipelineProvider = { mockk<TranslationPipeline>(relaxed = true) },
+        permitHolderPageKeyProvider = { null },
         getQueuedTranslationOrNull = getQueuedTranslationOrNull,
         persistedChapterStatus = persistedChapterStatus,
         openOrCreateStoreSuspend = { _, _, _, _, _, _ -> null },

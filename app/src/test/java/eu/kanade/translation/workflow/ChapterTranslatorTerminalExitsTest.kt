@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.workflow
+package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
 import eu.kanade.translation.coordinator.TranslationQueueStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -70,7 +70,7 @@ class ChapterTranslatorTerminalExitsTest {
     private val sourceManager = mockk<SourceManager>(relaxed = true)
     private val preferences = mockk<TranslationPreferences>(relaxed = true)
     private val streamRegistry = mockk<TranslationStreamRegistry>(relaxed = true)
-    private val pipeline = mockk<TranslationPipeline>(relaxed = true)
+    private val processor = mockk<TranslationProcessor>(relaxed = true)
     private val batchCoordinator = mockk<BatchTranslationCoordinator>(relaxed = true)
 
     private val registry = TranslationBatchTrackerRegistry()
@@ -88,8 +88,6 @@ class ChapterTranslatorTerminalExitsTest {
     }
 
     private fun translator(): ChapterTranslator {
-        every { pipeline.activeStoreResolver } answers { activeStoreResolver }
-        every { pipeline.batchTrackerFactory } answers { trackerFactory }
         return ChapterTranslator(
             context,
             provider,
@@ -98,8 +96,10 @@ class ChapterTranslatorTerminalExitsTest {
             preferences,
             streamRegistry,
             TranslationQueueStore(context),
-            pipeline,
+            processor,
             batchCoordinator = batchCoordinator,
+            resolveStore = { translation -> activeStoreResolver?.invoke(translation) },
+            batchTrackerFactory = { id, store, pageKeys -> trackerFactory?.invoke(id, store, pageKeys) },
         )
     }
 

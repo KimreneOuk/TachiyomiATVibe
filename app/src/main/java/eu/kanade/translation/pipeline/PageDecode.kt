@@ -26,7 +26,7 @@ import java.security.MessageDigest
 /**
  * Decodes source pages and computes their fingerprints. Memory reclaim and
  * decode logging use [MemoryGovernance]; the recognition engine is supplied
- * by the pipeline when needed.
+ * by [eu.kanade.translation.processing.TranslationProcessor] when needed.
  */
 internal object PageDecode {
 

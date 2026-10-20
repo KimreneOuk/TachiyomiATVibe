@@ -13,7 +13,7 @@ import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.RunConfigSnapshot
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -103,7 +103,7 @@ class ProjectorRebuildTruthTest {
         batchTrackerRegistryProvider = { registry },
         queueStateProvider = { MutableStateFlow(emptyList()) },
         pendingTranslationRequestsProvider = { MutableStateFlow(emptyMap()) },
-        pipelineProvider = { mockk<TranslationPipeline>(relaxed = true) },
+        permitHolderPageKeyProvider = { null },
         getQueuedTranslationOrNull = { null },
         persistedChapterStatus = { _, _, _, _, _ -> null },
         openOrCreateStoreSuspend = { _, _, _, _, _, _ -> null },

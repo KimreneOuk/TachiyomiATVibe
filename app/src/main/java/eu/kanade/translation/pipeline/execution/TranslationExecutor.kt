@@ -13,29 +13,12 @@ import java.io.InputStream
  * The per-page translation contract used by the scheduler, decoupled from the
  * concrete executor.
  *
- * Today this is satisfied by [eu.kanade.translation.pipeline.TranslationPipeline],
- * which owns the decode → OCR → translate → inpaint → render stages. The
- * scheduler only cares that the executor runs one page to completion (or
- * failure) under its own single permit, with stage-resume + native-run
- * quarantine already handled.
+ * Reader execution now calls [eu.kanade.translation.processing.TranslationProcessor]
+ * directly. This interface remains as a narrow compatibility contract for
+ * isolated execution fixtures; it does not define reader or batch ownership.
  *
- * The `force` flag: `false` resumes from the latest persisted stage (no
- * re-OCR when valid blocks exist, no re-translate when blocks are translated,
- * and no re-inpaint when a cleaned image exists); `true` redoes
- * the whole pipeline AND calls [PageTranslation.prepareForcedRetry], which
- * resets the per-attempt exhaustion counter ([PageTranslation.attemptCount])
- * and clears prior FAILED/cleaned/rendered state. That reset is load-bearing:
- * without it, a manual re-translate on a page that failed inpaint ran with
- * `force=false`, never cleared the FAILED bookkeeping, and the page stayed
- * blacklisted by [PageTranslation.hasExhaustedRetries] — the "cannot reprocess
- * / retranslate" bug.
- *
- * The per-page translate button resolves `force` from the page's live state:
- * `true` when a stage is FAILED
- * (so [PageTranslation.prepareForcedRetry] resets the bookkeeping and the page
- * can be reprocessed), `false` otherwise (resume optimization for healthy /
- * partially-translated pages). The scheduler passes that decision through to
- * this executor.
+ * The `force` and listener parameters remain only for source compatibility.
+ * No stage-resume or producer-render policy is owned by this contract.
  */
 interface TranslationExecutor {
 
@@ -84,15 +67,14 @@ data class PreparedPage(
 /**
  * User-facing pipeline stages, emitted at actual execution entry (not while a
  * page is waiting in a queue). The labels map to the live reader experience:
- * READING = detection and OCR, CLEANING = segmentation and inpainting,
- * TRANSLATING = provider/local translator request, RENDERING = compositing the
- * translated result.
+ * READING = detection and OCR, CLEANING = segmentation and inpainting, and
+ * TRANSLATING = provider/local translator request. Layout and drawing belong
+ * to the reader.
  */
 enum class TranslationStageEvent {
     READING,
     CLEANING,
     TRANSLATING,
-    RENDERING,
 }
 
 /**

@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.blockFingerprints
@@ -286,20 +285,6 @@ internal class ChapterPageMutations(
                     val current = actual.page
                         ?: return@withLock TranslationPublicationReconciliation.Deferred("page missing")
                     if (sameTranslationOutput(current, candidate) && translationOutputIsDurableLocked(pageKey, current)) {
-                        val stamped = current.detachedCopy()
-                        if (stamped.stampRenderTerminalIfDisplayComplete()) {
-                            stamped.updatedAt = System.currentTimeMillis()
-                            val owned = store.ownedPage(pageKey, stamped)
-                            val expectedCurrent = actual.toPrecondition()
-                            store.pages = store.pages.put(pageKey, store.publishPage(owned))
-                            if (!publishLocked(current, owned, expectedCurrent)) {
-                                restorePageLocked(pageKey, current)
-                                return@withLock TranslationPublicationReconciliation.PublicationFailed(
-                                    store.publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
-                                )
-                            }
-                            return@withLock TranslationPublicationReconciliation.Rebased(store.snapshotLocked(pageKey))
-                        }
                         return@withLock TranslationPublicationReconciliation.AlreadyDurable(actual)
                     }
                     val rebasedBlocks = rebaseTranslationBlocks(current, candidate)
@@ -314,7 +299,6 @@ internal class ChapterPageMutations(
                         translationFingerprint = candidate.translationFingerprint
                         translationOrigin = candidate.translationOrigin
                         sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
-                        if (stampRenderTerminalIfDisplayComplete()) updatedAt = System.currentTimeMillis()
                     }
                     val owned = store.ownedPage(pageKey, updated)
                     val expectedCurrent = actual.toPrecondition()

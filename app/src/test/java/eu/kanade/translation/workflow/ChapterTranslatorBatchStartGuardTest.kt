@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.workflow
+package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -7,7 +7,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
 import eu.kanade.translation.coordinator.TranslationQueueStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -59,7 +59,8 @@ class ChapterTranslatorBatchStartGuardTest {
     private val sourceManager = mockk<SourceManager>(relaxed = true)
     private val preferences = mockk<TranslationPreferences>(relaxed = true)
     private val streamRegistry = mockk<TranslationStreamRegistry>(relaxed = true)
-    private val pipeline = mockk<TranslationPipeline>(relaxed = true)
+    private val processor = mockk<TranslationProcessor>(relaxed = true)
+    private var storeResolver: suspend (Translation) -> eu.kanade.translation.persistence.ChapterTranslationStore? = { null }
 
     private fun translatorWithQueue(queue: List<Translation>): ChapterTranslator {
         val translator = ChapterTranslator(
@@ -70,8 +71,10 @@ class ChapterTranslatorBatchStartGuardTest {
             preferences,
             streamRegistry,
             TranslationQueueStore(context),
-            pipeline,
+            processor,
             batchCoordinator = mockk(relaxed = true),
+            resolveStore = { storeResolver(it) },
+            batchTrackerFactory = { _, _, _ -> null },
         )
         // queueState is bound to the constructor-time _queueState instance, so
         // the injected flow must replace BOTH fields to be visible to start().
@@ -96,8 +99,7 @@ class ChapterTranslatorBatchStartGuardTest {
         resolverEntered: CompletableDeferred<Unit>? = null,
         resolverRelease: CompletableDeferred<Unit>? = null,
     ) {
-        every { pipeline.activeStoreResolver } answers {
-            { _ ->
+        storeResolver = {
                 val now = concurrent.incrementAndGet()
                 maxConcurrent.updateAndGet { previous -> maxOf(previous, now) }
                 try {
@@ -107,13 +109,11 @@ class ChapterTranslatorBatchStartGuardTest {
                     concurrent.decrementAndGet()
                 }
                 null
-            }
         }
         // Fast ERROR exit after the resolver: no artifact directory resolves,
         // and no chapter dir means the typed pre-pipeline failure exit.
         every { provider.findMangaDir(any(), any()) } returns null
         every { downloadProvider.findChapterDir(any(), any(), any(), any()) } returns null
-        every { pipeline.batchTrackerFactory } returns null
     }
 
     private fun translationJob(translator: ChapterTranslator): Job =

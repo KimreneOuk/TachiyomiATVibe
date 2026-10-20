@@ -41,7 +41,7 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessingTimeouts
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.coordinator.ReaderPageWork
@@ -154,7 +154,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
      * TRANSLATING forever (spinner never stops, translate icon disabled,
      * auto-translate never retries it). Any non-terminal entry older than the
      * per-page timeout is treated as abandoned and flipped to FAILED. Never
-     * touches a page that already produced a result (rendered/cleaned) or
+     * touches a page that already produced a result (cleaned/displayable) or
      * already reached FAILED. Idempotent.
      */
     private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore, chapterId: Long) {
@@ -163,20 +163,16 @@ internal class ReaderTranslationObservationController(private val controller: Re
         }
         val currentGen = store.currentGeneration
         val now = System.currentTimeMillis()
-        val staleAfterMs = TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
+        val staleAfterMs = TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS
         val snapshot = store.state.value
         for ((pageKey, pt) in snapshot) {
             if (pt.runGeneration == currentGen) continue
             val isTerminal = pt.ocrStatus == StageStatus.FAILED ||
                 pt.inpaintStatus == StageStatus.FAILED ||
                 pt.translationStatus == StageStatus.FAILED ||
-                pt.renderStatus == StageStatus.FAILED ||
                 pt.displayImageName != null ||
-                //  no-render batch design: a page whose cleaned image is
-                // published and current already produced its durable result —
-                // the batch leaves renderStatus PENDING forever (overlay is
-                // drawn on demand), and treating that as stranded healed healthy
-                // pages one by one (2026-09-16 field report).
+                // The cleaned image and translated text are the durable result;
+                // layout and drawing happen in the reader.
                 pt.isCleanedImageReady ||
                 pt.isTextlessTerminal
             if (isTerminal) continue
@@ -185,9 +181,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
                 pt.inpaintStatus == StageStatus.RUNNING ||
                 pt.inpaintStatus == StageStatus.PENDING ||
                 pt.translationStatus == StageStatus.RUNNING ||
-                pt.translationStatus == StageStatus.PENDING ||
-                pt.renderStatus == StageStatus.RUNNING ||
-                pt.renderStatus == StageStatus.PENDING
+                pt.translationStatus == StageStatus.PENDING
             if (!isNonTerminal) continue
             val age = now - pt.updatedAt
             if (age < staleAfterMs) continue
@@ -324,8 +318,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
                     val updated = pageMap[pageKey] ?: continue
                     if (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                         updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING
+                        updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING
                     ) {
                         anyRunning = true
                         // Pages may be emitted out of order; keep the lowest
@@ -341,9 +334,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
                     val display = resolvedDisplay.toPageDisplayProjection()
                     val hasCleaned = display.displayReady
                     val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                        updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                        updated.renderStatus == eu.kanade.translation.model.StageStatus.FAILED
+                        updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED
                     if (isFailed && !hasCleaned) anyError = true
                     // TachiyomiAT: this per-page INFO log fires on every RUNNING
                     // stage of every page during a batch run — thousands of string
@@ -355,14 +346,13 @@ internal class ReaderTranslationObservationController(private val controller: Re
                             updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                                 updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                                 updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                                updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                                 updated.activeError != null
                             )
                     ) {
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT live translation update: pageKey=$pageKey " +
                                 "ocr=${updated.ocrStatus} inpaint=${updated.inpaintStatus} " +
-                                "translate=${updated.translationStatus} render=${updated.renderStatus} " +
+                                "translate=${updated.translationStatus} " +
                                 "cleaned=${updated.cleanedImageName} " +
                                 "error=${updated.activeError}"
                         }
@@ -394,7 +384,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
                 // currently-running page index actually changed. The old code used
                 // System.currentTimeMillis() as a refresh token, which always
                 // differs and forces Compose recomposition on every single
-                // translation-stage emission (OCR → inpaint → translate → render
+                // translation-stage emission (OCR → translate → inpaint
                 // per page per prefetch), causing visible "blinking" on
                 // auto-translate chapters.
                 val newProgress = Pair(translatedCount, totalPages)
@@ -466,7 +456,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
                     "[reader_translate_diag] observePageView pageIdx=${page.index} pageKey=$pageKey " +
                         "sourceFileName=${page.sourceFileName} storeSize=$storeSize hasKey=$hasKey " +
                         "sampleKeys=$sampleKeys " +
-                        "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
+                        "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus}" }}"
                 }
             }
             // TachiyomiAT (Phase 3): the page view observes the store's committed

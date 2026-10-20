@@ -2,7 +2,7 @@ package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
+import eu.kanade.translation.processing.TranslationProcessor
 import io.kotest.matchers.shouldBe
 import io.mockk.coVerify
 import io.mockk.every
@@ -20,7 +20,7 @@ import tachiyomi.domain.manga.model.Manga
 
 class ReaderTranslationCoordinatorTest {
 
-    private val executor: TranslationExecutor = mockk(relaxed = true)
+    private val processor: TranslationProcessor = mockk(relaxed = true)
     private val manga = mockk<Manga>(relaxed = true)
     private val chapter = mockk<Chapter>(relaxed = true) { every { id } returns 1L }
     private val source = mockk<HttpSource>(relaxed = true)
@@ -33,7 +33,7 @@ class ReaderTranslationCoordinatorTest {
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         testScope = scope
         return ReaderTranslationCoordinator(
-            executor = executor,
+            processor = processor,
             isBatchActiveForChapter = { isBatchActive },
             scope = scope,
             autoStart = autoStart,
@@ -142,6 +142,6 @@ class ReaderTranslationCoordinatorTest {
 
         coord.enqueuePage(req)
 
-        coVerify(exactly = 0) { executor.translateSinglePage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { processor.processSinglePage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 }

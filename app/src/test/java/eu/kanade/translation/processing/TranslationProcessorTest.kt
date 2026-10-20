@@ -7,6 +7,7 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.isTextlessTerminal
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -34,7 +35,7 @@ class TranslationProcessorTest {
     )
 
     @Test
-    fun `analyze marks textless page as complete across all stages`() = runTest {
+    fun `analyze leaves reader display to the reader for textless pages`() = runTest {
         val bitmap: Bitmap = mockk(relaxed = true) {
             every { width } returns 800
             every { height } returns 1200
@@ -47,9 +48,10 @@ class TranslationProcessorTest {
         val result = processor.analyze("page_001.jpg", bitmap, engine)
 
         result.ocrStatus shouldBe StageStatus.READY
-        result.translationStatus shouldBe StageStatus.READY
-        result.inpaintStatus shouldBe StageStatus.READY
-        result.renderStatus shouldBe StageStatus.READY
+        result.translationStatus shouldBe StageStatus.SKIPPED
+        result.inpaintStatus shouldBe StageStatus.SKIPPED
+        result.renderStatus shouldBe StageStatus.PENDING
+        result.isTextlessTerminal shouldBe true
         result.sourceFileName shouldBe "page_001.jpg"
     }
 

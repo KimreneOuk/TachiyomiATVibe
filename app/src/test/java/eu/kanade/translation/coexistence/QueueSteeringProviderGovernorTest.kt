@@ -140,7 +140,7 @@ class QueueSteeringProviderGovernorTest {
         val mockPreferences = mockk<tachiyomi.domain.translation.TranslationPreferences>(relaxed = true)
         val mockStreamRegistry = mockk<eu.kanade.translation.pipeline.execution.TranslationStreamRegistry>(relaxed = true)
         val mockQueueStore = mockk<eu.kanade.translation.coordinator.TranslationQueueStore>(relaxed = true)
-        val mockPipeline = mockk<eu.kanade.translation.pipeline.TranslationPipeline>(relaxed = true)
+        val mockProcessor = mockk<eu.kanade.translation.processing.TranslationProcessor>(relaxed = true)
 
         val translator = ChapterTranslator(
             context = mockContext,
@@ -150,7 +150,7 @@ class QueueSteeringProviderGovernorTest {
             translationPreferences = mockPreferences,
             streamRegistry = mockStreamRegistry,
             queueStore = mockQueueStore,
-            pipeline = mockPipeline,
+            processor = mockProcessor,
             batchCoordinator = mockk(relaxed = true),
         )
 

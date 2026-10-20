@@ -38,10 +38,10 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Owns native-engine creation, cached instances, native-permit admission, and
  * engine lifecycle. Translator borrow tracking lets the stop path observe
- * in-flight reader work. [closeEngines] snapshots exact engine references and
+ * in-flight processor work. [closeEngines] snapshots exact engine references and
  * closes those under the permit after a bounded grace period; a rebuild must
  * never observe the drain closing its new engines. The pipeline owns the
- * native run scope, quarantine, in-flight page set, and [onPageStuck] callback.
+ * processing owner supplies the native run scope, quarantine, in-flight page set, and [onPageStuck] callback.
  */
 internal class EngineLane(
     private val context: Context,
@@ -140,8 +140,8 @@ internal class EngineLane(
 
     /**
      * Number of in-flight translator borrows (the single page boundary
-     * [eu.kanade.translation.pipeline.SinglePageHttpRenderPhase]
-     * `translateSinglePageHttpRender`). This is what makes "in-flight reader
+     * [eu.kanade.translation.processing.TranslationProcessor]
+     * translation operation. This is what makes "in-flight reader
      * work" observable to the stop path; bounded to one int.
      */
     private val translatorUseCount = AtomicInteger(0)

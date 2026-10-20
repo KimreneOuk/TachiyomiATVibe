@@ -20,7 +20,6 @@ import eu.kanade.translation.persistence.toUiPauseReason
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterState
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import kotlinx.coroutines.Dispatchers
@@ -277,7 +276,7 @@ internal class TranslationProgressProjection(
     private val batchTrackerRegistryProvider: () -> TranslationBatchTrackerRegistry,
     private val queueStateProvider: () -> StateFlow<List<Translation>>,
     private val pendingTranslationRequestsProvider: () -> StateFlow<Map<Long, TranslationRequestState>>,
-    private val pipelineProvider: () -> TranslationPipeline,
+    private val permitHolderPageKeyProvider: () -> String?,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
     // Durable resolution performs SAF/FUSE I/O, so keep the call suspendable for reader/UI users.
     private val persistedChapterStatus: suspend (
@@ -304,7 +303,6 @@ internal class TranslationProgressProjection(
     private val batchTrackerRegistry get() = batchTrackerRegistryProvider()
     private val queueState get() = queueStateProvider()
     private val pendingTranslationRequests get() = pendingTranslationRequestsProvider()
-    private val pipeline get() = pipelineProvider()
 
     private suspend fun openOrCreateActiveChapterTranslationStoreSuspend(
         chapterId: Long,
@@ -559,7 +557,7 @@ internal class TranslationProgressProjection(
     ): TranslationProgressSnapshot = store.progressSnapshot(
         chapterId = chapterId,
         orchestrationState = state,
-        permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+        permitHolderPageKey = permitHolderPageKeyProvider(),
     )
 
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {

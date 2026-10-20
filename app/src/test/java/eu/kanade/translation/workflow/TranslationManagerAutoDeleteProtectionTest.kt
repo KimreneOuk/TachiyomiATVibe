@@ -82,7 +82,7 @@ class TranslationManagerAutoDeleteProtectionTest {
             sourceManager = mockk(relaxed = true),
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk(relaxed = true),
+            processor = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = pendingRequestStore,
             pendingRequests = MutableStateFlow(seed),

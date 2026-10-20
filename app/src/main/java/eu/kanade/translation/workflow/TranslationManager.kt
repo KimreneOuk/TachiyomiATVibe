@@ -19,7 +19,7 @@ import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -72,7 +72,7 @@ class TranslationManager private constructor(
     ) : this(context, provider, sourceManager, translationPreferences, downloadProvider, null)
 
     private data class TestConstruction(
-        val pipeline: TranslationPipeline,
+        val processor: TranslationProcessor,
         val translator: ChapterTranslator,
         val pendingRequestStore: TranslationPendingRequestStore,
         val pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>>,
@@ -96,7 +96,7 @@ class TranslationManager private constructor(
             sourceManager: SourceManager,
             translationPreferences: TranslationPreferences,
             downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider,
-            pipeline: TranslationPipeline,
+            processor: TranslationProcessor,
             translator: ChapterTranslator,
             pendingRequestStore: TranslationPendingRequestStore,
             pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>> = MutableStateFlow(emptyMap()),
@@ -111,7 +111,7 @@ class TranslationManager private constructor(
             translationPreferences = translationPreferences,
             downloadProvider = downloadProvider,
             testConstruction = TestConstruction(
-                pipeline = pipeline,
+                processor = processor,
                 translator = translator,
                 pendingRequestStore = pendingRequestStore,
                 pendingRequests = pendingRequests,
@@ -123,7 +123,6 @@ class TranslationManager private constructor(
         )
     }
 
-    internal val pipeline = testConstruction?.pipeline ?: TranslationPipeline(context, provider)
     internal val isProductionConstruction: Boolean get() = testConstruction == null
 
     /** Single owner for reader/batch admission; lifecycle coordinators delegate here. */
@@ -131,8 +130,14 @@ class TranslationManager private constructor(
         onBatchSwitchRequested = { translator.pause() },
     )
 
-    // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
+    // Held here so deleteTranslation can evict stale reader page-stream closures.
     internal val streamRegistry: TranslationStreamRegistry = testConstruction?.streamRegistry ?: Injekt.get()
+    internal val processor = testConstruction?.processor ?: TranslationProcessor(
+        context = context,
+        provider = provider,
+        translationPreferences = translationPreferences,
+        streamRegistry = streamRegistry,
+    )
     internal val testReaderCoordinator: ReaderTranslationCoordinator? get() = testConstruction?.readerCoordinator
     internal val testReaderStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)?
         get() = testConstruction?.readerStoreResolver
@@ -156,8 +161,22 @@ class TranslationManager private constructor(
     internal val translator = testConstruction?.translator ?: ChapterTranslator(
         context = context,
         provider = provider,
-        pipeline = pipeline,
+        processor = processor,
         batchCoordinator = batchCoordinator,
+        resolveStore = { translation ->
+            translation.chapter.id?.let { chapterId ->
+                openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId,
+                    translation.chapter.name,
+                    translation.chapter.scanlator,
+                    translation.manga.title,
+                    translation.source,
+                    translation.manga.id,
+                )
+            }
+        },
+        batchTrackerFactory = ::createBatchTracker,
+        onBatchClosed = ::handleBatchClosed,
     )
 
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
@@ -181,7 +200,7 @@ class TranslationManager private constructor(
 
     /** Reader-visible native lane stall projection. */
     val nativeStall: StateFlow<eu.kanade.translation.engines.translator.NativeStallState?>
-        get() = pipeline.nativeStall
+        get() = processor.nativeStall
 
     // One-shot marks for pending requests startup reconciliation
     // admitted (process-local is sufficient — the reconciler and the later
@@ -223,11 +242,34 @@ class TranslationManager private constructor(
     val isRunning: Boolean
         get() = translator.isRunning
 
-    val queueState
+    val queueState: StateFlow<List<Translation>>
         get() = translator.queueState
 
     val isAnyBatchTranslationActive: Boolean
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
+
+    private suspend fun handleBatchClosed(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        store: ChapterTranslationStore,
+    ) {
+        chapter.id?.let { chapterId ->
+            sweepOrphanedCleanedImages(
+                store = store,
+                chapterId = chapterId,
+                chapterName = chapter.name,
+                scanlator = chapter.scanlator,
+                mangaTitle = manga.title,
+                source = source,
+                mangaId = manga.id,
+            )
+        }
+        val hasPausedTranslation = queueState.value.any { it.status == Translation.State.PAUSED }
+        if (!isAnyBatchTranslationActive && !hasPausedTranslation) {
+            sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
+        }
+    }
 
     internal fun admitBatchSession(chapterIds: Set<Long>): Boolean = admitBatchSessionImpl(chapterIds)
 
@@ -791,7 +833,7 @@ class TranslationManager private constructor(
         store = store,
         orderedPageKeys = orderedPageKeys,
         scope = storeScope,
-        permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
+        permitHolderResolver = { processor.permitHolderPageKeySnapshot() },
     )
 
     fun disposeBatchTracker(chapterId: Long) = disposeBatchTrackerImpl(chapterId)

@@ -58,8 +58,8 @@ internal class OperationPaidCallLifecycle(
     companion object Key : CoroutineContext.Key<OperationPaidCallLifecycle> {
         /**
          * Pins the drained paid-call chain's legitimate budget —
-         * [eu.kanade.translation.pipeline.TranslationPipeline.ONNX_PHASE_TIMEOUT_MS] +
-         * [eu.kanade.translation.pipeline.TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS]
+         * [eu.kanade.translation.processing.TranslationProcessingTimeouts.ONNX_PHASE_TIMEOUT_MS] +
+         * [eu.kanade.translation.processing.TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS]
          * (ONNX 90 s + HTTP/render 120 s, sequential = 210 s) — so a healthy
          * long call is never cut cancellation-class mid-chain.
          */

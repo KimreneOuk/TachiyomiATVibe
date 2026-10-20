@@ -361,8 +361,6 @@ private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedP
                     stringResource(ATMR.strings.reader_translation_stage_inpaint)
                 eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.TRANSLATE ->
                     stringResource(ATMR.strings.reader_translation_stage_translate)
-                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.RENDER ->
-                    stringResource(ATMR.strings.reader_translation_stage_render)
                 else -> ""
             }
             stageLabel = stringResource(ATMR.strings.reader_translation_stage_running, name)

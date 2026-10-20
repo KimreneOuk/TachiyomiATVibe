@@ -35,8 +35,8 @@ data class PageTranslation(
     override var runGeneration: Long = 0L,
     override var pageVersion: Long = 0L,
     // Persisted raw per-failure count for diagnostics/back-compat. Do NOT gate
-    // exhaustion on this: a single attempt can fail multiple cascading stages
-    // (inpaint→render) and double-count. hasExhaustedRetries keys off attemptCount.
+    // exhaustion on this: one attempt can report more than one stage failure.
+    // Display/inpaint failures do not charge the translation attempt counter.
     override var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
     // stable, so UI dedup must not key on the name alone.
@@ -140,7 +140,7 @@ data class PageTranslation(
      * [recordAttemptFailure] increments it exactly once per attempt (see its
      * doc for the "first terminal stage owns the count" rule). Reset to 0 by
      * [PageTranslation.prepareForcedRetry] and by the start-of-attempt gate in
-     * [TranslationPipeline], so the manual re-translate button always re-admits
+     * [eu.kanade.translation.processing.TranslationProcessor], so manual re-translate can re-admit
      * a failed page.
      *
      * Why @Transient and not persisted: persisting it would recreate the
@@ -269,7 +269,7 @@ object StageStatus {
      * still RENDERED — valid blocks are drawn, the missing regions stay
      * blank on the cleaned image — so a single bad block no longer skips the
      * whole page. Set by [TranslationBlockValidation.applyTo]; the render
-     * gates in [TranslationPipeline] admit READY and PARTIAL alike.
+     * gates in [eu.kanade.translation.processing.TranslationProcessor] admit READY and PARTIAL alike.
      */
     const val PARTIAL = "PARTIAL"
 
@@ -286,7 +286,7 @@ object StageStatus {
      * after native pools are reclaimed (memory contracts #4/#6/#10).
      *
      * The manual per-page translate button is NOT bound by this: it routes
-     * through [TranslationPipeline.translateSinglePage] with `force = true`,
+     * through the reader request with `force = true`,
      * which calls [PageTranslation.prepareForcedRetry] to reset the attempt
      * counter and re-admit the page. So a user can always force another attempt
      * on a page auto-translate has given up on.

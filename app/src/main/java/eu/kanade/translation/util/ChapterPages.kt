@@ -11,7 +11,7 @@ import java.io.InputStream
 
 /**
  * canonical chapter page enumeration shared by `ChapterTranslator`
- * and `TranslationPipeline` (previously two ~45-line line-for-line identical
+ * and the reader processor (previously two ~45-line line-for-line identical
  * copies that only drifted in comments).
  *
  * Returns the image entries of [chapterPath] as ordered

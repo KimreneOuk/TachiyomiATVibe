@@ -10,7 +10,7 @@ import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.every
@@ -77,7 +77,7 @@ class TranslationManagerCompletedDownloadRekeyTest {
             sourceManager = sourceManager,
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk<TranslationPipeline>(relaxed = true),
+            processor = mockk<TranslationProcessor>(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
             pendingRequests = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),

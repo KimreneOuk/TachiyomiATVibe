@@ -27,7 +27,6 @@ import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -71,32 +70,6 @@ import java.util.concurrent.atomic.AtomicLong
 internal fun TranslationManager.initializeTranslationManager() {
     if (isProductionConstruction) {
         // Share the store instance between reader and translator so live updates do not need a chapter reload.
-        pipeline.activeStoreResolver = { translation ->
-            openOrCreateActiveChapterTranslationStoreSuspend(
-                translation.chapter.id!!,
-                translation.chapter.name,
-                translation.chapter.scanlator,
-                translation.manga.title,
-                translation.source,
-                translation.manga.id,
-            )
-        }
-        pipeline.onBatchClosed = { manga, chapter, source, store ->
-            chapter.id?.let { chapterId ->
-                sweepOrphanedCleanedImages(
-                    store = store,
-                    chapterId = chapterId,
-                    chapterName = chapter.name,
-                    scanlator = chapter.scanlator,
-                    mangaTitle = manga.title,
-                    source = source,
-                    mangaId = manga.id,
-                )
-            }
-            if (!isAnyBatchTranslationActive && queueState.value.none { it.status == Translation.State.PAUSED }) {
-                sessionCoordinator.finishSession(TranslationSessionState.BATCH_SESSION)
-            }
-        }
         // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
         // each single-page translation broke live updates (reader captured the
         // StateFlow once; next translate got a fresh unobserved store). Eviction
@@ -105,15 +78,10 @@ internal fun TranslationManager.initializeTranslationManager() {
 
         // Native quarantine reports timeout only after the underlying call exits;
         // evict the stale job so a subsequent request can be admitted safely.
-        pipeline.onPageStuck = { chapterId, pageKey ->
+        processor.onPageStuck = { chapterId, pageKey ->
             if (chapterId != null && pageKey.isNotEmpty()) {
                 readerCoordinator.cancelPageAsync(chapterId.toString(), pageKey)
             }
-        }
-
-        // Batch tracker factory: lets the pipeline create and register a tracker per active batch (observable via observeBatchProgress).
-        pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
-            createBatchTracker(chapterId, store, orderedPageKeys)
         }
 
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
@@ -163,7 +131,7 @@ internal fun TranslationManager.createCoordinatorRuntime(): TranslationManagerCo
         context = context,
         provider = provider,
         preferences = translationPreferences,
-        pipeline = pipeline,
+        processorOverride = processor,
         streamRegistry = streamRegistry,
         scope = applicationScope,
         isBatchActive = { chapterId -> isChapterBatchActive(chapterId, includePaused = false) },
@@ -236,7 +204,7 @@ internal fun TranslationManager.createProgressProjection(): TranslationProgressP
             batchTrackerRegistryProvider = { batchTrackerRegistry },
             queueStateProvider = { queueState },
             pendingTranslationRequestsProvider = { pendingTranslationRequests },
-            pipelineProvider = { pipeline },
+            permitHolderPageKeyProvider = { processor.permitHolderPageKeySnapshot() },
             getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
             persistedChapterStatus = { chapterId, chapterName, chapterScanlator, mangaTitle, sourceId ->
                 persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)

@@ -1,6 +1,5 @@
 package eu.kanade.translation.pipeline.adaptive
 
-import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.diagnostics.DeviceStageNormalization
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationStageSpan
@@ -23,47 +22,10 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
 class DevicePagePermitGateTest {
-    @Test
-    fun `pipeline native attachment immediately acquires an idle floor permit`() = runTest {
-        val harness = TranslationCoexistenceHarness.create(pageKeys = listOf("p0"))
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        var result: String? = null
-        var worker: Job? = null
-        try {
-            val running = launch(start = CoroutineStart.UNDISPATCHED) {
-                result = harness.pipeline.withNativeLane(
-                    timeoutMs = 10_000L,
-                    chapterId = harness.CHAPTER_ID,
-                    chapterName = "adaptive-floor",
-                    pageKey = "p0",
-                    onTimeout = {},
-                ) {
-                    entered.complete(Unit)
-                    release.await()
-                    "admitted"
-                }
-            }
-            worker = running
-            withTimeout(10_000L) { entered.await() }
-            harness.pipeline.devicePagePermitGate.capacityLimit shouldBe DevicePagePermitGate.DEFAULT_CAPACITY
-            harness.pipeline.devicePagePermitGate.activeCount shouldBe 1
-            harness.pipeline.devicePagePermitGate.queuedCount shouldBe 0
-            release.complete(Unit)
-            running.join()
-            harness.pipeline.devicePagePermitGate.activeCount shouldBe 0
-            result shouldBe "admitted"
-        } finally {
-            release.complete(Unit)
-            worker?.cancelAndJoin()
-            harness.close()
-        }
-    }
 
     @Test
     fun `source bounds update normalization without resetting trace duration`() {
@@ -281,63 +243,6 @@ class DevicePagePermitGateTest {
         gate.activeCount shouldBe 0
     }
 
-    @Test
-    fun `native lane admission honors a promoted context handle`() = runTest {
-        val harness = TranslationCoexistenceHarness.create(pageKeys = listOf("p0"))
-        val gate = harness.pipeline.devicePagePermitGate
-        // A long-lived background seat occupies the pinned native lane.
-        val seat = gate.acquire(DevicePermitPriority.BACKGROUND)!!
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        var result: String? = null
-        var worker: Job? = null
-        try {
-            val handle = DevicePriorityHandle()
-            val running = launch(start = CoroutineStart.UNDISPATCHED) {
-                withContext(handle) {
-                    result = harness.pipeline.withNativeLane(
-                        timeoutMs = 10_000L,
-                        chapterId = harness.CHAPTER_ID,
-                        chapterName = "promoted-context-handle",
-                        pageKey = "p0",
-                        onTimeout = {},
-                        priority = DevicePermitPriority.BACKGROUND,
-                        handle = currentCoroutineContext()[DevicePriorityHandle],
-                    ) {
-                        entered.complete(Unit)
-                        release.await()
-                        "admitted"
-                    }
-                }
-            }
-            worker = running
-            runCurrent()
-            gate.queuedCount shouldBe 1
-
-            // A pure background wait stays unbounded: far past the foreground cap it still waits.
-            advanceTimeBy(DevicePagePermitGate.DEFAULT_FOREGROUND_WAIT_CAP_MS * 4)
-            runCurrent()
-            gate.queuedCount shouldBe 1
-
-            handle.promote()
-            runCurrent()
-            // Promotion grants a fresh foreground window to the SAME waiting
-            // entry (no restart, no re-acquire); releasing the seat inside
-            // that window admits it in place.
-            seat.release()
-            withTimeout(10_000L) { entered.await() }
-            gate.activeCount shouldBe 1
-            release.complete(Unit)
-            running.join()
-            result shouldBe "admitted"
-            gate.activeCount shouldBe 0
-        } finally {
-            release.complete(Unit)
-            worker?.cancelAndJoin()
-            seat.release()
-            harness.close()
-        }
-    }
 
     private class FakeClock(var nowNanos: Long = 0L) : TranslationTraceClock {
         override fun nowNanos(): Long = nowNanos

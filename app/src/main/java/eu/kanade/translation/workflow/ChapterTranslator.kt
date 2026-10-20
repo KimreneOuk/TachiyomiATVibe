@@ -15,7 +15,7 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -132,14 +132,11 @@ internal class ChapterTranslator(
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
     private val queueStore: TranslationQueueStore = TranslationQueueStore(context),
-    private val pipeline: TranslationPipeline = TranslationPipeline(
-        context,
-        provider,
-        downloadProvider,
-        translationPreferences,
-        streamRegistry,
-    ),
+    private val processor: TranslationProcessor,
     private val batchCoordinator: BatchTranslationCoordinator,
+    private val resolveStore: suspend (Translation) -> ChapterTranslationStore? = { null },
+    private val batchTrackerFactory: (Long, ChapterTranslationStore, List<String>) -> eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker? = { _, _, _ -> null },
+    private val onBatchClosed: suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit = { _, _, _, _ -> },
 ) {
 
     companion object {
@@ -277,7 +274,7 @@ internal class ChapterTranslator(
     private suspend fun durableQueueState(translation: Translation): DurableQueueState? =
         withContext(Dispatchers.IO) {
             runCatching {
-                val active = pipeline.activeStoreResolver?.invoke(translation)
+                val active = resolveStore(translation)
                 val store = active ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
                     val fileName = provider.getTranslationFileName(
                         translation.chapter.name,
@@ -365,7 +362,7 @@ internal class ChapterTranslator(
 
         if (reason == "reader backgrounded") {
             try {
-                pipeline.forceReleaseNativeBuffers()
+                processor.forceReleaseNativeBuffers()
             } catch (_: Exception) {}
         }
 
@@ -374,14 +371,14 @@ internal class ChapterTranslator(
         // after a provider, model, language, or OCR configuration change.
         if (reason != null && !closeEngines) return
         isPaused = false
-        pipeline.closeEngines()
+        processor.closeEngines()
     }
 
     /** Releases transient native and bitmap memory in response to OS pressure. */
     fun onMemoryPressure(level: Int, pressureClass: MemoryPressureClass) {
         tachiyomi.domain.translation.pools.BitmapPool.releaseAll()
         try {
-            pipeline.forceReleaseNativeBuffers()
+            processor.forceReleaseNativeBuffers()
         } catch (_: Exception) {}
         // Keep the translator job alive under memory pressure. Cancelling it
         // can drop an active provider request and publish an aborted state while
@@ -677,7 +674,7 @@ internal class ChapterTranslator(
         try {
             // Prefer the shared active store from TranslationManager so the reader
             // observes the same instance the pipeline writes to.
-            store = pipeline.activeStoreResolver?.invoke(translation)
+            store = resolveStore(translation)
             if (store == null) {
                 val parent = provider.getMangaDir(translation.manga.title, translation.source)
                 val fileName = provider.getTranslationFileName(
@@ -772,7 +769,7 @@ internal class ChapterTranslator(
                 }
                 val chapterId = translation.chapter.id
                 tracker = if (chapterId != null) {
-                    pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedStreams.map { it.first })
+                    batchTrackerFactory(chapterId, store, orderedStreams.map { it.first })
                 } else {
                     null
                 }
@@ -785,7 +782,7 @@ internal class ChapterTranslator(
                 } else {
                     batchReconciliation = executeQueuedBatchWithCoordinator(
                         batchCoordinator,
-                        pipeline,
+                        onBatchClosed,
                         provider,
                         translation,
                         orderedStreams,
@@ -877,7 +874,7 @@ internal class ChapterTranslator(
     ) {
         translation.status = Translation.State.ERROR
         val chapterId = translation.chapter.id ?: return
-        val tracker = pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedPageKeys) ?: return
+        val tracker = batchTrackerFactory(chapterId, store, orderedPageKeys) ?: return
         // Publish the known ordered-key totals before the terminal event so
         // the aborted snapshot carries the real work set, not 0/0.
         tracker.rebuildFromStore()

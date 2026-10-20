@@ -41,7 +41,6 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.coordinator.ReaderPageWork
@@ -351,24 +350,14 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
         // TachiyomiAT: manual entry drops a stale DOWNLOAD_FAILED batch
         // request so its failed projection cannot shadow this manual work.
         chapter.id?.let(translationManager::clearStaleDownloadFailedRequest)
-        // TachiyomiAT: resolve force from the page's live translation state.
-        // A FAILED stage means the page is stuck (the "cannot reprocess /
-        // retranslate" bug) and the retry MUST reset the bookkeeping via
-        // prepareForcedRetry() — which only happens when force=true. For every
-        // other state (PENDING/RUNNING/READY/PARTIAL/CANCELLED, or a healthy
-        // rendered page), keep the resume default (force=false) so a manual tap
-        // on an already-translated page resumes instead of burning a full
-        // re-OCR + re-translate + re-inpaint + re-render. Callers may override
-        // by passing an explicit force. See PageTranslation.prepareForcedRetry
-        // + MAX_STAGE_RETRIES + hasExhaustedRetries.
+        // Resolve force from OCR/translation failures only. Inpaint is a
+        // display operation, so its failure cannot consume translation retries.
         val effectiveForce = force ?: run {
             val t = page.translation
             t != null &&
                 (
                     t.ocrStatus == "FAILED" ||
-                        t.translationStatus == "FAILED" ||
-                        t.inpaintStatus == "FAILED" ||
-                        t.renderStatus == "FAILED"
+                        t.translationStatus == "FAILED"
                     )
         }
         logcat(LogPriority.INFO) {

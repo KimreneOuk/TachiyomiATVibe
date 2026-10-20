@@ -4,13 +4,14 @@ enum class PageStage {
     Ocr,
     Translation,
     Inpaint,
+    // Retained so persisted legacy page leases can still be decoded.
     Render,
 }
 
 sealed interface PageLifecycle {
     data object Pending : PageLifecycle
     data class Running(val stage: PageStage) : PageLifecycle
-    data object NeedsRender : PageLifecycle
+    data object NeedsDisplay : PageLifecycle
     data object Done : PageLifecycle
     data object Textless : PageLifecycle
     data object Cancelled : PageLifecycle
@@ -70,37 +71,20 @@ val PageTranslationView.hasCurrentInpaintMask: Boolean
 val PageTranslationView.hasRenderedResult: Boolean
     get() = isTranslationDisplayReady
 
-/**
- * Completes the render-terminal stamp in the same guarded write that commits
- * translation when the rest of the display evidence is already present.
- */
-internal fun PageTranslation.stampRenderTerminalIfDisplayComplete(): Boolean {
-    val displayComplete =
-        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
-            isCleanedImageReady &&
-            blocks.any { it.translation.isNotBlank() }
-    if (renderStatus != StageStatus.PENDING || !displayComplete) return false
-    renderStatus = StageStatus.READY
-    return true
-}
-
 val PageTranslationView.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
         translationStatus == StageStatus.RUNNING ||
-        inpaintStatus == StageStatus.RUNNING ||
-        renderStatus == StageStatus.RUNNING
+        inpaintStatus == StageStatus.RUNNING
 
 val PageTranslationView.isStageCancelled: Boolean
     get() = ocrStatus == StageStatus.CANCELLED ||
         translationStatus == StageStatus.CANCELLED ||
-        inpaintStatus == StageStatus.CANCELLED ||
-        renderStatus == StageStatus.CANCELLED
+        inpaintStatus == StageStatus.CANCELLED
 
 val PageTranslationView.isStageFailed: Boolean
     get() = ocrStatus == StageStatus.FAILED ||
         translationStatus == StageStatus.FAILED ||
-        inpaintStatus == StageStatus.FAILED ||
-        renderStatus == StageStatus.FAILED
+        inpaintStatus == StageStatus.FAILED
 
 /**
  * Flip every non-terminal RUNNING/PENDING stage to CANCELLED in place, used to
@@ -114,7 +98,6 @@ fun PageTranslation.cancelInFlightStages() {
         if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) ocrStatus = StageStatus.CANCELLED
         if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
         if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
-        if (renderStatus == StageStatus.RUNNING) renderStatus = StageStatus.CANCELLED
     }
 }
 
@@ -134,18 +117,13 @@ fun PageTranslation.prepareForcedRetry() {
 
 /**
  * record that this page-translation attempt ended in a terminal
- * failure. Increments [PageTranslation.attemptCount] AT MOST ONCE per attempt —
- * the FIRST terminal stage to call this owns the increment; subsequent stages
- * in the same attempt (e.g. a render failure cascading from an inpaint failure)
- * are no-ops. This is the fix for the "one transient inpaint failure
- * permanently blacklists the page" bug: previously each failed stage bumped
- * [PageTranslation.retryCount], and a single reader-path attempt could touch
- * inpaint THEN render, double-counting and tripping [hasExhaustedRetries]
- * (which used to key off retryCount) after a single transient failure.
+ * failure. Increments [PageTranslation.attemptCount] AT MOST ONCE per attempt.
+ * Translation failures own this charge; display/inpaint failures do not consume
+ * the translation retry budget.
  *
  * Idempotency is tracked via the [PageTranslation.attemptCharged] flag (set the
- * first time this charges the attempt, reset by [prepareForcedRetry] and at the
- * start of each fresh attempt in [TranslationPipeline]). Callers set their own
+ * first time this charges the attempt, reset by [prepareForcedRetry] or
+ * [resetAttemptCharge]). Callers set their own
  * stage status to FAILED before OR after calling this — the guard does NOT
  * inspect stage status, because the stage is typically already FAILED by the
  * time this runs (so an `isStageFailed` guard would always no-op, which was a
@@ -163,12 +141,8 @@ fun PageTranslation.recordAttemptFailure() {
 }
 
 /**
- * clears the per-attempt "charged" flag so the next terminal
- * failure in a NEW attempt is counted. Called by [TranslationPipeline] at the
- * start of each fresh page-translation attempt (after [prepareForcedRetry] on
- * the forced path, or implicitly on the resume path when stages are reset to
- * RUNNING/PENDING). Without this reset, a second attempt that fails would be
- * treated as already-charged and never increment [PageTranslation.attemptCount].
+ * Clears the page-local "charged" flag so a subsequent attempt can be counted
+ * by a caller that uses this compatibility counter.
  */
 fun PageTranslation.resetAttemptCharge() {
     attemptCharged = false
@@ -193,15 +167,13 @@ val PageTranslationView.lifecycle: PageLifecycle
         hasRenderedResult -> PageLifecycle.Done
         isTextlessTerminal -> PageLifecycle.Textless
         isStageCancelled -> PageLifecycle.Cancelled
-        renderStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Render, retryCount, errorMessage)
         inpaintStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Inpaint, retryCount, errorMessage)
         translationStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Translation, retryCount, errorMessage)
         ocrStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Ocr, retryCount, errorMessage)
-        renderStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Render)
         inpaintStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Inpaint)
         translationStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Translation)
         ocrStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Ocr)
-        hasRecognizedTranslation -> PageLifecycle.NeedsRender
+        hasRecognizedTranslation -> PageLifecycle.NeedsDisplay
         else -> PageLifecycle.Pending
     }
 
@@ -217,7 +189,7 @@ val PageTranslationView.lifecycle: PageLifecycle
  * page that produced output or was deliberately stopped.
  *
  * Rule: the error surfaces only when the page reached a genuine terminal
- * [PageLifecycle.Failed] state (a stage FAILED, no rendered/cleaned result to
+ * [PageLifecycle.Failed] state (an OCR, translation, or inpaint stage FAILED, no cleaned result to
  * show instead). PARTIAL, Textless, Cancelled, Done, and any in-flight state
  * all suppress the error — the user sees either the translated image or
  * nothing, never a stale/misleading red message.

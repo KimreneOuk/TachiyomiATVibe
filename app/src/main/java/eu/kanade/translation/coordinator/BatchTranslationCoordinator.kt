@@ -7,7 +7,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.processing.TranslationProcessor
@@ -134,7 +133,7 @@ internal class BatchTranslationCoordinator(
         // 1. Resume scan: identify already-completed pages from durable store
         val completedKeys = orderedPageKeys.filter { key ->
             val page = currentState[key]
-            page?.translationStatus == StageStatus.READY && (page.hasRenderedResult || page.isTextlessTerminal)
+            page?.translationStatus == StageStatus.READY || page?.isTextlessTerminal == true
         }.toSet()
 
         var completedCount = completedKeys.size
@@ -173,7 +172,6 @@ internal class BatchTranslationCoordinator(
                             ocrStatus = StageStatus.FAILED
                             translationStatus = StageStatus.FAILED
                             inpaintStatus = StageStatus.FAILED
-                            renderStatus = StageStatus.FAILED
                             errorMessage = err
                         }
                     }
@@ -182,7 +180,11 @@ internal class BatchTranslationCoordinator(
                     return failProgress
                 }
 
-                val page = processor.analyze(pageKey, decoded.bitmap, recognitionEngine)
+                val page = try {
+                    processor.analyze(pageKey, decoded.bitmap, recognitionEngine)
+                } finally {
+                    processor.releaseDecoded(decoded)
+                }
                 analyzedPages[pageKey] = page
 
                 // Commit OCR state
@@ -232,7 +234,11 @@ internal class BatchTranslationCoordinator(
                     if (inpaintingEnabled) {
                         val decoded = processor.decodeImage(pageKey, { streamProvider(pageKey) }) { recognitionEngine }
                         if (decoded != null) {
-                            processor.inpaint(pageKey, decoded.bitmap, translatedPage, recognitionEngine, companionDir)
+                            try {
+                                processor.inpaint(pageKey, decoded.bitmap, translatedPage, recognitionEngine, companionDir)
+                            } finally {
+                                processor.releaseDecoded(decoded)
+                            }
                         } else {
                             translatedPage.inpaintStatus = StageStatus.READY
                             translatedPage.originalImageFallback = true
@@ -243,7 +249,11 @@ internal class BatchTranslationCoordinator(
                     }
 
                     // Commit final bundle
-                    store.updatePageFromCurrentSnapshot(pageKey, "batch:commit") { translatedPage }
+                    try {
+                        store.updatePageFromCurrentSnapshot(pageKey, "batch:commit") { translatedPage }
+                    } finally {
+                        processor.releasePageBitmaps(translatedPage)
+                    }
 
                     completedCount++
                     publish(

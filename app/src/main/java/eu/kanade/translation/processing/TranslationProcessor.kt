@@ -3,6 +3,11 @@ package eu.kanade.translation.processing
 import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
+import eu.kanade.translation.engines.translator.AdmissionPriority
+import eu.kanade.translation.engines.translator.NativeStallState
+import eu.kanade.translation.engines.translator.NativeStallWatchdog
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
@@ -10,44 +15,130 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.PageDecode
+import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
+import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
+import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
+import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
+import eu.kanade.translation.persistence.TranslationFileProvider
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Shared single-page AI processor used by both reader and batch translation coordinators.
- *
- * Consolidates:
- * 1. Image decoding & downscaling for memory bounds.
- * 2. Text block detection and OCR recognition.
- * 3. Text translation via [TextTranslator].
- * 4. Neural / OpenCV background inpainting via [PageRecognitionEngine].
- * 5. Verified cleaned image persistence.
- */
+/** Executes one page's decode, OCR, translation, and inpaint operations. */
 internal class TranslationProcessor(
     private val context: Context,
-    private val cleanedPublication: CleanedPublication? = null,
-) {
-    sealed interface ProcessResult {
-        data class Success(
-            val page: PageTranslation,
-            val cleanedBitmap: Bitmap? = null,
-        ) : ProcessResult
+    private val provider: TranslationFileProvider? = null,
+    private val translationPreferences: TranslationPreferences? = null,
+    private val streamRegistry: TranslationStreamRegistry? = null,
+    private val suppliedCleanedPublication: CleanedPublication? = null,
+) : AutoCloseable {
 
+    sealed interface ProcessResult {
+        data class Success(val page: PageTranslation) : ProcessResult
         data class Failure(
             val pageKey: String,
             val failedStage: String,
             val errorMessage: String,
             val cause: Throwable? = null,
+            val page: PageTranslation? = null,
         ) : ProcessResult
     }
 
-    /**
-     * Decodes a bitmap from an input stream with memory governance.
-     */
+    private val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val nativeStallWatchdog = NativeStallWatchdog(
+        scope = nativeRunScope,
+        thresholdMs = TranslationProcessingTimeouts.NATIVE_STALL_THRESHOLD_MS,
+    )
+    private val nativeRunQuarantine = NativeRunQuarantine(
+        scope = nativeRunScope,
+        occupancyObserver = object : NativeRunQuarantine.OccupancyObserver {
+            override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+                nativeStallWatchdog.onLaneOccupied(token, pageKey, startedAtEpochMs)
+            }
+
+            override fun onLaneReleased(token: Long) {
+                nativeStallWatchdog.onLaneReleased(token)
+            }
+        },
+    )
+    private val inFlightPageKeys = ConcurrentHashMap.newKeySet<String>()
+    private val engineLane: EngineLane? = if (translationPreferences != null) {
+        EngineLane(
+            context = context,
+            translationPreferences = translationPreferences,
+            nativeRunQuarantine = nativeRunQuarantine,
+            inFlightPageKeys = inFlightPageKeys,
+            onPageStuck = { onPageStuck },
+            drainScope = nativeRunScope,
+        )
+    } else {
+        null
+    }
+    private val devicePagePermitGate = DevicePagePermitGate()
+    private val cleanedPublication: CleanedPublication? by lazy {
+        suppliedCleanedPublication ?: if (provider != null && streamRegistry != null && engineLane != null) {
+            CleanedPublication(
+                provider = provider,
+                streamRegistry = streamRegistry,
+                currentInpaintingMode = { engineLane.currentInpaintingMode },
+                currentNeuralInpaintModel = { engineLane.currentNeuralInpaintModel },
+            )
+        } else {
+            null
+        }
+    }
+
+    @Volatile
+    var onPageStuck: ((chapterId: Long?, pageKey: String) -> Unit)? = null
+
+    val nativeStall get() = nativeStallWatchdog.state
+    fun permitHolderPageKeySnapshot(): String? = engineLane?.permitHolderPageKeySnapshot()
+    val recognitionEngine: PageRecognitionEngine get() = requireEngineLane().recognitionEngine
+    val textTranslator: TextTranslator get() = requireEngineLane().textTranslator
+
+    private fun requireEngineLane(): EngineLane = checkNotNull(engineLane) {
+        "TranslationProcessor was created without production engine configuration"
+    }
+
+    suspend fun prepareEngines(from: eu.kanade.translation.model.TextRecognizerLanguage,
+        to: eu.kanade.translation.model.TextTranslatorLanguage,
+        useReaderPaddleOverride: Boolean,
+    ) = requireEngineLane().ensureEnginesBuiltFor(from, to, useReaderPaddleOverride = useReaderPaddleOverride)
+
+    suspend fun warmUp() = requireEngineLane().warmUp()
+
+    fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) =
+        requireEngineLane().setInpaintingHardwareOverride(override)
+
+    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) =
+        requireEngineLane().setReaderPaddleOcrComputeDeviceOverride(device)
+
+    fun closeEngines() = requireEngineLane().closeEngines()
+
+    fun forceReleaseNativeBuffers() {
+        engineLane?.let { lane -> MemoryGovernance.forceReleaseNativeBuffers { lane.recognitionEngine } }
+    }
+
+    fun companionDirectory(manga: Manga, chapter: Chapter, source: HttpSource): UniFile? =
+        provider?.getCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+
+    /** Decodes a source image under the shared memory budget. */
     suspend fun decodeImage(
         fileName: String,
         streamFn: () -> InputStream,
@@ -59,109 +150,134 @@ internal class TranslationProcessor(
         streamFn = streamFn,
     )
 
-    /**
-     * Executes OCR text block detection and recognition on [bitmap].
-     * Marks page textless if no blocks are found.
-     */
+    /** Releases a decoded source bitmap when a caller's OCR/inpaint stages end. */
+    fun releaseDecoded(decoded: DecodedPage?) {
+        decoded?.bitmap?.let(::recycleIfNeeded)
+    }
+
+    fun releasePageBitmaps(page: PageTranslation) {
+        page.cleanedBitmap?.let(::recycleIfNeeded)
+        page.cleanedBitmap = null
+    }
+
+    /** Executes OCR on the serialized native lane. */
     suspend fun analyze(
         pageKey: String,
         bitmap: Bitmap,
         recognitionEngine: PageRecognitionEngine,
+        chapterId: Long? = null,
+        chapterName: String = "",
+        priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
     ): PageTranslation = withContext(Dispatchers.Default) {
-        val pageTranslation = recognitionEngine.analyze(bitmap).apply {
-            this.sourceFileName = pageKey
-            this.imgWidth = bitmap.width.toFloat()
-            this.imgHeight = bitmap.height.toFloat()
-            this.ocrStatus = StageStatus.READY
-            this.updatedAt = System.currentTimeMillis()
+        var timedOut = false
+        var admissionFailed = false
+        val result = withNativeLane(
+            chapterId = chapterId,
+            chapterName = chapterName,
+            pageKey = pageKey,
+            priority = priority,
+            onTimeout = { timedOut = true },
+            onAdmissionFailure = { admissionFailed = true },
+        ) { recognitionEngine.analyze(bitmap) }
+        val page = result ?: PageTranslation(sourceFileName = pageKey).apply {
+            ocrStatus = StageStatus.FAILED
+            translationStatus = StageStatus.PENDING
+            inpaintStatus = StageStatus.PENDING
+            errorMessage = when {
+                timedOut -> "OCR/native operation timed out"
+                admissionFailed -> "OCR/native lane admission failed"
+                else -> "OCR/native operation returned no result"
+            }
         }
-
-        if (pageTranslation.blocks.isEmpty()) {
+        page.sourceFileName = pageKey
+        page.imgWidth = bitmap.width.toFloat()
+        page.imgHeight = bitmap.height.toFloat()
+        page.updatedAt = System.currentTimeMillis()
+        if (page.ocrStatus != StageStatus.FAILED) page.ocrStatus = StageStatus.READY
+        if (page.blocks.isEmpty() && page.ocrStatus == StageStatus.READY) {
             logcat(LogPriority.INFO) { "TranslationProcessor: page $pageKey has no text detected (textless)" }
-            pageTranslation.ocrStatus = StageStatus.READY
-            pageTranslation.translationStatus = StageStatus.READY
-            pageTranslation.inpaintStatus = StageStatus.READY
-            pageTranslation.renderStatus = StageStatus.READY
-        } else {
-            pageTranslation.translationStatus = StageStatus.PENDING
-            pageTranslation.inpaintStatus = StageStatus.PENDING
+            page.translationStatus = StageStatus.SKIPPED
+            page.inpaintStatus = StageStatus.SKIPPED
+        } else if (page.ocrStatus == StageStatus.READY) {
+            page.translationStatus = StageStatus.PENDING
+            page.inpaintStatus = StageStatus.PENDING
         }
-
-        pageTranslation
+        page
     }
 
-    /**
-     * Translates the text blocks of a single page in place.
-     */
-    suspend fun translatePage(
-        pageKey: String,
-        page: PageTranslation,
-        translator: TextTranslator,
-    ) = withContext(Dispatchers.IO) {
-        if (page.blocks.isEmpty() || page.isTextlessTerminal) {
-            page.translationStatus = StageStatus.READY
-            return@withContext
-        }
+    /** Translates text blocks outside the native lane. */
+    suspend fun translatePage(pageKey: String, page: PageTranslation, translator: TextTranslator) =
+        withContext(Dispatchers.IO) {
+        if (page.blocks.isEmpty() || page.isTextlessTerminal) return@withContext
         page.translationStatus = StageStatus.RUNNING
+        engineLane?.beginTranslatorUse()
         try {
             translator.translatePage(pageKey, page)
-            page.translationStatus = StageStatus.READY
-            page.translationError = null
-        } catch (t: Throwable) {
-            logcat(LogPriority.ERROR, t) { "TranslationProcessor: translation failed for page $pageKey" }
-            page.translationStatus = StageStatus.FAILED
-            page.translationError = t.message ?: "Translation failed"
+                page.translationStatus = StageStatus.READY
+                page.translationError = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                page.translationStatus = StageStatus.FAILED
+                page.translationError = t.message ?: "Translation failed"
             throw t
+        } finally {
+            engineLane?.endTranslatorUse()
         }
-    }
+        }
 
-    /**
-     * Translates a batch of pages together (e.g. for batch translation chunking).
-     */
-    suspend fun translateBatch(
-        pages: MutableMap<String, PageTranslation>,
-        translator: TextTranslator,
-    ) = withContext(Dispatchers.IO) {
-        val pagesToTranslate = pages.filterValues { it.blocks.isNotEmpty() && !it.isTextlessTerminal }.toMutableMap()
-        if (pagesToTranslate.isEmpty()) {
-            pages.values.forEach { it.translationStatus = StageStatus.READY }
-            return@withContext
-        }
-        pagesToTranslate.values.forEach { it.translationStatus = StageStatus.RUNNING }
-        try {
-            translator.translate(pagesToTranslate)
-            pagesToTranslate.values.forEach {
-                it.translationStatus = StageStatus.READY
-                it.translationError = null
+    /** Batch translation shares the same translator but does not add retry policy. */
+    suspend fun translateBatch(pages: MutableMap<String, PageTranslation>, translator: TextTranslator) =
+        withContext(Dispatchers.IO) {
+            val targets = pages.filterValues { it.blocks.isNotEmpty() && !it.isTextlessTerminal }
+            if (targets.isEmpty()) return@withContext
+            targets.values.forEach { it.translationStatus = StageStatus.RUNNING }
+            engineLane?.beginTranslatorUse()
+            try {
+                translator.translate(targets.toMutableMap())
+                targets.values.forEach {
+                    it.translationStatus = StageStatus.READY
+                    it.translationError = null
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                targets.values.forEach {
+                    it.translationStatus = StageStatus.FAILED
+                    it.translationError = t.message ?: "Batch translation failed"
+                }
+                throw t
+            } finally {
+                engineLane?.endTranslatorUse()
             }
-        } catch (t: Throwable) {
-            logcat(LogPriority.ERROR, t) { "TranslationProcessor: batch translation failed for ${pages.size} pages" }
-            pagesToTranslate.values.forEach {
-                it.translationStatus = StageStatus.FAILED
-                it.translationError = t.message ?: "Batch translation failed"
-            }
-            throw t
         }
-    }
 
-    /**
-     * Performs inpainting on [bitmap] to remove original text and optionally persists
-     * the cleaned image to [companionDir].
-     */
+    /** Inpaints on the native lane and persists a verified cleaned image when possible. */
     suspend fun inpaint(
         pageKey: String,
         bitmap: Bitmap,
         page: PageTranslation,
         recognitionEngine: PageRecognitionEngine,
         companionDir: UniFile? = null,
+        chapterId: Long? = null,
+        chapterName: String = "",
+        priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
     ): Bitmap? = withContext(Dispatchers.Default) {
-        if (page.blocks.isEmpty() || page.isTextlessTerminal) {
-            page.inpaintStatus = StageStatus.READY
-            return@withContext null
-        }
+        if (page.blocks.isEmpty() || page.isTextlessTerminal) return@withContext null
         page.inpaintStatus = StageStatus.RUNNING
+        var timedOut = false
+        var admissionFailed = false
         val cleaned = try {
-            recognitionEngine.inpaint(bitmap, page)
+            withNativeLane(
+                chapterId,
+                chapterName,
+                pageKey,
+                priority,
+                onTimeout = { timedOut = true },
+                onAdmissionFailure = { admissionFailed = true },
+            ) { recognitionEngine.inpaint(bitmap, page) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (oom: OutOfMemoryError) {
             logcat(LogPriority.ERROR, oom) { "TranslationProcessor: OOM during inpaint for page $pageKey" }
             recognitionEngine.reclaimPooledMemory()
@@ -178,38 +294,59 @@ internal class TranslationProcessor(
             return@withContext null
         }
 
-        if (cleaned != null) {
-            page.cleanedBitmap = cleaned
-            page.inpaintStatus = StageStatus.READY
-            page.inpaintError = null
-
-            // Persist cleaned image if companion directory is available
-            if (companionDir != null && cleanedPublication != null) {
-                try {
-                    val result = withContext(Dispatchers.IO) {
-                        cleanedPublication.writeVerifiedCleanedImage(companionDir, pageKey, cleaned)
-                    }
-                    page.cleanedImageName = result.name
-                    page.cleanedImageContentHash = result.contentSha256
-                } catch (e: Exception) {
-                    logcat(LogPriority.WARN, e) { "TranslationProcessor: failed to persist cleaned image for $pageKey" }
-                    // Keep in-memory cleaned bitmap; image fallback if write fails
-                    page.originalImageFallback = true
-                }
-            }
-        } else {
-            // Null cleaned bitmap is treated as non-fatal fallback to original image
-            page.inpaintStatus = StageStatus.READY
+        if (timedOut) {
+            page.inpaintStatus = StageStatus.FAILED
+            page.inpaintError = "Inpainting/native operation timed out"
             page.originalImageFallback = true
+            return@withContext null
+        }
+        if (admissionFailed) {
+            page.inpaintStatus = StageStatus.FAILED
+            page.inpaintError = "Inpainting was not admitted to the native lane"
+            page.originalImageFallback = true
+            return@withContext null
+        }
+        if (cleaned == null) {
+            if (page.inpaintStatus != StageStatus.FAILED) page.inpaintStatus = StageStatus.READY
+            page.originalImageFallback = true
+            return@withContext null
         }
 
+        page.cleanedBitmap = cleaned
+        page.inpaintStatus = StageStatus.READY
+        page.inpaintError = null
+        page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        try {
+            if (companionDir != null) {
+                val publication = cleanedPublication
+                if (publication != null) {
+                    val written = withContext(Dispatchers.IO) {
+                        publication.writeVerifiedCleanedImage(companionDir, pageKey, cleaned)
+                    }
+                    page.cleanedImageName = written.name
+                    page.cleanedImageContentHash = written.contentSha256
+                    page.inpaintingModeUsed = publication.currentInpaintingStamp()
+                }
+            }
+            if (page.cleanedImageName == null) page.originalImageFallback = true
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                if (page.cleanedBitmap === cleaned) {
+                    recycleIfNeeded(cleaned)
+                    page.cleanedBitmap = null
+                }
+            }
+            throw cancelled
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN, t) { "TranslationProcessor: cleaned image publication failed for $pageKey" }
+            page.cleanedImageName = null
+            page.cleanedImageContentHash = null
+            page.originalImageFallback = true
+        }
         cleaned
     }
 
-    /**
-     * Executes end-to-end translation processing for a single page:
-     * Decode -> Analyze (OCR) -> Translate -> Inpaint.
-     */
+    /** Decode → OCR → translate → inpaint, with operation and native-lane timeouts. */
     suspend fun processSinglePage(
         pageKey: String,
         streamFn: () -> InputStream,
@@ -217,47 +354,139 @@ internal class TranslationProcessor(
         translator: TextTranslator,
         companionDir: UniFile? = null,
         inpaintingEnabled: Boolean = true,
-    ): ProcessResult = withContext(Dispatchers.Default) {
-        try {
-            // 1. Decode
-            val decoded = decodeImage(pageKey, streamFn) { recognitionEngine }
-                ?: return@withContext ProcessResult.Failure(
-                    pageKey = pageKey,
-                    failedStage = "DECODE",
-                    errorMessage = "Failed to decode page image for $pageKey",
-                )
-
-            val bitmap = decoded.bitmap
-
-            // 2. OCR Analyze
-            val page = analyze(pageKey, bitmap, recognitionEngine)
-
-            // Textless shortcut
-            if (page.blocks.isEmpty() || page.isTextlessTerminal) {
-                return@withContext ProcessResult.Success(page = page, cleanedBitmap = null)
+        chapterId: Long? = null,
+        chapterName: String = "",
+        priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
+    ): ProcessResult {
+        var sourceBitmap: Bitmap? = null
+        var page: PageTranslation? = null
+        var activeStage = "DECODE"
+        return try {
+            withTimeout(TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS) {
+                val decoded = decodeImage(pageKey, streamFn) { recognitionEngine }
+                    ?: return@withTimeout ProcessResult.Failure(
+                        pageKey, "DECODE", "Failed to decode page image for $pageKey",
+                        page = PageTranslation(sourceFileName = pageKey).apply {
+                            ocrStatus = StageStatus.FAILED
+                            errorMessage = "Failed to decode page image for $pageKey"
+                        },
+                    )
+                sourceBitmap = decoded.bitmap
+                activeStage = "OCR"
+                page = analyze(pageKey, decoded.bitmap, recognitionEngine, chapterId, chapterName, priority).apply {
+                    originalImgWidth = decoded.originalWidth.toFloat()
+                    originalImgHeight = decoded.originalHeight.toFloat()
+                    decodeSampleSize = decoded.sampleSize
+                    sourceFingerprint = decoded.sourceFingerprint
+                }
+                if (page!!.ocrStatus == StageStatus.FAILED) {
+                    return@withTimeout ProcessResult.Failure(
+                        pageKey, "OCR", page!!.ocrError ?: page!!.errorMessage ?: "OCR failed", page = page,
+                    )
+                }
+                if (page!!.isTextlessTerminal) return@withTimeout ProcessResult.Success(page!!)
+                activeStage = "TRANSLATION"
+                try {
+                    translatePage(pageKey, page!!, translator)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (t: Throwable) {
+                    return@withTimeout ProcessResult.Failure(
+                        pageKey, "TRANSLATION", page!!.translationError ?: "Translation failed", t, page,
+                    )
+                }
+                if (inpaintingEnabled) {
+                    activeStage = "INPAINT"
+                    inpaint(pageKey, decoded.bitmap, page!!, recognitionEngine, companionDir, chapterId, chapterName, priority)
+                } else {
+                    activeStage = "INPAINT"
+                    page!!.inpaintStatus = StageStatus.READY
+                    page!!.originalImageFallback = true
+                }
+                ProcessResult.Success(page!!)
             }
-
-            // 3. Translate
-            translatePage(pageKey, page, translator)
-
-            // 4. Inpaint (if enabled)
-            val cleaned = if (inpaintingEnabled) {
-                inpaint(pageKey, bitmap, page, recognitionEngine, companionDir)
+        } catch (cancelled: CancellationException) {
+            if (cancelled is TimeoutCancellationException) {
+                val current = page
+                if (current != null) {
+                    when (activeStage) {
+                        "DECODE", "OCR" -> {
+                            current.ocrStatus = StageStatus.FAILED
+                            current.ocrError = "Single-page OCR operation timed out"
+                        }
+                        "INPAINT" -> {
+                            current.inpaintStatus = StageStatus.FAILED
+                            current.inpaintError = "Single-page inpainting timed out"
+                            current.originalImageFallback = true
+                        }
+                        else -> {
+                            current.translationStatus = StageStatus.FAILED
+                            current.translationError = "Single-page translation timed out"
+                        }
+                    }
+                }
+                ProcessResult.Failure(pageKey, activeStage, "Single-page operation timed out", cancelled, current)
             } else {
-                page.inpaintStatus = StageStatus.READY
-                page.originalImageFallback = true
-                null
+                throw cancelled
             }
-
-            ProcessResult.Success(page = page, cleanedBitmap = cleaned)
         } catch (t: Throwable) {
             logcat(LogPriority.ERROR, t) { "TranslationProcessor: processSinglePage failed for $pageKey" }
-            ProcessResult.Failure(
-                pageKey = pageKey,
-                failedStage = "PIPELINE",
-                errorMessage = t.message ?: "Translation processing failed",
-                cause = t,
-            )
+            page?.let {
+                if (it.translationStatus == StageStatus.RUNNING) {
+                    it.translationStatus = StageStatus.FAILED
+                    it.translationError = t.message ?: "Translation processing failed"
+                }
+            }
+            ProcessResult.Failure(pageKey, "PROCESSING", t.message ?: "Translation processing failed", t, page)
+        } finally {
+            withContext(NonCancellable) {
+                page?.let(::releasePageBitmaps)
+                sourceBitmap?.let(::recycleIfNeeded)
+            }
         }
+    }
+
+    private suspend fun <T> withNativeLane(
+        chapterId: Long?,
+        chapterName: String,
+        pageKey: String,
+        priority: DevicePermitPriority,
+        onTimeout: suspend () -> Unit,
+        onAdmissionFailure: () -> Unit,
+        block: suspend () -> T,
+    ): T? {
+        val engineLane = engineLane ?: return block()
+        if (!inFlightPageKeys.add(pageKey)) {
+            onAdmissionFailure()
+            return null
+        }
+        return try {
+            val permit = devicePagePermitGate.acquire(priority) ?: run {
+                onAdmissionFailure()
+                return null
+            }
+            try {
+                engineLane.withNativeLane(
+                    timeoutMs = TranslationProcessingTimeouts.ONNX_PHASE_TIMEOUT_MS,
+                    chapterId = chapterId,
+                    chapterName = chapterName,
+                    pageKey = pageKey,
+                    onTimeout = onTimeout,
+                ) { block() }
+            } finally {
+                permit.release()
+            }
+        } finally {
+            inFlightPageKeys.remove(pageKey)
+        }
+    }
+
+    private fun recycleIfNeeded(bitmap: Bitmap) {
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
+    override fun close() {
+        engineLane?.closeEngines()
+        nativeRunScope.cancel()
     }
 }

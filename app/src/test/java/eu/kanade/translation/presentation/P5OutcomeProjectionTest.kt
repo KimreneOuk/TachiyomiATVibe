@@ -1,7 +1,5 @@
-﻿package eu.kanade.translation.presentation
+package eu.kanade.translation.presentation
 
-import eu.kanade.translation.coexistence.CoexistenceBarrier
-import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageRejectionKind
@@ -10,8 +8,6 @@ import eu.kanade.translation.persistence.PageWriteOrigin
 import io.kotest.assertions.withClue
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
@@ -33,7 +29,7 @@ import java.lang.reflect.Method
  *  - `contentDescription`  accessibility description
  *
  * Mapper behavior covered here:
- * manual â€” `TranslationUiTruth.forManualOutcome(outcome, durable, partial,
+ * manual — `TranslationUiTruth.forManualOutcome(outcome, durable, partial,
  * exhausted, cancelled)`. Since the Phase 4 S3 cutover the reader has no
  * auto-slot inputs: per-page truth comes from `forManualOutcome` over the
  * queue's typed outcomes plus the display projection. A stale/unconfirmable
@@ -53,7 +49,7 @@ class P5OutcomeProjectionTest {
         throw AssertionError(
             "T917 P5 RED defect (outcome projection, commit 3/4): the pure Appendix-A " +
                 "stateâ†’surface mapper eu.kanade.translation.presentation.TranslationUiTruth does not " +
-                "exist â€” typed outcomes, durable projections, and auto slots have no " +
+                "exist — typed outcomes, durable projections, and auto slots have no " +
                 "unified truthful UI projection yet (spec Â§1.2, Â§6.2 commit 4)",
             missing,
         )
@@ -65,7 +61,7 @@ class P5OutcomeProjectionTest {
         }
         return found ?: throw AssertionError(
             "T917 P5 RED defect (outcome projection): TranslationUiTruth.$method/$argCount " +
-                "is missing â€” the Appendix-A mapper contract pinned by this test is not " +
+                "is missing — the Appendix-A mapper contract pinned by this test is not " +
                 "implemented",
         )
     }
@@ -126,13 +122,13 @@ class P5OutcomeProjectionTest {
     fun `stale completed outcome without durable display may not project success`() {
         // Â§1.2: no mapper may produce success from a stale callback. A Completed
         // whose durable projection shows no committed result is an unconfirmable
-        // success â€” it must surface the not-saved truth, never "Translated".
+        // success — it must surface the not-saved truth, never "Translated".
         val truth = projectManual(
             SinglePageOutcome.Completed,
             PageDisplayProjection(PageDisplayState.ORIGINAL_ONLY, displayReady = false, processed = false),
         )
         withClue("unconfirmable success must be a visible non-success") {
-            str(truth, "label") shouldBe "Translation not saved â€” retry required."
+            str(truth, "label") shouldBe "Translation not saved — retry required."
             word(truth, "severity") shouldBe "WARNING"
             word(truth, "retryMode") shouldBe "EXPLICIT"
             names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
@@ -147,7 +143,7 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.FAILED_NO_RESULT, displayReady = false, processed = true),
         )
         withClue("durable failure wins over the late success callback") {
-            str(truth, "label") shouldBe "Translation failed â€” retry available."
+            str(truth, "label") shouldBe "Translation failed — retry available."
             word(truth, "severity") shouldBe "ERROR"
             word(truth, "retryMode") shouldBe "EXPLICIT"
             names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
@@ -194,7 +190,7 @@ class P5OutcomeProjectionTest {
             exhausted = false,
         )
         withClue("retryable failure keeps explicit retry copy") {
-            str(retryable, "label") shouldBe "Translation failed â€” retry available."
+            str(retryable, "label") shouldBe "Translation failed — retry available."
             word(retryable, "severity") shouldBe "ERROR"
             word(retryable, "retryMode") shouldBe "EXPLICIT"
             names(retryable, "actions") shouldBe setOf("RETRY", "DETAILS")
@@ -207,7 +203,7 @@ class P5OutcomeProjectionTest {
         )
         withClue("the D9 cap is manual-retry-required copy, never automatic") {
             str(d9, "label") shouldBe
-                "Paused â€” repeated interruption before completion; manual retry required."
+                "Paused — repeated interruption before completion; manual retry required."
             word(d9, "severity") shouldBe "WARNING"
             word(d9, "retryMode") shouldBe "MANUAL_REQUIRED"
             epoch(d9).shouldBeNull()
@@ -244,7 +240,7 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.DISPLAY_READY, displayReady = true, processed = true),
         )
         withClue("PERSISTENCE_REJECTED must stay a typed non-success (spec Â§4.1.3)") {
-            str(truth, "label") shouldBe "Translation not saved â€” retry required."
+            str(truth, "label") shouldBe "Translation not saved — retry required."
             word(truth, "severity") shouldBe "WARNING"
             word(truth, "retryMode") shouldBe "EXPLICIT"
             names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
@@ -265,7 +261,7 @@ class P5OutcomeProjectionTest {
             null,
         )
         withClue("an admission rejection projects fixed safe copy without retry actions") {
-            str(truth, "label") shouldBe "Translation not started â€” a translation job is already active."
+            str(truth, "label") shouldBe "Translation not started — a translation job is already active."
             word(truth, "severity") shouldBe "INFO"
             word(truth, "retryMode") shouldBe "NONE"
             names(truth, "actions") shouldBe setOf("DETAILS")
@@ -303,7 +299,7 @@ class P5OutcomeProjectionTest {
             null,
         )
         withClue("session denial uses fixed session copy, never interpolated detail") {
-            str(session, "label") shouldBe "Translation not started â€” the reader session is busy."
+            str(session, "label") shouldBe "Translation not started — the reader session is busy."
             word(session, "severity") shouldBe "INFO"
             names(session, "actions") shouldBe setOf("DETAILS")
             str(session, "contentDescription") shouldBe
@@ -332,7 +328,7 @@ class P5OutcomeProjectionTest {
             partial = true,
         )
         withClue("partial committed work keeps the readable result but warns") {
-            str(truth, "label") shouldBe "Partial translation â€” retry available."
+            str(truth, "label") shouldBe "Partial translation — retry available."
             word(truth, "severity") shouldBe "WARNING"
             word(truth, "retryMode") shouldBe "EXPLICIT"
             names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")

@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.workflow
+package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
@@ -66,7 +66,7 @@ class TranslationManagerStartupReconciliationTest {
             sourceManager = mockk(relaxed = true),
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk(relaxed = true),
+            processor = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = pendingRequestStore,
             sessionCoordinator = TranslationSessionCoordinator(),

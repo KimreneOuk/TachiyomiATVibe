@@ -1,44 +1,16 @@
 package eu.kanade.translation.presentation
 
-import eu.kanade.translation.coexistence.CoexistenceBarrier
-import eu.kanade.translation.coexistence.TranslationCoexistenceHarness
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.pipeline.PageStoreWriter
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for semantic copy and accessibility truth.
- *
- * Named defects pinned here:
- *
- *  1.  timer names: the timeout placeholder written into the store
- *     ("Translation timed out after 90s", `PageStoreWriter.markPageTimedOut`)
- *     names NO timer — and the same copy is reused for the HTTP+render timer,
- *     which is a DIFFERENT timer. Native and HTTP+render timeouts must each
- *     name their actual timer; the preferred copy omits durations entirely.
- *  2. The notification copy builder must be a pure, JVM-testable projection:
- *     trusted totals render "{done} of {total} pages translated"; untrusted
- *     totals render the unknown-total fact with no percentage; a persistence
- *     rejection names "Translation not saved — retry required"; an automatic
- *     retry pause must NOT advertise a Retry button; cancellation stays
- *     visible as non-ongoing with an explicit retry action.
- *  3. The partial-download decision body must describe EVERY chapter in the
- *     group, so a multi-chapter decision includes every chapter's counts.
- *  4. The chapter indicator must convey READY_WITH_WARNINGS by label, not by
- *     tint alone; the drawer's page mini chips need non-empty semantic labels.
+ * Tests truthful notification copy and accessibility labels.
  */
 class P5CopyAndAccessibilityTest {
-
-    // ------------------------------------------------------------------
-    //  timeout copy must name the actual timer
-    // ------------------------------------------------------------------
 
     private fun callTruth(method: String, arity: Int, defect: String, vararg args: Any?): Any? {
         val instance = try {
@@ -46,7 +18,7 @@ class P5CopyAndAccessibilityTest {
                 .getDeclaredField("INSTANCE").get(null)
         } catch (missing: ReflectiveOperationException) {
             throw AssertionError(
-                "T917 P5 RED defect: TranslationUiTruth went missing — commit 4 regression",
+                "TranslationUiTruth is required for the presentation projection",
                 missing,
             )
         }
@@ -55,103 +27,6 @@ class P5CopyAndAccessibilityTest {
         }
         return found?.apply { isAccessible = true }?.invoke(instance, *args)
             ?: throw AssertionError(defect)
-    }
-
-    @Test
-    fun `page store timeout failure message names the native and http timers distinctly`() {
-        withClue("the native result timer copy names ONNX/native") {
-            PageStoreWriter.timeoutFailureMessage(nativeTimer = true) shouldBe
-                "ONNX/native result timer expired; translation failed."
-        }
-        withClue("the HTTP+render result timer copy names HTTP+render") {
-            PageStoreWriter.timeoutFailureMessage(nativeTimer = false) shouldBe
-                "HTTP+render result timer expired; translation failed."
-        }
-    }
-
-    @Test
-    fun `http render timeout placeholder names the http render timer`() = runBlocking<Unit> {
-        val h = TranslationCoexistenceHarness.create(
-            pageKeys = listOf("p0"),
-            preRegisterInStore = false,
-            httpRenderTimeoutMs = 150L,
-        )
-        try {
-            h.installGraphicsShims()
-            h.registerReaderStream(h.CHAPTER_ID, "p0")
-            h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-            h.tapManual("p0")
-            val job = h.capturedManualJob("p0")
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
-            h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-
-            val page = h.store.snapshot("p0").page
-            val written = page?.translationError ?: page?.ocrError
-            withClue(
-                "the HTTP+render result timer fired; its store placeholder must name THAT " +
-                    "timer (today it reuses the generic 'Translation timed out after …' copy)",
-            ) {
-                written shouldContain "HTTP+render result timer expired"
-            }
-        } finally {
-            h.removeGraphicsShims()
-            h.close()
-        }
-    }
-
-    @Test
-    fun `native timeout placeholder names the onnx native timer`() = runBlocking<Unit> {
-        val h = TranslationCoexistenceHarness.create(
-            pageKeys = listOf("p0"),
-            preRegisterInStore = false,
-            nativeTimeoutMs = 300L,
-        )
-        try {
-            h.installGraphicsShims()
-            h.registerReaderStream(h.CHAPTER_ID, "p0")
-            // Park the decode shim: the native lane suspends inside the ONNX
-            // phase until its result timer fires.
-            h.barrier.arm(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
-            h.tapManual("p0")
-            h.barrier.awaitArrivalWithin(
-                CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE,
-                "p0",
-                TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
-            )
-            // The result timer fires while the decode is parked; the boundary
-            // then waits for the residual invocation's exit before typing the
-            // outcome. The placeholder WRITE is the deterministic mid-park
-            // signal — await it (event-driven) instead of joining the job.
-            // NB: kotest converts TimeoutCancellationException, so this bounded
-            // wait is wrapped OUTSIDE any clue block.
-            val placeholder = try {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    h.store.state.first { it["p0"]?.translationError != null }
-                        .getValue("p0").translationError
-                }
-            } catch (timedOut: kotlinx.coroutines.TimeoutCancellationException) {
-                throw AssertionError(
-                    "T917 P5 (D12 choreography): the native result timer never wrote its " +
-                        "store placeholder while the decode was parked",
-                    timedOut,
-                )
-            }
-            withClue(
-                "the ONNX/native result timer fired; its store placeholder must name THAT " +
-                    "timer (today it says 'Translation timed out after 300ms', which names no timer)",
-            ) {
-                placeholder shouldContain "ONNX/native result timer expired"
-            }
-
-            // Let the residual invocation exit, then let the boundary type the
-            // honest native-timeout outcome.
-            h.barrier.release(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
-            val job = h.capturedManualJob("p0")
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
-        } finally {
-            h.removeGraphicsShims()
-            h.close()
-        }
     }
 
     // ------------------------------------------------------------------

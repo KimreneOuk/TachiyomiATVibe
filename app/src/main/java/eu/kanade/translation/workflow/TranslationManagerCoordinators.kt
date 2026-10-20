@@ -9,8 +9,6 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.pipeline.CleanedPublication
-import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.processing.TranslationProcessor
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +26,7 @@ internal class TranslationManagerCoordinators(
     context: Context,
     provider: TranslationFileProvider,
     private val preferences: TranslationPreferences,
-    private val pipeline: TranslationPipeline,
+    private val processorOverride: TranslationProcessor? = null,
     streamRegistry: TranslationStreamRegistry,
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     isBatchActive: (Long) -> Boolean,
@@ -39,14 +37,11 @@ internal class TranslationManagerCoordinators(
     isAutoTranslateEnabled: () -> Boolean,
     readerCoordinatorOverride: ReaderTranslationCoordinator? = null,
 ) {
-    val processor = TranslationProcessor(
+    val processor = processorOverride ?: TranslationProcessor(
         context = context,
-        cleanedPublication = CleanedPublication(
-            provider = provider,
-            streamRegistry = streamRegistry,
-            currentInpaintingMode = { pipeline.engines.currentInpaintingMode },
-            currentNeuralInpaintModel = { pipeline.engines.currentNeuralInpaintModel },
-        ),
+        provider = provider,
+        translationPreferences = preferences,
+        streamRegistry = streamRegistry,
     )
 
     private val enginePreparationMutex = Mutex()
@@ -54,19 +49,19 @@ internal class TranslationManagerCoordinators(
     private suspend fun prepareEngines(useReaderPaddleOverride: Boolean) = enginePreparationMutex.withLock {
         val from = TextRecognizerLanguage.fromPref(preferences.translateFromLanguage())
         val to = TextTranslatorLanguage.fromPref(preferences.translateToLanguage())
-        pipeline.engines.ensureEnginesBuiltFor(from, to, useReaderPaddleOverride = useReaderPaddleOverride)
+        processor.prepareEngines(from, to, useReaderPaddleOverride)
     }
 
     val batchCoordinator = BatchTranslationCoordinator(
         processor = processor,
-        recognitionEngineProvider = { pipeline.engines.recognitionEngine },
-        translatorProvider = { pipeline.engines.textTranslator },
+        recognitionEngineProvider = { processor.recognitionEngine },
+        translatorProvider = { processor.textTranslator },
         prepareEngines = { prepareEngines(useReaderPaddleOverride = false) },
         scope = scope,
     )
 
     val readerCoordinator = readerCoordinatorOverride ?: ReaderTranslationCoordinator(
-        executor = pipeline,
+        processor = processor,
         isBatchActiveForChapter = { chapterKey ->
             batchCoordinator.isChapterActive(chapterKey) ||
                 chapterKey.toLongOrNull()?.let(isBatchActive) == true

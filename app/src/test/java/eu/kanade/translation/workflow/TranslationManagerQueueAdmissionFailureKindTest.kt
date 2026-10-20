@@ -131,7 +131,7 @@ class TranslationManagerQueueAdmissionFailureKindTest {
             sourceManager = sourceManager,
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk(relaxed = true),
+            processor = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
             sessionCoordinator = TranslationSessionCoordinator(),

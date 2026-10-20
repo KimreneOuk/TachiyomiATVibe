@@ -52,17 +52,14 @@ class BatchTranslationCoordinatorTest {
     )
 
     @Test
-    fun `translateChapter skips already completed pages on resume`() = runTest {
+    fun `translateChapter skips translation-ready page without display readiness`() = runTest {
         val completedPage = PageTranslation(
             sourceFileName = "p1.jpg",
             ocrStatus = StageStatus.READY,
             translationStatus = StageStatus.READY,
-            inpaintStatus = StageStatus.READY,
-            renderStatus = StageStatus.READY,
+            inpaintStatus = StageStatus.FAILED,
             blocks = mutableListOf(createBlock("Done").apply { translation = "Translated" }),
-        ).apply {
-            cleanedBitmap = mockk(relaxed = true)
-        }
+        )
 
         val stateMap = mapOf("p1.jpg" to completedPage.toPublishedPage())
         val store: ChapterTranslationStore = mockk(relaxed = true) {

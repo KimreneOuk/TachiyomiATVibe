@@ -7,7 +7,6 @@ import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.pipeline.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.memory.TranslationMemoryBudget
 import tachiyomi.domain.chapter.model.Chapter
@@ -15,9 +14,7 @@ import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
 
 /**
- * Writes page-state patches and failures through the active store. The store
- * resolver follows manager-owned reader sessions, and out-of-memory handling
- * is delegated to the pipeline caller.
+ * Helpers for guarded page-store updates and verified persistence.
  */
 internal class PageStoreWriter(
     private val activeStoreResolver: () -> (suspend (Translation) -> ChapterTranslationStore?)?,
@@ -30,7 +27,7 @@ internal class PageStoreWriter(
             if (nativeTimer) {
                 "ONNX/native result timer expired; translation failed."
             } else {
-                "HTTP+render result timer expired; translation failed."
+                "Single-page operation timer expired; translation failed."
             }
     }
 
@@ -75,21 +72,6 @@ internal class PageStoreWriter(
         }
     }
 
-    /**
-     * Writes a FAILED placeholder for [pageKey] into the chapter's shared store
-     * when the single-page translation times out. This is the single-page path's
-     * counterpart to the batch path's timeout handling: without it the page is
-     * stranded as ocrStatus=RUNNING (the first thing [translateSinglePageOnnx]
-     * writes) for the rest of the session, which keeps the reader's
-     * anyRunning flag true — pinning the TRANSLATING state, disabling the
-     * translate icon, and making auto-translate skip the page forever.
-     *
-     * Resolves the store through [activeStoreResolver] (the shared instance the
-     * reader is observing); if none is registered for this chapter the page's
-     * RUNNING status will be cleared on the next chapter open instead. Never
-     * clobbers an already-completed page — only overwrites entries that are still
-     * in a non-terminal (RUNNING/PENDING) state.
-     */
     suspend fun resolveActiveStore(
         manga: Manga,
         chapter: Chapter,
@@ -103,77 +85,6 @@ internal class PageStoreWriter(
             TextTranslatorLanguage.ENGLISH,
         )
         return activeStoreResolver()?.invoke(syntheticTranslation)
-    }
-
-    suspend fun markPageTimedOut(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        @Suppress("UNUSED_PARAMETER") timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
-        nativeTimer: Boolean = true,
-    ) {
-        // Use SAFE language fallbacks, not the throwing fromPref: this runs in an
-        // error/timeout path, so re-throwing here would mask the original failure.
-        // The store is keyed on manga/chapter (not language).
-        val syntheticTranslation = Translation(
-            source,
-            manga,
-            chapter,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val store = activeStoreResolver()?.invoke(syntheticTranslation) ?: return
-        store.invalidateGeneration("timeout chapter=${chapter.name} pageKey=$pageKey")
-        val snapshot = store.snapshot(pageKey)
-        store.patchPage(pageKey, snapshot.toPrecondition(), "mark page timed out") { existing ->
-            val timeoutMessage = timeoutFailureMessage(nativeTimer)
-            when {
-                // Don't overwrite a page with no intermediate progress.
-                existing == null || existing.cleanedImageName == null -> {
-                    createFailedPagePlaceholder(
-                        pageKey,
-                        // The placeholder names the
-                        // ACTUAL result timer that fired — the native lane and the
-                        // HTTP+render lane run DIFFERENT timers — and omits
-                        // unmeasured durations entirely (supersedes the old
-                        // "after 0s" second-division rendering).
-                        timeoutMessage,
-                        imgWidth = existing?.imgWidth ?: 0f,
-                        imgHeight = existing?.imgHeight ?: 0f,
-                        originalImgWidth = existing?.originalImgWidth ?: 0f,
-                        originalImgHeight = existing?.originalImgHeight ?: 0f,
-                        decodeSampleSize = existing?.decodeSampleSize ?: 1,
-                        retryCount = (existing?.retryCount ?: 0) + 1,
-                        attemptCount = (existing?.attemptCount ?: 0) + 1,
-                    )
-                }
-                // The page holds intermediate durable
-                // artifacts (a cleaned image from the FAST-inpaint lane) but no
-                // rendered result — it is mid-pipeline. Keeping it silently
-                // RUNNING strands the reader in TRANSLATING forever; preserve
-                // the artifacts and mark every still-open stage failed with
-                // the timer-named truth.
-                else -> existing.apply {
-                    if (ocrStatus != StageStatus.READY) {
-                        ocrStatus = StageStatus.FAILED
-                        ocrError = timeoutMessage
-                    }
-                    if (translationStatus != StageStatus.READY &&
-                        translationStatus != StageStatus.PARTIAL
-                    ) {
-                        translationStatus = StageStatus.FAILED
-                        translationError = timeoutMessage
-                    }
-                    if (renderStatus != StageStatus.READY) {
-                        renderStatus = StageStatus.FAILED
-                        renderError = timeoutMessage
-                    }
-                    retryCount += 1
-                    attemptCount += 1
-                }
-            }
-        }
     }
 
     suspend fun updatePageFromCurrentSnapshot(
@@ -199,7 +110,7 @@ internal class PageStoreWriter(
         pageKey: String,
         error: Throwable,
     ) {
-        // SAFE language fallbacks (see markPageTimedOut); re-throwing here would mask the cause.
+        // SAFE language fallbacks; re-throwing here would mask the original cause.
         val syntheticTranslation = Translation(
             source,
             manga,

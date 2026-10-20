@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.workflow
+package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestPhase
@@ -169,7 +169,7 @@ class TranslationManagerPendingAcknowledgementTest {
             sourceManager = mockk(relaxed = true),
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk(relaxed = true),
+            processor = mockk(relaxed = true),
             translator = mockk(relaxed = true),
             pendingRequestStore = pendingRequestStore,
             pendingRequests = MutableStateFlow(initialRequests),

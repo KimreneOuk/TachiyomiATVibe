@@ -1,4 +1,4 @@
-﻿package eu.kanade.tachiyomi.data.download
+package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import com.hippo.unifile.UniFile
@@ -348,7 +348,7 @@ class DownloaderHandoffFailureSplitTest {
             sourceManager = mockk(relaxed = true),
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk(relaxed = true),
+            processor = mockk(relaxed = true),
             translator = mockk(relaxed = true),
             pendingRequestStore = TranslationPendingRequestStore(
                 mockk { every { getSharedPreferences(any(), any()) } returns preferences },

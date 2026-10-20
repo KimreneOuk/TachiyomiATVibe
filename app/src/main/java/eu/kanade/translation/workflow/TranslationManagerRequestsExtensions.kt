@@ -27,7 +27,7 @@ import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
@@ -321,17 +321,17 @@ internal fun TranslationManager.prioritizeChapterImpl(chapterId: Long) {
 
 
 internal suspend fun TranslationManager.warmUpImpl() {
-        pipeline.warmUp()
+        processor.warmUp()
     }
 
 
 internal fun TranslationManager.setInpaintingHardwareOverrideImpl(override: InpaintingHardwareOverride) {
-        pipeline.setInpaintingHardwareOverride(override)
+        processor.setInpaintingHardwareOverride(override)
     }
 
 
 internal fun TranslationManager.setReaderPaddleOcrComputeDeviceOverrideImpl(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) {
-        pipeline.setReaderPaddleOcrComputeDeviceOverride(device)
+        processor.setReaderPaddleOcrComputeDeviceOverride(device)
     }
 
 

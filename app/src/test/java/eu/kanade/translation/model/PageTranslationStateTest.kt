@@ -46,7 +46,7 @@ class PageTranslationStateTest {
     }
 
     @Test
-    fun `cancelInFlightStages flips running stages to cancelled`() {
+    fun `cancelInFlightStages ignores legacy render status`() {
         val page = PageTranslation(
             ocrStatus = StageStatus.RUNNING,
             translationStatus = StageStatus.RUNNING,
@@ -58,7 +58,7 @@ class PageTranslationStateTest {
         page.ocrStatus shouldBe StageStatus.CANCELLED
         page.translationStatus shouldBe StageStatus.CANCELLED
         page.inpaintStatus shouldBe StageStatus.CANCELLED
-        page.renderStatus shouldBe StageStatus.CANCELLED
+        page.renderStatus shouldBe StageStatus.RUNNING
     }
 
     @Test

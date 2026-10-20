@@ -12,9 +12,10 @@ Reader / chapter UI
     v
 workflow -- owns admission and reader/batch lifecycle
     +-- coordinator -- owns manual/auto reader page work and batch translation
-    \-- pipeline -- executes page and chapter work
-        +-- engines -- vision -> translator -> inpainting/rendering
-        \-- persistence -- live page state, artifacts, and queue
+        \-- processing/TranslationProcessor -- decodes, recognizes, translates, and inpaints
+            +-- engines -- vision -> translator -> inpainting
+            \-- persistence -- fenced page commits, artifacts, and queue
+    reader presentation -- owns layout, drawing, and display fallback
             | state and results
             v
         presentation projections -> reader UI
@@ -30,7 +31,7 @@ workflow -- owns admission and reader/batch lifecycle
 | Inpainting | `engines/inpainting/`. |
 | Text rendering and layout | `engines/rendering/`. |
 | Manual/auto reader work | `coordinator/`; use `workflow/` when changing request intent or session admission. |
-| Reader/batch ownership | `workflow/`; chapter-specific execution is under `pipeline/batch/`. |
+| Reader/batch ownership | `workflow/` and `coordinator/`; page operations are in `processing/TranslationProcessor.kt`. |
 | Batch recovery | `pipeline/batch/recovery/`. |
 | Durable artifact behavior | `persistence/artifact/`. |
 | Live page state and leases | `persistence/chapter/`. |
@@ -39,7 +40,7 @@ workflow -- owns admission and reader/batch lifecycle
 ## Follow the main flow
 
 1. Start at `workflow/TranslationManager.kt` for the public façade, then follow `workflow/TranslationRequestCoordinator.kt` and `workflow/TranslationSessionCoordinator.kt` for request and reader/batch ownership.
-2. Open `pipeline/TranslationPipeline.kt` for shared page execution. `pipeline/execution` owns the page executor contract, prepared-page boundary, native-run quarantine and image-stream registry. `pipeline/planning/PageWorkPlanner.kt` owns plans shared by single-page and batch paths, so the single-page path can use it without depending on a batch package. Chapter traversal snapshots its already ordered page stream directly. `pipeline/memory/TranslationMemoryBudget.kt` and `MemoryGovernance.kt` own page decode/preflight/prefetch decisions and reclamation. `engines/runtime/EngineMemoryBudget.kt` owns process heap/system snapshots, NNAPI snapshots, neural-inpaint reserves and engine memory diagnostics. `pipeline/SinglePageOnnxPhase.kt` and `pipeline/SinglePageHttpRenderPhase.kt` split native and provider/render work. For chapter translation, continue through `workflow/ChapterTranslator.kt` into `coordinator/BatchTranslationCoordinator.kt`; shared stage behavior lives in `processing/TranslationProcessor.kt`. Batch progress events, tracking, and reconciliation remain in `pipeline/batch/progress`.
+2. `processing/TranslationProcessor.kt` is the only single-page execution path and shares its operations with `coordinator/BatchTranslationCoordinator.kt`. `pipeline/execution` retains native-run quarantine and image-stream helpers. `pipeline/planning/PageWorkPlanner.kt` remains batch planning support; reader admission and viewport work belong to the coordinator. `pipeline/memory/TranslationMemoryBudget.kt` and `MemoryGovernance.kt` own page decode and reclamation decisions. `engines/runtime/EngineMemoryBudget.kt` owns engine memory diagnostics. The reader presentation layer owns layout and drawing. Batch progress events, tracking, and reconciliation remain in `pipeline/batch/progress`.
 3. Follow engine calls into `engines/vision`, `engines/translator`, `engines/inpainting`, `engines/rendering`, or `engines/runtime`. Those packages own specialized recognition (`engines/vision/ocr/TranslationSafetyPrimitives.kt` guards native-buffer drains), provider, cleanup, layout, and model deployment (`engines/runtime/ModelDeployment.kt`) behavior.
 4. Follow page mutations and live chapter state into `persistence/chapter` (`ChapterTranslationStore` and `TranslationFileProvider`), and durable artifact writes into `persistence/artifact`. `model` contains shared values and page state used along the way.
 
@@ -51,7 +52,8 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 | --- | --- |
 | `workflow` | Request admission, reader and batch session ownership, chapter lifecycle, and the `TranslationManager` façade. |
 | `coordinator` | Which reader page jobs run and when, plus ordered batch work. It owns reader sessions, viewport demand, and cancellation. |
-| `pipeline` | Shared page execution and stage contracts; `pipeline/execution` owns page executor contracts, prepared-page publication, native-run quarantine and stream registry; `pipeline/planning` owns shared page-stage planning and stable page-order snapshots; `pipeline/memory` owns page decode/preflight/prefetch decisions and reclamation policy; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/analysis` owns chapter-wide analysis and durable chunk publication; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation; `pipeline/batch/recovery` owns resume policy and recovery workers. |
+| `processing` | Single-page operations, engine lane and page timeout ownership. |
+| `pipeline` | Focused helpers for decode, native quarantine, memory governance, durable image files, batch planning, and batch progress/recovery. |
 | `engines/vision` | Text and panel detection, bubble segmentation, OCR, the OCR native-buffer drain guard, and webtoon image behavior. |
 | `engines/translator` | Translator contracts, provider implementations, contextual/analysis requests, retries, and backend routing. |
 | `engines/inpainting` | Page cleanup and inpainting implementations, including AOT, bubble, and OpenCV paths. |

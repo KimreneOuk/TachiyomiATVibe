@@ -271,7 +271,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val stage: QueueStage,
     )
 
-    enum class QueueStage { QUEUED, OCR, INPAINT, TRANSLATE, RENDER, DONE, FAILED }
+    enum class QueueStage { QUEUED, OCR, INPAINT, TRANSLATE, DONE, FAILED }
 
     /**
      * Maps the live per-page store into an ordered, index-resolved list for the
@@ -304,24 +304,21 @@ class ReaderViewModel @JvmOverloads constructor(
             ?: emptyMap()
     }
 
-    /** Derives the display stage from a page's four stage statuses. */
+    /** Derives the display stage from a page's processing statuses. */
     private fun stageOf(pt: PageTranslationView): QueueStage? {
         // The store is persisted history. Only active work and actionable
         // failures belong in the queue view; old pending/cancelled/textless/done
         // rows are not live queue reservations.
         if (pt.hasRenderedResult) return null
-        // First RUNNING stage wins, in pipeline order: render → translate →
-        // inpaint → ocr (checked newest-first so the label reflects the current
-        // step, not an earlier one that hasn't been cleared yet).
-        if (pt.renderStatus == StageStatus.RUNNING) return QueueStage.RENDER
+        // First RUNNING stage wins, checked newest-first so the label reflects
+        // the current operation rather than an earlier uncleared status.
         if (pt.translationStatus == StageStatus.RUNNING) return QueueStage.TRANSLATE
         if (pt.inpaintStatus == StageStatus.RUNNING) return QueueStage.INPAINT
         if (pt.ocrStatus == StageStatus.RUNNING) return QueueStage.OCR
         // Any FAILED stage with no result yet → Failed.
         if (pt.ocrStatus == StageStatus.FAILED ||
             pt.inpaintStatus == StageStatus.FAILED ||
-            pt.translationStatus == StageStatus.FAILED ||
-            pt.renderStatus == StageStatus.FAILED
+            pt.translationStatus == StageStatus.FAILED
         ) {
             return QueueStage.FAILED
         }
@@ -361,7 +358,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     // TachiyomiAT: guard so recompute only fires [mutableState.update] when the
     // effective translation state actually changes. Without this, every single
-    // stage-emission from the live store (OCR→inpaint→translate→render for
+    // stage-emission from the live store (OCR→translate→inpaint for
     // every auto-translated page) triggers a recompose, causing the per-page
     // button to rapidly toggle between translate and cancel affordances —
     // visible as "blinking" on non-downloaded chapters where pages stream

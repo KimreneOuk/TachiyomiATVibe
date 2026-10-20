@@ -10,7 +10,6 @@ import eu.kanade.translation.persistence.PageArtifactRecord
 import eu.kanade.translation.persistence.StageArtifactRecord
 import eu.kanade.translation.persistence.toArtifactDisplayProjection
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.pipeline.markOriginalImageFallback
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -80,7 +79,12 @@ class PageDisplayProjectionTest {
 
     @Test
     fun `cleaned publication failure keeps translated overlay on the original image`() {
-        val fallback = markOriginalImageFallback(readyPage())
+        val fallback = readyPage().copy(
+            cleanedImageName = null,
+            originalImageFallback = true,
+            inpaintStatus = StageStatus.READY,
+            renderStatus = StageStatus.READY,
+        )
 
         fallback.cleanedImageName shouldBe null
         fallback.originalImageFallback shouldBe true

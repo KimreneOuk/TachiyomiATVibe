@@ -6,7 +6,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.TranslationPipeline
+import eu.kanade.translation.processing.TranslationProcessor
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,7 +73,7 @@ internal class AdmissionTestFixture(
             sourceManager = mockk<SourceManager>(relaxed = true),
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
-            pipeline = mockk<TranslationPipeline>(relaxed = true),
+            processor = mockk<TranslationProcessor>(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
             pendingRequests = pendingRequests,

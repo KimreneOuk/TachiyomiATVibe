@@ -1,29 +1,19 @@
 package eu.kanade.translation.pipeline
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.stampName
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.recordAttemptFailure
-import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.persistence.CleanedImageIdentity
 import eu.kanade.translation.persistence.CleanedImageIdentitySidecar
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.CleanedImagePublisher
+import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import kotlinx.serialization.decodeFromString
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.NeuralInpaintModel
@@ -31,28 +21,18 @@ import java.security.DigestOutputStream
 import java.security.MessageDigest
 import java.util.UUID
 
-/**
- * Publishes cleaned images and retires files superseded by committed display
- * bundles. The current inpainting mode is read through a getter so engine
- * rebuilds are reflected.
- */
+/** Owns verified cleaned-image files and retirement of superseded images. */
 internal class CleanedPublication(
     private val provider: TranslationFileProvider,
     private val streamRegistry: TranslationStreamRegistry,
     private val currentInpaintingMode: () -> InpaintingMode,
     private val currentNeuralInpaintModel: () -> NeuralInpaintModel = { NeuralInpaintModel.AOT_GAN },
 ) {
-
-    private fun currentInpaintingStamp(): String = currentInpaintingMode().stampName(
+    internal fun currentInpaintingStamp(): String = currentInpaintingMode().stampName(
         neuralModel = currentNeuralInpaintModel(),
         neuralAvailable = true,
     )
 
-    /**
-     * Deletes cleaned-image files retained by the store after newer committed
-     * display bundles promoted over them. Draining the complete set prevents a
-     * rapid sequence of promotions from orphaning an earlier superseded file.
-     */
     suspend fun deleteRetiredCleanedFile(
         manga: Manga,
         chapter: Chapter,
@@ -61,16 +41,8 @@ internal class CleanedPublication(
         store: ChapterTranslationStore,
     ) {
         val chapterId = chapter.id ?: return
-        val retired = store.drainRetiredCleanedImages(pageKey)
-        if (retired.isEmpty()) return
-        retired.forEach { name ->
-            streamRegistry.retireCleanedImage(
-                sourceId = source.id,
-                mangaId = manga.id,
-                chapterId = chapterId,
-                pageKey = pageKey,
-                imageName = name,
-            ) {
+        store.drainRetiredCleanedImages(pageKey).forEach { name ->
+            streamRegistry.retireCleanedImage(source.id, manga.id, chapterId, pageKey, name) {
                 if (!store.mayDeleteCleanedImage(pageKey, name)) return@retireCleanedImage
                 val imageFile = provider.findPageCleanedImage(
                     manga.title,
@@ -96,533 +68,7 @@ internal class CleanedPublication(
         }
     }
 
-    suspend fun loadPersistedCleanedBitmap(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        cleanedImageName: String,
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        try {
-            val file = provider.findPageCleanedImage(
-                manga.title,
-                source,
-                chapter.name,
-                chapter.scanlator,
-                cleanedImageName,
-            )?.takeIf { it.exists() && it.length() > 0L }
-                ?: return@withContext null
-            file.openInputStream().use { BitmapFactory.decodeStream(it) }
-        } catch (e: Throwable) {
-            logcat(LogPriority.WARN, e) {
-                "TachiyomiAT failed to load cleaned image for resume: cleaned=$cleanedImageName"
-            }
-            null
-        }
-    }
-
-    suspend fun persistCleanedBitmap(
-        pageTranslation: PageTranslation,
-        cleanedBitmap: Bitmap,
-        companionDir: UniFile?,
-        pageKey: String,
-        chapterName: String,
-        store: ChapterTranslationStore,
-        sourceId: Long,
-        mangaId: Long,
-        chapterId: Long?,
-        expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ): ChapterTranslationStore.PageSnapshot? = withContext(Dispatchers.IO) {
-        val directory = companionDir
-        val previousName = pageTranslation.cleanedImageName
-        val precondition = expectedPrecondition ?: store.snapshot(pageKey).let { snapshot ->
-            ChapterTranslationStore.PatchPrecondition(
-                generation = snapshot.generation,
-                pageVersion = snapshot.pageVersion,
-                blockFingerprints = snapshot.blockFingerprints,
-                leaseToken = snapshot.leaseToken,
-                candidateGenerationId = snapshot.candidateGenerationId,
-                dependencyFingerprint = snapshot.dependencyFingerprint,
-                artifactPageVersion = snapshot.artifactPageVersion,
-            )
-        }
-        var writtenImage: CleanedImageWriteResult? = null
-        val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
-            override fun writeVerifiedVersionedFile(): String {
-                check(directory != null) { "translation output folder is unavailable" }
-                val written = writeVerifiedCleanedImage(directory, pageKey, cleanedBitmap)
-                writtenImage = written
-                return written.name
-            }
-
-            override fun delete(name: String): Boolean {
-                val imageFile = directory?.findFile(name)
-                val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
-                if (imageDeleted) directory?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
-                return imageDeleted
-            }
-        })
-        when (
-            val result = publisher.publish(
-                chapterName,
-                pageKey,
-                previousName,
-                commit = { newName ->
-                    val writtenHash = writtenImage?.contentSha256
-                    store.patchPage(
-                        pageKey,
-                        precondition,
-                        "publish cleaned image",
-                    ) { current ->
-                        (current ?: pageTranslation).apply {
-                            cleanedImageName = newName
-                            cleanedImageContentHash = writtenHash
-                            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                            inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-                            inpaintFingerprint = pageTranslation.inpaintFingerprint
-                            inpaintStatus = StageStatus.READY
-                            originalImageFallback = false
-                            if (pageTranslation.ocrStatus == StageStatus.READY) {
-                                ocrStatus = StageStatus.READY
-                            }
-                            if (blocks.isEmpty() && pageTranslation.blocks.isNotEmpty()) {
-                                blocks = pageTranslation.blocks.map { it.copy() }.toMutableList()
-                            }
-                            if (inpaintMaskBoxes.isEmpty() && pageTranslation.inpaintMaskBoxes.isNotEmpty()) {
-                                inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
-                            }
-                            if (imgWidth == 0f && pageTranslation.imgWidth != 0f) {
-                                imgWidth = pageTranslation.imgWidth
-                                imgHeight = pageTranslation.imgHeight
-                            }
-                            errorMessage = null
-                        }
-                    }
-                },
-                mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                retirePrevious = { name, delete ->
-                    chapterId?.let { stableChapterId ->
-                        streamRegistry.retireCleanedImage(
-                            sourceId = sourceId,
-                            mangaId = mangaId,
-                            chapterId = stableChapterId,
-                            pageKey = pageKey,
-                            imageName = name,
-                        ) {
-                            if (store.mayDeleteCleanedImage(pageKey, name)) delete()
-                        }
-                    }
-                },
-                // Fresh private versioned name whose ONLY possible acceptance
-                // is this commit: a Rejected here IS never-accepted knowledge,
-                // so the store's mutex-held point-in-time authorization is the
-                // remaining condition for the outside-lock delete.
-                mayDeleteRejected = { name -> store.authorizeCleanedImageDeletion(pageKey, name) },
-            )
-        ) {
-            is CleanedImagePublisher.Result.Published -> {
-                pageTranslation.cleanedImageName = result.name
-                pageTranslation.cleanedImageContentHash = writtenImage?.contentSha256
-                pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-                pageTranslation.inpaintStatus = StageStatus.READY
-                pageTranslation.originalImageFallback = false
-                pageTranslation.errorMessage = null
-                result.snapshot
-            }
-            is CleanedImagePublisher.Result.Rejected -> null
-            is CleanedImagePublisher.Result.WriteFailed -> {
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.recordAttemptFailure()
-                pageTranslation.errorMessage = "Could not save cleaned image — translation output folder is unavailable. Grant storage permission to the app and retry."
-                null
-            }
-        }
-    }
-
-    /**
-     * S5 boundary-scope enrollment: register receipt with CleanedOwner,
-     * enqueue lazy persistence transaction under NonCancellable, and enqueue flush tail.
-     */
-    suspend fun enrollCleanedPersistence(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-        pageTranslation: PageTranslation,
-        owner: CleanedOwner,
-        attempt: AttemptAuthority,
-        deferredPublications: DeferredPagePublications? = null,
-    ): Boolean {
-        val cleanedBitmap = owner.borrow() ?: return false
-        try {
-            val previousName = pageTranslation.cleanedImageName
-            val finalName = newCleanedImageName(pageKey)
-            val livePatch = attempt.write("publish cleaned image live") { current ->
-                current.apply {
-                    cleanedImageName = finalName
-                    cleanedImageContentHash = null
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-                    inpaintFingerprint = pageTranslation.inpaintFingerprint
-                    inpaintStatus = StageStatus.READY
-                    originalImageFallback = false
-                    if (pageTranslation.ocrStatus == StageStatus.READY) {
-                        ocrStatus = StageStatus.READY
-                    }
-                    if (blocks.isEmpty() && pageTranslation.blocks.isNotEmpty()) {
-                        blocks = pageTranslation.blocks.map { it.copy() }.toMutableList()
-                    }
-                    if (inpaintMaskBoxes.isEmpty() && pageTranslation.inpaintMaskBoxes.isNotEmpty()) {
-                        inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
-                    }
-                    if (imgWidth == 0f && pageTranslation.imgWidth != 0f) {
-                        imgWidth = pageTranslation.imgWidth
-                        imgHeight = pageTranslation.imgHeight
-                    }
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            val accepted = livePatch as? ChapterTranslationStore.PatchResult.Accepted ?: return false
-            pageTranslation.cleanedImageName = finalName
-            pageTranslation.cleanedImageContentHash = null
-            pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-            pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-            pageTranslation.inpaintStatus = StageStatus.READY
-            pageTranslation.originalImageFallback = false
-            pageTranslation.errorMessage = null
-
-            val generation = accepted.snapshot.generation
-            val receipt = CompletableDeferred<Boolean>()
-            owner.registerReceipt(receipt)
-            withContext(NonCancellable) {
-                store.enqueueLazyPersistence(generation, receipt) {
-                    val companionDir = provider.getCompanionImageDir(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                    )
-                    var writtenImage: CleanedImageWriteResult? = null
-                    val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
-                        override fun writeVerifiedVersionedFile(): String {
-                            check(companionDir != null) { "translation output folder is unavailable" }
-                            val written = writeVerifiedCleanedImage(
-                                directory = companionDir,
-                                pageKey = pageKey,
-                                bitmap = cleanedBitmap,
-                                name = finalName,
-                            )
-                            writtenImage = written
-                            return finalName
-                        }
-
-                        override fun delete(name: String): Boolean {
-                            val imageFile = companionDir?.findFile(name)
-                            val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
-                            if (imageDeleted) companionDir?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
-                            return imageDeleted
-                        }
-                    })
-                    when (
-                        publisher.publish(
-                            chapter = chapter.name,
-                            pageKey = pageKey,
-                            previousName = previousName,
-                            commit = {
-                                if (store.isLazyGenerationCurrent(generation)) {
-                                    val hash = writtenImage?.contentSha256
-                                    if (hash != null) {
-                                        pageTranslation.cleanedImageContentHash = hash
-                                        attempt.write("record lazy cleaned image content hash") { current ->
-                                            current.apply {
-                                                cleanedImageContentHash = hash
-                                                updatedAt = System.currentTimeMillis()
-                                            }
-                                        }
-                                    } else {
-                                        ChapterTranslationStore.PatchResult.Rejected("cleaned image content hash missing")
-                                    }
-                                } else {
-                                    ChapterTranslationStore.PatchResult.Rejected("store generation changed")
-                                }
-                            },
-                            mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                            retirePrevious = { name, delete ->
-                                chapter.id?.let { stableChapterId ->
-                                    streamRegistry.retireCleanedImage(
-                                        sourceId = source.id,
-                                        mangaId = manga.id,
-                                        chapterId = stableChapterId,
-                                        pageKey = pageKey,
-                                        imageName = name,
-                                    ) {
-                                        if (store.mayDeleteCleanedImage(pageKey, name)) delete()
-                                    }
-                                }
-                            },
-                            mayDeleteRejected = { _ -> false },
-                        )
-                    ) {
-                        is CleanedImagePublisher.Result.Published -> true
-                        else -> {
-                            attempt.write("record lazy cleaned publication failure") { current ->
-                                markOriginalImageFallback(current)
-                            }
-                            false
-                        }
-                    }
-                }
-            }
-            deferredPublications?.enqueue { store.flush() }
-            return true
-        } finally {
-            owner.closeBorrow()
-        }
-    }
-
-    suspend fun persistOnnxCleanedImage(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        result: OnnxPhaseResult,
-        owner: CleanedOwner? = null,
-        attempt: AttemptAuthority? = null,
-        deferredPublications: DeferredPagePublications? = null,
-    ): OnnxPhaseResult? {
-        if (owner != null && attempt != null) {
-            val enrolled = enrollCleanedPersistence(
-                manga = manga,
-                chapter = chapter,
-                source = source,
-                pageKey = pageKey,
-                store = result.store,
-                pageTranslation = result.pageTranslation,
-                owner = owner,
-                attempt = attempt,
-                deferredPublications = deferredPublications,
-            )
-            return if (enrolled) result else null
-        }
-        val page = result.pageTranslation
-        val cleaned = page.cleanedBitmap
-        if (cleaned == null) {
-            val snapshot = result.store.snapshot(pageKey)
-            return result.copy(commitPrecondition = snapshot.toPrecondition())
-        }
-        if (result.store.isLazyPersistenceEnabled()) {
-            return persistLazyCleanedBitmap(
-                manga = manga,
-                chapter = chapter,
-                source = source,
-                pageKey = pageKey,
-                result = result,
-                cleanedBitmap = cleaned,
-            )
-        }
-        val companionDir = provider.getCompanionImageDir(
-            manga.title,
-            source,
-            chapter.name,
-            chapter.scanlator,
-        )
-        val published = persistCleanedBitmap(
-            page,
-            cleaned,
-            companionDir,
-            pageKey,
-            chapter.name,
-            result.store,
-            source.id,
-            manga.id,
-            chapter.id,
-            expectedPrecondition = result.commitPrecondition,
-        )
-        if (published == null) {
-            // Do not let HTTP/render consume an in-memory result when the reader
-            // cannot reopen it after publication or a newer page won the race.
-            if (owner != null) {
-                owner.release()
-            } else {
-                try {
-                    cleaned.recycle()
-                } catch (_: Exception) {}
-            }
-            page.cleanedBitmap = null
-            return null
-        }
-        return result.copy(commitPrecondition = published.toPrecondition())
-    }
-
-    /**
-     * Memory-first cleaned-image publication for active reader stores.  The
-     * page metadata is visible immediately (the current pipeline can render
-     * from [cleanedBitmap]); JPEG/SAF work runs on the store persistence worker
-     * and is joined only by the existing final flush/batch durability barrier.
-     */
-    private suspend fun persistLazyCleanedBitmap(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        result: OnnxPhaseResult,
-        cleanedBitmap: Bitmap,
-    ): OnnxPhaseResult? {
-        val store = result.store
-        val pageTranslation = result.pageTranslation
-        val previousName = pageTranslation.cleanedImageName
-        val precondition = result.commitPrecondition ?: store.snapshot(pageKey).toPrecondition()
-        val finalName = newCleanedImageName(pageKey)
-        val livePatch = store.patchPage(
-            pageKey,
-            precondition,
-            "publish cleaned image live",
-        ) { current ->
-            (current ?: pageTranslation).apply {
-                cleanedImageName = finalName
-                cleanedImageContentHash = null
-                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-                inpaintFingerprint = pageTranslation.inpaintFingerprint
-                inpaintStatus = StageStatus.READY
-                originalImageFallback = false
-                if (pageTranslation.ocrStatus == StageStatus.READY) {
-                    ocrStatus = StageStatus.READY
-                }
-                if (blocks.isEmpty() && pageTranslation.blocks.isNotEmpty()) {
-                    blocks = pageTranslation.blocks.map { it.copy() }.toMutableList()
-                }
-                if (inpaintMaskBoxes.isEmpty() && pageTranslation.inpaintMaskBoxes.isNotEmpty()) {
-                    inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
-                }
-                if (imgWidth == 0f && pageTranslation.imgWidth != 0f) {
-                    imgWidth = pageTranslation.imgWidth
-                    imgHeight = pageTranslation.imgHeight
-                }
-                errorMessage = null
-            }
-        }
-        val accepted = livePatch as? ChapterTranslationStore.PatchResult.Accepted
-            ?: return null
-        pageTranslation.cleanedImageName = finalName
-        pageTranslation.cleanedImageContentHash = null
-        pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-        pageTranslation.inpaintingModeUsed = pageTranslation.inpaintingModeUsed ?: currentInpaintingStamp()
-        pageTranslation.inpaintStatus = StageStatus.READY
-        pageTranslation.originalImageFallback = false
-        pageTranslation.errorMessage = null
-        val generation = accepted.snapshot.generation
-        val receipt = CompletableDeferred<Boolean>()
-        // Narrow NonCancellable enrollment: queueing is an in-memory-fast
-        // transaction under the store mutex and must not be split from the
-        // receipt handoff by a concurrent cancellation. From here the receipt
-        // belongs to the store — it completes the receipt exactly once with a
-        // normal true/false (true only after the queued worker physically
-        // exited); this caller only awaits it at the existing recycle barrier.
-        val completion: Deferred<Boolean> = withContext(NonCancellable) {
-            store.enqueueLazyPersistence(generation, receipt) {
-                val companionDir = provider.getCompanionImageDir(
-                    manga.title,
-                    source,
-                    chapter.name,
-                    chapter.scanlator,
-                )
-                var writtenImage: CleanedImageWriteResult? = null
-                val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
-                    override fun writeVerifiedVersionedFile(): String {
-                        check(companionDir != null) { "translation output folder is unavailable" }
-                        val written = writeVerifiedCleanedImage(
-                            directory = companionDir,
-                            pageKey = pageKey,
-                            bitmap = cleanedBitmap,
-                            name = finalName,
-                        )
-                        writtenImage = written
-                        return finalName
-                    }
-
-                    override fun delete(name: String): Boolean {
-                        val imageFile = companionDir?.findFile(name)
-                        val imageDeleted = imageFile == null || !imageFile.exists() || imageFile.delete()
-                        if (imageDeleted) companionDir?.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
-                        return imageDeleted
-                    }
-                })
-                when (
-                    val publication = publisher.publish(
-                        chapter = chapter.name,
-                        pageKey = pageKey,
-                        previousName = previousName,
-                        commit = {
-                            if (store.isLazyGenerationCurrent(generation)) {
-                                val hash = writtenImage?.contentSha256
-                                if (hash != null) {
-                                    pageTranslation.cleanedImageContentHash = hash
-                                    store.patchPage(
-                                        pageKey = pageKey,
-                                        expected = store.snapshot(pageKey).toPrecondition(),
-                                        description = "record lazy cleaned image content hash",
-                                    ) { current ->
-                                        (current ?: pageTranslation).apply { cleanedImageContentHash = hash }
-                                    }
-                                }
-                                ChapterTranslationStore.PatchResult.Accepted(accepted.snapshot)
-                            } else {
-                                ChapterTranslationStore.PatchResult.Rejected("store generation changed")
-                            }
-                        },
-                        mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                        retirePrevious = { name, delete ->
-                            chapter.id?.let { stableChapterId ->
-                                streamRegistry.retireCleanedImage(
-                                    sourceId = source.id,
-                                    mangaId = manga.id,
-                                    chapterId = stableChapterId,
-                                    pageKey = pageKey,
-                                    imageName = name,
-                                ) {
-                                    if (store.mayDeleteCleanedImage(pageKey, name)) delete()
-                                }
-                            }
-                        },
-                        // Lazy provenance is NOT never-accepted: this worker
-                        // exists because an earlier publication already
-                        // accepted a live name, and this hash-patch Rejected
-                        // says nothing about that acceptance. Fail closed —
-                        // retain the file as uncollected debt even when the
-                        // store's point-in-time check would authorize.
-                        mayDeleteRejected = { _ -> false },
-                    )
-                ) {
-                    is CleanedImagePublisher.Result.Published -> true
-                    else -> {
-                        // A write failure must not leave the live page pointing at
-                        // a name that never reached storage. This guarded update
-                        // is itself memory-first and will be coalesced into the
-                        // next store drain.
-                        store.patchPage(
-                            pageKey = pageKey,
-                            expected = store.snapshot(pageKey).toPrecondition(),
-                            description = "record lazy cleaned publication failure",
-                        ) { current -> markOriginalImageFallback(current ?: pageTranslation) }
-                        false
-                    }
-                }
-            }
-        }
-        return result.copy(
-            pageTranslation = pageTranslation,
-            commitPrecondition = accepted.snapshot.toPrecondition(),
-            pendingCleanedPublication = completion,
-        )
-    }
-
-    internal data class CleanedImageWriteResult(
-        val name: String,
-        val contentSha256: String,
-    )
+    internal data class CleanedImageWriteResult(val name: String, val contentSha256: String)
 
     internal fun writeVerifiedCleanedImage(
         directory: UniFile,
@@ -634,52 +80,42 @@ internal class CleanedPublication(
         val existingImage = directory.findFile(name)?.takeIf(UniFile::exists)
         val existingIdentity = directory.findFile(identityName)?.takeIf(UniFile::exists)
         if (existingImage != null || existingIdentity != null) {
-            val sidecarBytes = runCatching {
-                existingIdentity?.openInputStream()?.use { it.readBytes() }
-            }.getOrNull()
+            val sidecarBytes = runCatching { existingIdentity?.openInputStream()?.use { it.readBytes() } }.getOrNull()
             val sidecar = runCatching {
                 sidecarBytes?.let { ArtifactDocumentJson.decodeFromString<CleanedImageIdentitySidecar>(it.decodeToString()) }
             }.getOrNull()
-            val matches = sidecar != null &&
-                CleanedImageIdentity.verifyExisting(
+            check(
+                sidecar != null && CleanedImageIdentity.verifyExisting(
                     sidecarBytes = sidecarBytes,
                     imageName = name,
                     expectedContentSha256 = sidecar.contentSha256,
-                ) { existingImage?.openInputStream() }
-            check(matches) { "cleaned image name is already bound to different or unverified bytes" }
-            return CleanedImageWriteResult(name, sidecar!!.contentSha256)
+                ) { existingImage?.openInputStream() },
+            ) { "cleaned image name is already bound to different or unverified bytes" }
+            return CleanedImageWriteResult(name, sidecar.contentSha256)
         }
-        val imageFile = directory.createFile(name)
-        check(imageFile != null) { "could not create final cleaned image" }
+
+        val imageFile = checkNotNull(directory.createFile(name)) { "could not create final cleaned image" }
         var identityFile: UniFile? = null
         try {
             val digest = MessageDigest.getInstance("SHA-256")
-            imageFile.openOutputStream().use { fileOut ->
-                DigestOutputStream(fileOut, digest).use { digestOut ->
-                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, digestOut)) {
+            imageFile.openOutputStream().use { output ->
+                DigestOutputStream(output, digest).use { digestOutput ->
+                    check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, digestOutput)) {
                         "JPEG encoding returned false"
                     }
-                    digestOut.flush()
+                    digestOutput.flush()
                 }
             }
             check(imageFile.exists() && imageFile.length() > 0L) { "published cleaned image is unavailable" }
-            val contentSha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
-            val identity = CleanedImageIdentitySidecar(
-                pageKey = pageKey,
-                imageName = name,
-                contentSha256 = contentSha256,
-            )
-            val createdIdentityFile = directory.createFile(identityName)
-            check(createdIdentityFile != null) { "could not create cleaned image identity" }
-            identityFile = createdIdentityFile
-            createdIdentityFile.openOutputStream().use { output ->
+            val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val identity = CleanedImageIdentitySidecar(pageKey = pageKey, imageName = name, contentSha256 = hash)
+            identityFile = checkNotNull(directory.createFile(identityName)) { "could not create cleaned image identity" }
+            identityFile!!.openOutputStream().use { output ->
                 output.write(CleanedImageIdentity.encode(identity))
                 output.flush()
             }
-            check(createdIdentityFile.exists() && createdIdentityFile.length() > 0L) {
-                "cleaned image identity is unavailable"
-            }
-            return CleanedImageWriteResult(name, contentSha256)
+            check(identityFile!!.exists() && identityFile!!.length() > 0L) { "cleaned image identity is unavailable" }
+            return CleanedImageWriteResult(name, hash)
         } catch (failure: Throwable) {
             identityFile?.delete()
             imageFile.delete()
@@ -691,31 +127,5 @@ internal class CleanedPublication(
         val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val version = "${System.currentTimeMillis().toString(36)}-${UUID.randomUUID().toString().replace("-", "")}"
         return "$safeName.cleaned.$version.jpg"
-    }
-}
-
-/**
- * A cleaned-image write is a display-artifact failure, not a failed OCR,
- * translation, or inpaint attempt. Keep the translated blocks usable and let
- * the reader draw them over the original image until a later retry can publish
- * a cleaned base.
- */
-internal fun markOriginalImageFallback(page: PageTranslation): PageTranslation = page.apply {
-    cleanedImageName = null
-    cleanedImageContentHash = null
-    originalImageFallback = true
-    inpaintStatus = StageStatus.READY
-    renderStatus = StageStatus.READY
-    errorMessage = null
-}
-
-/**
- * Copies page data for resume without retaining transient bitmaps or text
- * detections.
- */
-internal fun PageTranslation.copyForResume(): PageTranslation {
-    return copy(blocks = blocks.map { it.copy() }.toMutableList()).also {
-        it.cleanedBitmap = null
-        it.allTextDetections = emptyList()
     }
 }
