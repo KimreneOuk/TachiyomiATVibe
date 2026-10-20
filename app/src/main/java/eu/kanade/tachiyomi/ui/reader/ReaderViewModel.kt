@@ -510,6 +510,11 @@ class ReaderViewModel @JvmOverloads constructor(
     internal val translationDiagnosticsEnabled = translationPreferences.translationDiagnostics().get()
 
     internal val translationController by lazy { ReaderTranslationController(this) }
+
+    // Declared before the init block below: its flow wiring starts on
+    // viewModelScope (Main.immediate), which runs inline during construction
+    // and can reach getCurrentChapter() before later delegates initialize.
+    private val navigationController by lazy { ReaderNavigationController(this) }
     internal val pageArrivalTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     init {
@@ -746,7 +751,6 @@ class ReaderViewModel @JvmOverloads constructor(
      * Called when the user pressed the back button and is going to leave the reader. Used to
      * trigger deletion of the downloaded chapters.
      */
-    private val navigationController by lazy { ReaderNavigationController(this) }
     private fun resetAutoTranslationState() = translationController.resetAutoTranslationState()
     private fun translateCurrentPageForAuto() = translationController.translateCurrentPageForAuto()
 
