@@ -25,17 +25,17 @@ import eu.kanade.translation.persistence.ChapterStoreOpener
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.ReaderSessionToken
-import eu.kanade.translation.scheduling.ReaderSubmission
-import eu.kanade.translation.scheduling.ReaderTrigger
-import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderSubmission
+import eu.kanade.translation.coordinator.ReaderTrigger
+import eu.kanade.translation.coordinator.TranslationSession
+import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -107,7 +107,7 @@ internal fun TranslationManager.initializeTranslationManager() {
         // evict the stale job so a subsequent request can be admitted safely.
         pipeline.onPageStuck = { chapterId, pageKey ->
             if (chapterId != null && pageKey.isNotEmpty()) {
-                scheduler.markPageJobStuck(chapterId, pageKey)
+                readerCoordinator.cancelPageAsync(chapterId.toString(), pageKey)
             }
         }
 
@@ -167,13 +167,38 @@ internal fun TranslationManager.createCoordinatorRuntime(): TranslationManagerCo
         streamRegistry = streamRegistry,
         scope = applicationScope,
         isBatchActive = { chapterId -> isChapterBatchActive(chapterId, includePaused = false) },
+        resolveReaderStore = testReaderStoreResolver ?: { manga, chapter, source ->
+            chapter.id?.let { chapterId ->
+                openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId,
+                    chapter.name,
+                    chapter.scanlator,
+                    manga.title,
+                    source,
+                    manga.id,
+                )
+            }
+        },
+        admitReaderSession = { chapterId ->
+            if (chapterId in chaptersUnderDownloadRekey || isChapterBatchActive(chapterId, includePaused = true)) {
+                false
+            } else {
+                sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId)) !is SessionAdmission.Rejected
+            }
+        },
+        beforeOpenReaderSession = { chapterId -> clearStaleDownloadFailedRequest(chapterId) },
+        manualStreamProvider = { manga, chapter, source, pageKey ->
+            streamRegistry.peek(manga, chapter, source, pageKey)
+                ?: downloadedPageStreamFactory(manga, chapter, source, pageKey)
+        },
+        isAutoTranslateEnabled = { translationPreferences.autoTranslate().get() },
+        readerCoordinatorOverride = testReaderCoordinator,
     )
 
 
 internal fun TranslationManager.createRequestCoordinator(): TranslationRequestCoordinator = TranslationRequestCoordinator(
-            pendingRequestStoreProvider = { pendingRequestStore },
-            pendingTranslationRequestsStateProvider = { pendingTranslationRequestsState },
-            pendingRequestMutationLockProvider = { pendingRequestMutationLock },
+            pendingRequestStore = createPendingRequestStoreForCoordinator(),
+            initialPendingRequests = initialPendingRequestsForCoordinator(),
             storeScopeProvider = { storeScope },
             queueStateProvider = { queueState },
             translatorProvider = { translator },
@@ -188,37 +213,9 @@ internal fun TranslationManager.createRequestCoordinator(): TranslationRequestCo
         )
 
 
-internal fun TranslationManager.createScheduler(): eu.kanade.translation.scheduling.TranslationScheduler = testScheduler ?: eu.kanade.translation.scheduling.TranslationScheduler(
-        executor = pipeline,
-        storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
-            activeStores.get(chapterId)
-        },
-        immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
-        manualStreamProvider = { manga, chapter, source, pageKey ->
-            // Registry first: the controller registers the live reader stream
-            // right before tapping. Downloaded-chapter fallback resolves the
-            // chapter dir and page stream lazily on the worker, mirroring the
-            // pipeline's own downloaded-dir resolution.
-            streamRegistry.peek(manga, chapter, source, pageKey)
-                ?: downloadedPageStreamFactory(manga, chapter, source, pageKey)
-        },
-        readerSessionRejectionReason = { chapterId ->
-            if (chapterId in chaptersUnderDownloadRekey) {
-                "completed download re-key in progress"
-            } else {
-                when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
-                    is SessionAdmission.Rejected -> admission.reason.name
-                    else -> null
-                }
-            }
-        },
-    )
-
-
 internal fun TranslationManager.createReaderTeardown(): ReaderTeardownCoordinator = ReaderTeardownCoordinator(
             applicationScopeProvider = { applicationScope },
             readerTeardownMutexProvider = { readerTeardownMutex },
-            schedulerProvider = { scheduler },
             activeStoresProvider = { activeStores },
             translatorProvider = { translator },
             readerCoordinatorProvider = { readerCoordinator },
@@ -279,7 +276,6 @@ internal fun TranslationManager.createChapterDataReset(): ChapterDataResetContro
             findTranslationDocumentFn = { chapterName, scanlator, mangaTitle, source ->
                 findTranslationDocument(chapterName, scanlator, mangaTitle, source)
             },
-            schedulerProvider = { scheduler },
             cancelPageTranslationsFn = { chapterId -> cancelPageTranslations(chapterId) },
             cancelPageTranslationFn = { chapterId, pageKey -> cancelPageTranslation(chapterId, pageKey) },
             removeFromTranslationQueueFn = { chapter -> removeFromTranslationQueue(chapter) },

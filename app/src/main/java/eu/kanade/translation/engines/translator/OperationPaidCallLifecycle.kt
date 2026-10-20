@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.engines.translator
 
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext

@@ -4,14 +4,14 @@
 
 ## Architecture at a glance
 
-Requests move from the reader through ownership and scheduling into execution; state and results flow back through projections.
+Requests move from the reader through coordinator ownership into execution; state and results flow back through projections.
 
 ```text
 Reader / chapter UI
     | request
     v
 workflow -- owns admission and reader/batch lifecycle
-    +-- scheduling -- selects and times manual/auto page jobs
+    +-- coordinator -- owns manual/auto reader page work and batch translation
     \-- pipeline -- executes page and chapter work
         +-- engines -- vision -> translator -> inpainting/rendering
         \-- persistence -- live page state, artifacts, and queue
@@ -29,7 +29,7 @@ workflow -- owns admission and reader/batch lifecycle
 | Text or panel detection | `engines/vision/detection/`; bubble segmentation is under `engines/vision/segmentation/`. |
 | Inpainting | `engines/inpainting/`. |
 | Text rendering and layout | `engines/rendering/`. |
-| Manual/auto scheduling | `scheduling/`; use `workflow/` when changing request intent or ownership. |
+| Manual/auto reader work | `coordinator/`; use `workflow/` when changing request intent or session admission. |
 | Reader/batch ownership | `workflow/`; chapter-specific execution is under `pipeline/batch/`. |
 | Batch recovery | `pipeline/batch/recovery/`. |
 | Durable artifact behavior | `persistence/artifact/`. |
@@ -50,7 +50,7 @@ For a new provider, first read `engines/translator/TextTranslator.kt`, `engines/
 | Package | Responsibility |
 | --- | --- |
 | `workflow` | Request admission, reader and batch session ownership, chapter lifecycle, and the `TranslationManager` façade. |
-| `scheduling` | Which page jobs run and when: manual/auto reader windows, cancellation, and job coordination. It consumes workflow decisions; it does not define chapter or session intent. |
+| `coordinator` | Which reader page jobs run and when, plus ordered batch work. It owns reader sessions, viewport demand, and cancellation. |
 | `pipeline` | Shared page execution and stage contracts; `pipeline/execution` owns page executor contracts, prepared-page publication, native-run quarantine and stream registry; `pipeline/planning` owns shared page-stage planning and stable page-order snapshots; `pipeline/memory` owns page decode/preflight/prefetch decisions and reclamation policy; `pipeline/batch` contains chapter coordination and mode-specific work; `pipeline/batch/analysis` owns chapter-wide analysis and durable chunk publication; `pipeline/batch/envelope` owns AI profile envelope dispatch and plan publication; `pipeline/batch/progress` owns progress events, tracking, and reconciliation; `pipeline/batch/recovery` owns resume policy and recovery workers. |
 | `engines/vision` | Text and panel detection, bubble segmentation, OCR, the OCR native-buffer drain guard, and webtoon image behavior. |
 | `engines/translator` | Translator contracts, provider implementations, contextual/analysis requests, retries, and backend routing. |

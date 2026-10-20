@@ -18,7 +18,6 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.persistence.fixtureFingerprint
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.ChapterTranslator
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
@@ -131,7 +130,6 @@ class ResetRetiresActiveRunTest {
 
         val controller = ChapterDataResetController(
             findTranslationDocumentFn = { _, _, _, _ -> null },
-            schedulerProvider = { mockk<TranslationScheduler>(relaxed = true) },
             cancelPageTranslationsFn = {},
             cancelPageTranslationFn = { _, _ -> true },
             removeFromTranslationQueueFn = {},

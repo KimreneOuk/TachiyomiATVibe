@@ -12,7 +12,7 @@ import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryAttempt
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryBudget
 import eu.kanade.translation.engines.translator.retry.safeAdd
-import eu.kanade.translation.scheduling.OperationPaidCallLifecycle
+import eu.kanade.translation.engines.translator.OperationPaidCallLifecycle
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart

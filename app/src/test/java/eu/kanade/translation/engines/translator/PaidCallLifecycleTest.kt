@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+﻿package eu.kanade.translation.engines.translator
 
 import eu.kanade.translation.engines.translator.ProviderAdmissionEvent
 import eu.kanade.translation.engines.translator.ProviderQuotaPolicy

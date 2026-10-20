@@ -1,10 +1,10 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -54,7 +54,7 @@ class TranslationManagerPendingAcknowledgementTest {
         val committed = mutableListOf<Triple<Long, TranslationRequestPhase, String?>>()
         val laneJob = SupervisorJob()
         val manager = uninitializedManager(recordingStore(committed), laneJob)
-        val mutationLock = readField(manager, "pendingRequestMutationLock") as Any
+        val mutationLock = manager.requestCoordinator.pendingRequestMutationLock
 
         try {
             synchronized(mutationLock) {
@@ -82,7 +82,7 @@ class TranslationManagerPendingAcknowledgementTest {
             val removals = mutableListOf<Long>()
             val laneJob = SupervisorJob()
             val manager = uninitializedManager(recordingStore(committed, removals), laneJob)
-            val mutationLock = readField(manager, "pendingRequestMutationLock") as Any
+            val mutationLock = manager.requestCoordinator.pendingRequestMutationLock
 
             try {
                 synchronized(mutationLock) {
@@ -111,7 +111,7 @@ class TranslationManagerPendingAcknowledgementTest {
             val committed = mutableListOf<Triple<Long, TranslationRequestPhase, String?>>()
             val laneJob = SupervisorJob()
             val manager = uninitializedManager(recordingStore(committed), laneJob)
-            val mutationLock = readField(manager, "pendingRequestMutationLock") as Any
+            val mutationLock = manager.requestCoordinator.pendingRequestMutationLock
 
             try {
                 synchronized(mutationLock) {

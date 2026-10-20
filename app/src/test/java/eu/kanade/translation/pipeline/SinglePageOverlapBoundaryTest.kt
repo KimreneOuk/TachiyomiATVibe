@@ -246,7 +246,7 @@ class SinglePageOverlapBoundaryTest {
                     // Real scheduler cancel entry: queue-owned force-cancel of the
                     // explicit manual demand (the retired per-operation job handle
                     // has no replacement by design).
-                    harness.scheduler.cancelPageTranslation(harness.CHAPTER_ID, "p0") shouldBe true
+                    harness.readerCoordinator.cancelPageAsync(harness.CHAPTER_ID.toString(), "p0") shouldBe true
                 } else {
                     pipelineJob.cancel()
                 }

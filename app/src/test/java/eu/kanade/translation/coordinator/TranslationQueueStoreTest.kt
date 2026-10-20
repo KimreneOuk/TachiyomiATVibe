@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+﻿package eu.kanade.translation.coordinator
 
 import android.content.Context
 import io.kotest.matchers.collections.shouldContainExactly

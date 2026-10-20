@@ -25,17 +25,17 @@ import eu.kanade.translation.persistence.ChapterStoreOpener
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.ReaderSessionToken
-import eu.kanade.translation.scheduling.ReaderSubmission
-import eu.kanade.translation.scheduling.ReaderTrigger
-import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderSubmission
+import eu.kanade.translation.coordinator.ReaderTrigger
+import eu.kanade.translation.coordinator.TranslationSession
+import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -97,8 +97,8 @@ internal fun TranslationManager.runStartupReconciliationIfReadyImpl() {
             // chapter set; never scan the whole library.
             reconcileAttemptLedgersForStartup(
                 chapterIds = translator.persistedQueueChapterIds() +
-                    pendingTranslationRequestsState.value.keys +
-                    pendingRequestStore.load(),
+                    requestCoordinator.pendingTranslationRequestsState.value.keys +
+                    requestCoordinator.pendingRequestStore.load(),
             )
         }
     }
@@ -127,13 +127,13 @@ internal suspend fun TranslationManager.reconcilePendingRequestsForStartupImpl(
         resolveTranslation: suspend (Long) -> Translation?,
         hasDownloadedFiles: (Translation) -> Boolean,
     ) {
-        val pendingIds = (pendingRequestStore.load() + pendingTranslationRequestsState.value.keys)
+        val pendingIds = (requestCoordinator.pendingRequestStore.load() + requestCoordinator.pendingTranslationRequestsState.value.keys)
             .distinct()
         if (pendingIds.isEmpty()) return
         val translationQueueIds = queueState.value.mapNotNull { it.chapter.id }.toSet()
         pendingIds.forEach { chapterId ->
-            val current = pendingTranslationRequestsState.value[chapterId]
-                ?: pendingRequestStore.record(chapterId)?.let { record ->
+            val current = requestCoordinator.pendingTranslationRequestsState.value[chapterId]
+                ?: requestCoordinator.pendingRequestStore.record(chapterId)?.let { record ->
                     TranslationRequestState(
                         chapterId = record.chapterId,
                         phase = record.phase,
@@ -247,14 +247,14 @@ internal fun TranslationManager.admitRestoredPendingTranslationImpl(translation:
         val chapter = translation.chapter
         val chapterId = chapter.id ?: return
         if (!admitBatchSession(setOf(chapterId))) return
-        synchronized(pendingRequestMutationLock) {
+        synchronized(requestCoordinator.pendingRequestMutationLock) {
             // After a restart, the request may exist only in the durable record.
             // Cancellation or replacement changes the generation and drops admission.
-            val current = pendingTranslationRequestsState.value[chapterId]
+            val current = requestCoordinator.pendingTranslationRequestsState.value[chapterId]
             val currentGeneration = current?.generation
-                ?: pendingRequestStore.record(chapterId)?.generation
+                ?: requestCoordinator.pendingRequestStore.record(chapterId)?.generation
             if (currentGeneration != expectedGeneration) return
-            scheduler.invalidateQueueSession(chapterId)
+            readerCoordinator.cancelChapterAsync(chapterId.toString())
             markTranslationRequestPreparing(chapterId)
             translator.queueChapter(manga, chapter)
             if (queueState.value.any { it.chapter.id == chapterId }) {
@@ -274,10 +274,7 @@ internal fun TranslationManager.admitRestoredPendingTranslationImpl(translation:
 internal fun TranslationManager.onMemoryPressureImpl(level: Int) {
         val pressureClass = MemoryPressurePolicy.classify(level)
         translator.onMemoryPressure(level, pressureClass)
-        // The queue defers prefetch on the live memory gate; a pressure event
-        // (including recovery) rearms deferred demand through reconcile. The
-        // same-chapter batch-active guard keeps a suppressed window dormant.
-        scheduler.reconcileReaderQueues(admissionGuard = { chapterId ->
+        readerCoordinator.reconcileAll(admissionGuard = { chapterId ->
             !isChapterBatchActive(chapterId, includePaused = true)
         })
     }
@@ -347,7 +344,7 @@ internal fun TranslationManager.admitChapterThroughQueueImpl(
     ): TranslationManager.AdmissionResult {
         val chapterId = chapter.id ?: return TranslationManager.AdmissionResult.QUEUE_FAILED
         if (expectedGeneration != null) {
-            val current = pendingTranslationRequestsState.value[chapterId]
+            val current = requestCoordinator.pendingTranslationRequestsState.value[chapterId]
             if (current == null || current.generation != expectedGeneration) {
                 if (evictStaleQueuedEntry) {
                     val expectedRequestGeneration = expectedGeneration
@@ -365,7 +362,7 @@ internal fun TranslationManager.admitChapterThroughQueueImpl(
                 return TranslationManager.AdmissionResult.STALE_GENERATION
             }
         }
-        scheduler.invalidateQueueSession(chapterId)
+        readerCoordinator.cancelChapterAsync(chapterId.toString())
         if (evictStaleQueuedEntry) {
             evictStaleQueuedChapters(chapterId, manga.source)
         }
@@ -406,7 +403,7 @@ internal fun TranslationManager.translateChapterImpl(
     ) {
         val chapterId = chapters.id ?: return
         if (!admitBatchSession(setOf(chapterId))) return
-        val admissionResult = synchronized(pendingRequestMutationLock) {
+        val admissionResult = synchronized(requestCoordinator.pendingRequestMutationLock) {
             admitChapterThroughQueue(
                 manga = manga,
                 chapter = chapters,
@@ -476,7 +473,7 @@ internal fun TranslationManager.translateChaptersInternalImpl(
         if (chapters.isEmpty()) return emptyList()
         if (!admitBatchSession(chapters.mapNotNull { it.id }.toSet())) return emptyList()
         val admitted = mutableListOf<Chapter>()
-        synchronized(pendingRequestMutationLock) {
+        synchronized(requestCoordinator.pendingRequestMutationLock) {
             chapters.forEach { chapter ->
                 val chapterId = chapter.id ?: return@forEach
                 val expectedGeneration = expectedGenerations?.get(chapterId)
@@ -517,7 +514,7 @@ internal fun TranslationManager.translateChaptersInternalImpl(
  */
 
 internal fun TranslationManager.markTranslationQueueFailureIfAcknowledgedImpl(manga: Manga, chapterId: Long) {
-        if (pendingTranslationRequestsState.value.containsKey(chapterId)) {
+        if (requestCoordinator.pendingTranslationRequestsState.value.containsKey(chapterId)) {
             val failureKind = translationQueueAdmissionFailureKind(
                 sourceIsHttp = sourceManager.get(manga.source) is HttpSource,
                 configValid = translator.isQueueConfigValid(),
@@ -599,7 +596,7 @@ internal suspend fun TranslationManager.cancelRunningChapterForReplaceImpl(chapt
             .firstOrNull { it.chapter.id == chapterId }
             ?.chapter
             ?: return
-        scheduler.cancelPageTranslations(chapterId)
+        readerCoordinator.cancelChapter(chapterId.toString())
         activeStores.get(chapterId)?.let { store ->
             store.clearTransientQueuePages("Replaced by another chapter's batch")
         }

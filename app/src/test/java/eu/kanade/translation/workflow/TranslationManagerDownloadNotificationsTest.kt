@@ -1,10 +1,10 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -20,7 +20,7 @@ import java.lang.reflect.Field
 /**
  * Download-side lifecycle events must transition an
  * attached pending request to an explicit terminal phase with a typed failure
- * kind instead of leaving it WAITING forever — and must be a no-op (no phase
+ * kind instead of leaving it WAITING forever â€” and must be a no-op (no phase
  * write at all) when no pending request exists for the chapter, so ordinary
  * downloads are unaffected. The seam under test is the same one the
  * downloader's cancel/remove/clear/stop paths call.

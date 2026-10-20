@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.persistence.ChapterTranslationStore

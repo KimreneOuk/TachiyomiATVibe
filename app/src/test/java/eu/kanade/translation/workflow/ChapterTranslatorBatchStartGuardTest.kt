@@ -1,12 +1,12 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationQueueStore
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * - a generic queue start must not resurrect an ERROR-restored queue entry
  *   (restore work resumes only through an explicit per-chapter request);
  * - an admission for a chapter whose batch is still in flight must be a no-op
- *   for the running work — exactly ONE concurrent batch schedule (two live
+ *   for the running work â€” exactly ONE concurrent batch schedule (two live
  *   schedules for one chapter make each store generation advance cancel the
  *   prior run; observed on device as back-to-back `schedule_start` events for
  *   the same chapter with `outcome=cancelled`).
@@ -85,7 +85,7 @@ class ChapterTranslatorBatchStartGuardTest {
         Translation(source, manga, chapter).also { it.status = status }
 
     /**
-     * Every batch "runs" by first entering the store resolver — the same
+     * Every batch "runs" by first entering the store resolver â€” the same
      * position the pipeline occupies before its generation is advanced. The
      * resolver holds its callback until released, so a cancelled-but-unwinding
      * batch stays in flight exactly like a mid-run uncancellable native call.

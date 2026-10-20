@@ -25,17 +25,17 @@ import eu.kanade.translation.persistence.ChapterStoreOpener
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterRead
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.MemoryPressurePolicy
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.ReaderSessionToken
-import eu.kanade.translation.scheduling.ReaderSubmission
-import eu.kanade.translation.scheduling.ReaderTrigger
-import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderSubmission
+import eu.kanade.translation.coordinator.ReaderTrigger
+import eu.kanade.translation.coordinator.TranslationSession
+import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -296,7 +296,7 @@ internal suspend fun TranslationManager.attemptDownloadRekeyImpl(pending: Transl
                             )
                         }
 
-                        val reserved = synchronized(pendingRequestMutationLock) {
+                        val reserved = synchronized(requestCoordinator.pendingRequestMutationLock) {
                             if (
                                 translator.isChapterTranslationInFlight(chapterId) ||
                                 isChapterBatchActive(chapterId, includePaused = true)
@@ -312,11 +312,9 @@ internal suspend fun TranslationManager.attemptDownloadRekeyImpl(pending: Transl
                             )
                         }
                         try {
-                            // Queue-session invalidation only; the
-                            // reservation rejects fresh page dispatch until the
-                            // new store identity is published. Unrelated batch
-                            // work is never cancelled.
-                            scheduler.invalidateQueueSession(chapterId)
+                            // The reservation rejects fresh page dispatch while
+                            // the reader coordinator retires its page session.
+                            readerCoordinator.cancelChapterAsync(chapterId.toString())
                             store.beginGeneration("completed download re-key")
                             when (
                                 val outcome = store.rekeyPages(

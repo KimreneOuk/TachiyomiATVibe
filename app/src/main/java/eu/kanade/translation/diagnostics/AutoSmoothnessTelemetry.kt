@@ -1,4 +1,4 @@
-package eu.kanade.translation.scheduling
+package eu.kanade.translation.diagnostics
 
 import eu.kanade.translation.diagnostics.TelemetryTrace
 

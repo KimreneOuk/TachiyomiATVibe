@@ -9,11 +9,8 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.every
@@ -74,11 +71,6 @@ class TranslationManagerCompletedDownloadRekeyTest {
         val sourceManager = mockk<SourceManager>(relaxed = true) {
             every { get(1L) } returns source
         }
-        val scheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        )
         val manager = TranslationManager.createForTesting(
             context = context,
             provider = provider,
@@ -89,7 +81,6 @@ class TranslationManagerCompletedDownloadRekeyTest {
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
             pendingRequests = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),
-            scheduler = scheduler,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
 
@@ -218,7 +209,6 @@ class TranslationManagerCompletedDownloadRekeyTest {
             chapterWait.reason shouldBe REGISTERED_READER_STORE_WAIT_REASON
             manager.unregisterActiveTranslationStore(11L)
         } finally {
-            scheduler.close()
         }
     }
 }

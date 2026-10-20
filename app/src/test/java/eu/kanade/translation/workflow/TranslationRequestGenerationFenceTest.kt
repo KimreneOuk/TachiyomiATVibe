@@ -1,15 +1,12 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.nulls.shouldBeNull
@@ -38,8 +35,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Request generations fence downloader completion callbacks
- * and in-flight probe mutations. A stale callback — cancelled, re-requested,
- * or cleared request — is dropped with a log line; it never admits work and
+ * and in-flight probe mutations. A stale callback â€” cancelled, re-requested,
+ * or cleared request â€” is dropped with a log line; it never admits work and
  * never recreates a request. The fixture mirrors
  * TranslationManagerDownloadFailureRecoveryTest's uninitialized manager with a
  * real in-memory pending-request store.
@@ -75,11 +72,6 @@ class TranslationRequestGenerationFenceTest {
         store = TranslationPendingRequestStore(mockContext())
         admitted.set(false)
         queueStateFlow.value = emptyList()
-        val scheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        )
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns queueStateFlow
         every { translator.isRunning } returns false
@@ -93,7 +85,7 @@ class TranslationRequestGenerationFenceTest {
         }
         val sourceManager = mockk<SourceManager>(relaxed = true)
         every { sourceManager.get(any()) } returns source
-        manager = uninitializedManager(store, scheduler, translator, sourceManager)
+        manager = uninitializedManager(store, translator, sourceManager)
     }
 
     @AfterEach
@@ -144,7 +136,7 @@ class TranslationRequestGenerationFenceTest {
         manager.startTranslationAfterDownloadIfRequested(manga, chapter)
 
         admitted.get() shouldBe false
-        // The new request is untouched (still STARTING) — never recreated or advanced.
+        // The new request is untouched (still STARTING) â€” never recreated or advanced.
         manager.pendingTranslationRequests.value[10L]?.phase shouldBe
             TranslationRequestPhase.STARTING
         manager.pendingTranslationRequests.value[10L]?.generation shouldBe secondGeneration
@@ -193,13 +185,11 @@ class TranslationRequestGenerationFenceTest {
     fun `retained rekey retry admits the attached PREPARING generation after reader leave`() = runBlocking<Unit> {
         val requestStore = TranslationPendingRequestStore(mockContext())
         val state = MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap())
-        val lock = Any()
         val queued = MutableStateFlow(emptyList<Translation>())
         val translator = mockk<ChapterTranslator>(relaxed = true)
         val coordinator = TranslationRequestCoordinator(
-            pendingRequestStoreProvider = { requestStore },
-            pendingTranslationRequestsStateProvider = { state },
-            pendingRequestMutationLockProvider = { lock },
+            pendingRequestStore = requestStore,
+            initialPendingRequests = state,
             storeScopeProvider = { scope },
             queueStateProvider = { queued },
             translatorProvider = { translator },
@@ -267,7 +257,7 @@ class TranslationRequestGenerationFenceTest {
         runBlocking<Unit> {
             manager.acknowledgeTranslationRequests(listOf(chapter))
             manager.queueTranslationAfterDownload(manga, chapter)
-            val mutationLock = readField(manager, "pendingRequestMutationLock") as Any
+            val mutationLock = manager.requestCoordinator.pendingRequestMutationLock
 
             // Deterministic interleave of the old check/write gap: the
             // callback blocks acquiring the mutation lock while the cancel
@@ -312,7 +302,6 @@ class TranslationRequestGenerationFenceTest {
     /** Mirrors TranslationManagerDownloadFailureRecoveryTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
-        scheduler: TranslationScheduler,
         translator: ChapterTranslator,
         sourceManager: SourceManager,
     ): TranslationManager {
@@ -325,7 +314,6 @@ class TranslationRequestGenerationFenceTest {
             pipeline = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = pendingRequestStore,
-            scheduler = scheduler,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
         setField(manager, "storeScope", scope)

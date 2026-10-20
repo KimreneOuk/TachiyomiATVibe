@@ -18,16 +18,12 @@ import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.ReaderSessionToken
-import eu.kanade.translation.scheduling.ReaderSubmission
-import eu.kanade.translation.scheduling.ReaderTrigger
-import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -80,12 +76,11 @@ class TranslationManager private constructor(
         val translator: ChapterTranslator,
         val pendingRequestStore: TranslationPendingRequestStore,
         val pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>>,
-        val scheduler: eu.kanade.translation.scheduling.TranslationScheduler?,
         val sessionCoordinator: TranslationSessionCoordinator?,
         val streamRegistry: TranslationStreamRegistry,
+        val readerCoordinator: ReaderTranslationCoordinator?,
+        val readerStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)?,
     )
-
-    internal val testScheduler = testConstruction?.scheduler
 
     internal enum class AdmissionResult {
         STALE_GENERATION,
@@ -105,9 +100,10 @@ class TranslationManager private constructor(
             translator: ChapterTranslator,
             pendingRequestStore: TranslationPendingRequestStore,
             pendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>> = MutableStateFlow(emptyMap()),
-            scheduler: eu.kanade.translation.scheduling.TranslationScheduler? = null,
             sessionCoordinator: TranslationSessionCoordinator? = null,
             streamRegistry: TranslationStreamRegistry = TranslationStreamRegistry(),
+            readerCoordinator: ReaderTranslationCoordinator? = null,
+            readerStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)? = null,
         ): TranslationManager = TranslationManager(
             context = context,
             provider = provider,
@@ -119,9 +115,10 @@ class TranslationManager private constructor(
                 translator = translator,
                 pendingRequestStore = pendingRequestStore,
                 pendingRequests = pendingRequests,
-                scheduler = scheduler,
                 sessionCoordinator = sessionCoordinator,
                 streamRegistry = streamRegistry,
+                readerCoordinator = readerCoordinator,
+                readerStoreResolver = readerStoreResolver,
             ),
         )
     }
@@ -136,6 +133,13 @@ class TranslationManager private constructor(
 
     // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
     internal val streamRegistry: TranslationStreamRegistry = testConstruction?.streamRegistry ?: Injekt.get()
+    internal val testReaderCoordinator: ReaderTranslationCoordinator? get() = testConstruction?.readerCoordinator
+    internal val testReaderStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)?
+        get() = testConstruction?.readerStoreResolver
+    internal fun createPendingRequestStoreForCoordinator(): TranslationPendingRequestStore =
+        testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
+    internal fun initialPendingRequestsForCoordinator(): MutableStateFlow<Map<Long, TranslationRequestState>>? =
+        testConstruction?.pendingRequests
 
     /**
      * Application-lifetime scope for one-off init work (queue rehydration). SupervisorJob so a
@@ -171,19 +175,13 @@ class TranslationManager private constructor(
     internal suspend fun <T> withChapterStoreAdmissionLock(chapterId: Long, block: suspend () -> T): T =
         chapterStoreAdmissionLocks.computeIfAbsent(chapterId) { Mutex() }.withLock { block() }
 
-    internal val pendingRequestStore = testConstruction?.pendingRequestStore ?: TranslationPendingRequestStore(context)
-    internal val pendingTranslationRequestsState = testConstruction?.pendingRequests ?: MutableStateFlow(loadPendingTranslationRequests())
-
     /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
-    val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
-        pendingTranslationRequestsState.asStateFlow()
+    val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>>
+        get() = requestCoordinator.pendingTranslationRequestsState.asStateFlow()
 
     /** Reader-visible native lane stall projection. */
     val nativeStall: StateFlow<eu.kanade.translation.engines.translator.NativeStallState?>
         get() = pipeline.nativeStall
-
-    /** Serializes request versioning, state publication, and durable writes. */
-    internal val pendingRequestMutationLock = Any()
 
     // One-shot marks for pending requests startup reconciliation
     // admitted (process-local is sufficient — the reconciler and the later
@@ -204,17 +202,8 @@ class TranslationManager private constructor(
 
     internal val startupReconciliationOnce = AtomicBoolean(false)
 
-    // The coordinator owns request-version and generation counters; the manager
-    // retains the request state and mutation lock that these operations synchronize.
+    // The request coordinator owns pending request state, persistence, and mutation fences.
     internal val requestCoordinator: TranslationRequestCoordinator by lazy { createRequestCoordinator() }
-
-    /**
-     * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
-     * keeps the store lifecycle (open/evict/observe), chapter queue, and translation-file I/O.
-     * The scheduler resolves the per-chapter store back through this manager via [storeResolver]
-     * — store instances are shared between reader and translator, so they must not be owned by the scheduler.
-     */
-    val scheduler = createScheduler()
 
     internal fun downloadedPageStreamFactory(
         manga: Manga,
@@ -230,12 +219,6 @@ class TranslationManager private constructor(
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     internal val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    internal val readerViewportLocks = ConcurrentHashMap<Long, Mutex>()
-    internal val readerViewportRevisions = ConcurrentHashMap<Long, AtomicLong>()
-    internal val readerViewportStates = ConcurrentHashMap<Long, Pair<Int, Int>>()
-    @Volatile
-    internal var activeReaderCoordinatorChapterId: Long? = null
 
     val isRunning: Boolean
         get() = translator.isRunning
@@ -287,7 +270,7 @@ class TranslationManager private constructor(
 
     /** Current in-process request generation, or null when no request exists. */
     fun pendingRequestGeneration(chapterId: Long): Long? =
-        pendingTranslationRequestsState.value[chapterId]?.generation
+        requestCoordinator.pendingTranslationRequestsState.value[chapterId]?.generation
 
     /** Whether the live request still carries [generation]. */
     fun isTranslationRequestCurrent(chapterId: Long, generation: Long): Boolean =
@@ -337,18 +320,6 @@ class TranslationManager private constructor(
     internal fun clearPendingTranslationRequest(chapterId: Long) = clearPendingTranslationRequestImpl(chapterId)
 
     internal fun clearAllPendingTranslationRequests() = clearAllPendingTranslationRequestsImpl()
-
-    private fun loadPendingTranslationRequests(): Map<Long, TranslationRequestState> =
-        pendingRequestStore.load().associateWith { chapterId ->
-            val record = pendingRequestStore.record(chapterId)
-            TranslationRequestState(
-                chapterId = chapterId,
-                phase = record?.phase ?: TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
-                reason = pendingRequestStore.reason(chapterId),
-                generation = record?.generation ?: 0L,
-                failureKind = record?.failureKind ?: TranslationRequestFailureKind.NONE,
-            )
-        }
 
     suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) = startTranslationAfterDownloadIfRequestedImpl(manga, chapter)
 
@@ -783,43 +754,6 @@ class TranslationManager private constructor(
         isReferencedElsewhere,
     )
 
-    suspend fun openTranslationSession(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-    ): TranslationSession? = openTranslationSessionImpl(manga, chapter, source)
-
-    fun bindReaderQueue(
-        session: TranslationSession,
-        computeClass: eu.kanade.translation.engines.translator.TranslatorComputeClass,
-    ): ReaderSessionToken? = bindReaderQueueImpl(session, computeClass)
-
-    suspend fun submitReaderPage(
-        token: ReaderSessionToken,
-        work: eu.kanade.translation.scheduling.ReaderPageWork,
-        trigger: ReaderTrigger,
-        force: Boolean = false,
-    ): ReaderSubmission = submitReaderPageImpl(token, work, trigger, force)
-
-    fun updateReaderViewport(
-        token: ReaderSessionToken,
-        chapterId: Long,
-        pageIndex: Int,
-        pageCount: Int,
-        resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
-    ) = updateReaderViewportImpl(token, chapterId, pageIndex, pageCount, resolve)
-
-    fun setReaderAutoEnabled(token: ReaderSessionToken, enabled: Boolean): Boolean = setReaderAutoEnabledImpl(token, enabled)
-
-    /** Typed queue outcomes for the reader's per-page UI projection. */
-    fun readerOutcomes(token: ReaderSessionToken) = scheduler.readerOutcomes(token)
-
-    fun reconcileReaderQueue(
-        token: ReaderSessionToken,
-        chapterId: Long,
-        resolve: (Int) -> eu.kanade.translation.scheduling.ReaderPageWork?,
-    ) = reconcileReaderQueueImpl(token, chapterId, resolve)
-
     /**
      * Source factory for a manual tap on a downloaded chapter without live page
      * bytes. Each invocation rescans the chapter dir and opens a fresh stream;
@@ -929,14 +863,6 @@ class TranslationManager private constructor(
         )
 
     // Reader-page cancellation and teardown are owned by the lifecycle collaborator.
-
-    fun translatePage(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        force: Boolean = false,
-    ) = readerTeardown.translatePage(manga, chapter, source, pageKey, force)
 
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
         readerTeardown.cancelPageTranslation(chapterId, pageKey)

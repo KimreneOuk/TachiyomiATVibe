@@ -4,8 +4,8 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.pipeline.onlinePageTranslationKey
-import eu.kanade.translation.scheduling.ReaderPageWork
-import eu.kanade.translation.scheduling.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderPageWork
+import eu.kanade.translation.coordinator.ReaderSessionToken
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference

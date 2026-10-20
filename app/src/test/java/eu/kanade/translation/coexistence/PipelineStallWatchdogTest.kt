@@ -1,4 +1,4 @@
-package eu.kanade.translation.coexistence
+﻿package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
@@ -57,7 +57,7 @@ class PipelineStallWatchdogTest {
                 TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
             )
             val stall = awaitStall(h)
-            withClue("T917 D8 §2.2: stalled state names the still-occupied page") {
+            withClue("T917 D8 Â§2.2: stalled state names the still-occupied page") {
                 stall.javaClass.getMethod("getPageKey").invoke(stall) shouldBe "p0"
             }
 
@@ -68,7 +68,7 @@ class PipelineStallWatchdogTest {
             val p1 = h.capturedManualJob("p1")
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { p1.join() }
             val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p1")
-            withClue("T917 D8 §2.2: a tap during native stall is typed Stalled") {
+            withClue("T917 D8 Â§2.2: a tap during native stall is typed Stalled") {
                 if (outcome?.javaClass?.simpleName != "Stalled") {
                     throw AssertionError(
                         "T917 D8 RED defect: stall tap produced $outcome instead of SinglePageOutcome.Stalled",
@@ -133,7 +133,7 @@ class PipelineStallWatchdogTest {
             h.store.state.first { it["p0"]?.ocrStatus == "FAILED" }
         }
         val page = h.store.state.value.getValue("p0")
-        withClue("T917 D8 §2.2 + Phase 5 D12: timeout writes a FAILED placeholder naming the ACTUAL timer (duration omitted)") {
+        withClue("T917 D8 Â§2.2 + Phase 5 D12: timeout writes a FAILED placeholder naming the ACTUAL timer (duration omitted)") {
             page.activeError?.contains("ONNX/native result timer expired") shouldBe true
         }
 
@@ -155,7 +155,7 @@ class PipelineStallWatchdogTest {
                 )
             }.await()
         }
-        withClue("T917 D8 §2.2: residual same-page request is typed Rejected") {
+        withClue("T917 D8 Â§2.2: residual same-page request is typed Rejected") {
             rejected.javaClass.simpleName shouldBe "Rejected"
             rejected.javaClass.getMethod("getKind").invoke(rejected).toString() shouldBe "ALREADY_OWNED"
             rejected.javaClass.getMethod("getDiagnosticDetail").invoke(rejected) shouldBe "page already translating"
@@ -163,12 +163,12 @@ class PipelineStallWatchdogTest {
 
         // Native work is never killed: only the real exit (barrier release)
         // unwinds the quarantined job, and its terminal outcome is the typed
-        // failure — never a silent Completed.
+        // failure â€” never a silent Completed.
         h.barrier.release(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { first.join() }
 
         val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
-        withClue("T917 D8 §2.2: native timeout cannot be reported as Completed") {
+        withClue("T917 D8 Â§2.2: native timeout cannot be reported as Completed") {
             if (outcome?.javaClass?.simpleName != "Failed") {
                 throw AssertionError(
                     "T917 D8 RED defect: native timeout produced $outcome instead of SinglePageOutcome.Failed",
@@ -222,6 +222,6 @@ class PipelineStallWatchdogTest {
     // through the live facade instead of the retired reflective map seam.
     private fun readManualOutcome(h: TranslationCoexistenceHarness, key: String): Any? {
         val sep = key.indexOf(':')
-        return h.scheduler.manualOutcomeFor(key.substring(0, sep).toLong(), key.substring(sep + 1))
+        return h.readerCoordinator.outcomeFor(key.substring(0, sep).toLong(), key.substring(sep + 1))
     }
 }

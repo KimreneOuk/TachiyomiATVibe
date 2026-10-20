@@ -1,4 +1,4 @@
-package eu.kanade.translation.coexistence
+﻿package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
@@ -56,7 +56,7 @@ class P5HonestOutcomeTypingTest {
     }
 
     // ------------------------------------------------------------------
-    // Condition A — resume-null / timeout conflation
+    // Condition A â€” resume-null / timeout conflation
     // ------------------------------------------------------------------
 
     /** p0 resumes at inpaint: OCR + translation committed, cleaned image missing. */
@@ -130,9 +130,9 @@ class P5HonestOutcomeTypingTest {
         val outcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
         if (outcome !is SinglePageOutcome.Completed) {
             throw AssertionError(
-                "T917 P5 RED defect (condition A, phase4 review §5 Deviation #7): a SUCCESSFUL " +
+                "T917 P5 RED defect (condition A, phase4 review Â§5 Deviation #7): a SUCCESSFUL " +
                     "resume (inpaint+render tail committed a durable rendered result) was typed " +
-                    "as $outcome instead of SinglePageOutcome.Completed — the boundary's " +
+                    "as $outcome instead of SinglePageOutcome.Completed â€” the boundary's " +
                     "`onnxResult ?: return Failed(\"native phase timed out\")` conflates the " +
                     "resume-null-on-success shape with a native timeout. The store holds " +
                     "renderStatus=READY truth; the typed outcome must match it via the " +
@@ -182,7 +182,7 @@ class P5HonestOutcomeTypingTest {
     }
 
     // ------------------------------------------------------------------
-    // Condition B — HTTP+render timeout must not fall through to Completed
+    // Condition B â€” HTTP+render timeout must not fall through to Completed
     // ------------------------------------------------------------------
 
     @Test
@@ -218,8 +218,8 @@ class P5HonestOutcomeTypingTest {
         val failure = when (outcome) {
             is SinglePageOutcome.Completed -> AssertionError(
                 "T917 P5 RED defect (condition B / D8-1): an HTTP+render result-timer timeout " +
-                    "(withTimeoutOrNull → null TranslationCompletionOutcome) fell through the Paused-only " +
-                    "mapping to SinglePageOutcome.Completed — the same §7 lie class D8 fixed for " +
+                    "(withTimeoutOrNull â†’ null TranslationCompletionOutcome) fell through the Paused-only " +
+                    "mapping to SinglePageOutcome.Completed â€” the same Â§7 lie class D8 fixed for " +
                     "the native timer, one level up. It must be typed as a visible non-success " +
                     "naming the HTTP+render timer.",
             )
@@ -236,7 +236,7 @@ class P5HonestOutcomeTypingTest {
     }
 
     // ------------------------------------------------------------------
-    // Condition C — value failures and publication rejections
+    // Condition C â€” value failures and publication rejections
     // ------------------------------------------------------------------
 
     @Test
@@ -250,7 +250,7 @@ class P5HonestOutcomeTypingTest {
         h.registerReaderStream(h.CHAPTER_ID, "p0")
         // Park the transport AFTER the paid call so the phase's commit
         // precondition is captured, then break the commit's ownership under
-        // it: the guarded final patchPage must reject →
+        // it: the guarded final patchPage must reject â†’
         // TranslationCompletionOutcome.PersistenceRejected.
         h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p0")
         h.tapManual("p0")
@@ -260,13 +260,13 @@ class P5HonestOutcomeTypingTest {
             TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
         )
         //  ( heal) CONVERSION: the old fixture bumped pageVersion under
-        // the parked boundary — exactly the deferred-publication shape the
+        // the parked boundary â€” exactly the deferred-publication shape the
         // boundary now heals by design (the same-owner refresh in
         // SinglePageHttpRenderPhase; under  the lease holder is the page's
         // exclusive writer, so a same-generation version drift under the held
         // lease is never a foreign write). The outcome-typing contract is
         // instead exercised through the rejection the heal legitimately does
-        // NOT cover: the page's lease RETIRED mid-flight (ownership lost —
+        // NOT cover: the page's lease RETIRED mid-flight (ownership lost â€”
         // the eviction/cancellation shape), so the final guarded patchPage
         // rejects at the lease fence with its stale captured token.
         h.store.releasePageStageLease("p0", PageWriteOrigin.MANUAL)
@@ -283,7 +283,7 @@ class P5HonestOutcomeTypingTest {
             throw AssertionError(
                 "T917 P5 RED defect (condition C, P3 finding 5): a guarded-commit rejection " +
                     "(TranslationCompletionOutcome.PersistenceRejected from the HTTP phase) surfaced as " +
-                    "$outcome — the boundary maps only TranslationCompletionOutcome.Paused and returns " +
+                    "$outcome â€” the boundary maps only TranslationCompletionOutcome.Paused and returns " +
                     "Completed for every other value. A page whose translation could not be saved " +
                     "must be a visible typed non-success (Rejected with " +
                     "PageRejectionKind.PERSISTENCE_FAILED), " +
@@ -302,7 +302,7 @@ class P5HonestOutcomeTypingTest {
         val preRetry = h.store.snapshot("p0").page
         val preRetryLease = runCatching { h.store.pageLeaseOwner("p0") }.getOrNull()
         // The HTTP phase's finally clears the reader-stream registration even
-        // when its commit was rejected (SinglePageHttpRenderPhase finally →
+        // when its commit was rejected (SinglePageHttpRenderPhase finally â†’
         // streamRegistry.clearPage). A real reader retry re-supplies the page
         // stream; the harness must too, or the retry soft-skips before decode.
         h.registerReaderStream(h.CHAPTER_ID, "p0")
@@ -329,7 +329,7 @@ class P5HonestOutcomeTypingTest {
             val retryOutcome = readManualOutcome(h, "${h.CHAPTER_ID}:p0")
             throw AssertionError(
                 "T917 P5 (condition C): the forced retry after a publication rejection never " +
-                    "committed — retryJobActive=${retryJob.isActive} " +
+                    "committed â€” retryJobActive=${retryJob.isActive} " +
                     "retryCause=$cause " +
                     "retryOutcome=$retryOutcome " +
                     "leaseOwnerAfter=${runCatching { h.store.pageLeaseOwner("p0") }.getOrNull()} " +
@@ -391,7 +391,7 @@ class P5HonestOutcomeTypingTest {
         if (failed == null) {
             throw AssertionError(
                 "T917 P5 RED defect (condition C, P3 finding 5): TranslationCompletionOutcome.Failed " +
-                    "returned as a VALUE by the HTTP phase surfaced as $outcome — a terminal page " +
+                    "returned as a VALUE by the HTTP phase surfaced as $outcome â€” a terminal page " +
                     "failure must never be typed Completed. Expected SinglePageOutcome.Failed " +
                     "carrying the provider's safe reason.",
             )
@@ -403,7 +403,7 @@ class P5HonestOutcomeTypingTest {
     }
 
     // ------------------------------------------------------------------
-    // Batch — non-durable publication warning reaches the snapshot
+    // Batch â€” non-durable publication warning reaches the snapshot
     // ------------------------------------------------------------------
 
     @Test
@@ -448,19 +448,19 @@ class P5HonestOutcomeTypingTest {
             val warning = readBooleanField(snapshot, "nonDurableFailure")
             if (warning != true) {
                 throw AssertionError(
-                    "T917 P5 RED defect (spec §4.1): the progress snapshot carries no " +
-                        "non-durable-publication warning — BatchPass1Status.PERSISTENCE_REJECTED " +
+                    "T917 P5 RED defect (spec Â§4.1): the progress snapshot carries no " +
+                        "non-durable-publication warning â€” BatchPass1Status.PERSISTENCE_REJECTED " +
                         "paused the batch but TranslationProgressSnapshot has no bounded " +
                         "nonDurableFailure/nonDurableFailureReason value fields, so the drawer/" +
-                        "notification cannot show 'Translation not saved — retry required' and " +
+                        "notification cannot show 'Translation not saved â€” retry required' and " +
                         "the affected page can be mistaken for success.",
                 )
             }
             val reason = readStringField(snapshot, "nonDurableFailureReason")
             if (reason != "Batch persistence publication rejected") {
                 throw AssertionError(
-                    "T917 P5 RED defect (spec §4.1): snapshot.nonDurableFailureReason was " +
-                        "$reason — the safe rejection reason must ride the bounded value field",
+                    "T917 P5 RED defect (spec Â§4.1): snapshot.nonDurableFailureReason was " +
+                        "$reason â€” the safe rejection reason must ride the bounded value field",
                 )
             }
             withClue("P5 batch: the rejected page must not count as terminal success") {
@@ -483,7 +483,7 @@ class P5HonestOutcomeTypingTest {
     // through the live facade instead of the retired reflective map seam.
     private fun readManualOutcome(h: TranslationCoexistenceHarness, key: String): SinglePageOutcome? {
         val sep = key.indexOf(':')
-        return h.scheduler.manualOutcomeFor(key.substring(0, sep).toLong(), key.substring(sep + 1))
+        return h.readerCoordinator.outcomeFor(key.substring(0, sep).toLong(), key.substring(sep + 1))
     }
 
     private fun readBooleanField(target: Any, name: String): Boolean? = try {

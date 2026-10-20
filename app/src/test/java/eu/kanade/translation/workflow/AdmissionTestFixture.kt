@@ -5,11 +5,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,12 +41,6 @@ internal class AdmissionTestFixture(
     val startCount = AtomicInteger()
     var queueHook: (Chapter) -> Unit = {}
     var startHook: () -> Unit = {}
-
-    private val scheduler = TranslationScheduler(
-        executor = mockk<TranslationExecutor>(relaxed = true),
-        storeResolver = TranslationStoreResolver { null },
-        immediateStoreResolver = { null },
-    )
 
     val manager: TranslationManager
 
@@ -86,7 +77,6 @@ internal class AdmissionTestFixture(
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
             pendingRequests = pendingRequests,
-            scheduler = scheduler,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
     }
@@ -139,12 +129,9 @@ internal class AdmissionTestFixture(
         }
 
     fun mutationLock(): Any {
-        val field = TranslationManager::class.java.getDeclaredField("pendingRequestMutationLock")
-        field.isAccessible = true
-        return field.get(manager)
+        return manager.requestCoordinator.pendingRequestMutationLock
     }
 
     override fun close() {
-        scheduler.close()
     }
 }

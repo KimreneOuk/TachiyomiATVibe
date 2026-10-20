@@ -11,7 +11,6 @@ import eu.kanade.translation.persistence.ChapterResetReceipt
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.TranslationScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -31,7 +30,6 @@ internal class ChapterDataResetController(
         mangaTitle: String,
         source: Source,
     ) -> TranslationDocument?,
-    private val schedulerProvider: () -> TranslationScheduler,
     private val cancelPageTranslationsFn: suspend (Long) -> Unit,
     private val cancelPageTranslationFn: (Long, String) -> Boolean,
     private val removeFromTranslationQueueFn: (Chapter) -> Unit,
@@ -54,8 +52,6 @@ internal class ChapterDataResetController(
 ) {
 
     // Resolve manager-owned dependencies at call time without retaining second owners.
-    private val scheduler get() = schedulerProvider()
-
     private val translator get() = translatorProvider()
 
     private val streamRegistry get() = streamRegistryProvider()
@@ -128,17 +124,12 @@ internal class ChapterDataResetController(
         // guarantees callers land on clean state.
         //
         // Ordering is load-bearing and strictly sequenced:
-        //   1. cancelReaderQueueSession fences the chapter's queue session via
-        //      the cancellation epoch (no new admissions) and joins every
-        //      physical drain handle, so retained paid work is finished or
-        //      gone before the store/artifacts are touched.
-        //   2. cancelPageTranslations cancels + JOINs each auto/single-page job so native work unwinds.
-        //   3. removeFromTranslationQueue + cancelTranslatorJobAndJoin drop the batch entry and JOIN the
+        //   1. cancelPageTranslations invalidates the reader session and joins page work before the store is touched.
+        //   2. removeFromTranslationQueue + cancelTranslatorJobAndJoin drop the batch entry and JOIN the
         //      batch worker (plain removeFrom only cancel()s) so it releases the translator permit before deletion.
         //   4. unregisterActiveTranslationStore marks the store defunct so a still-unwinding worker's late writes no-op.
         //   5. streamRegistry.clearChapter drops stale reader closures pointing at the about-to-be-deleted PNGs.
         //   6. Only once all work is wound down is it safe to delete the artifact tree and companion images.
-        scheduler.cancelReaderQueueSession(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
         translator.cancelTranslatorJobAndJoin()
@@ -245,7 +236,6 @@ internal class ChapterDataResetController(
     ): ChapterResetReceipt {
         val chapterId = chapter.id ?: return ChapterResetReceipt.COMPLETE
         durableStatusResolver.clearDurableStatusCache()
-        scheduler.cancelReaderQueueSession(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
         translator.cancelTranslatorJobAndJoin()

@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.data.download
+﻿package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import com.hippo.unifile.UniFile
@@ -8,8 +8,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
@@ -35,7 +35,7 @@ import java.lang.reflect.Field
  *  slice 3 (R8 / contract item 3): the downloader separates download
  * finalization from translation rekey/handoff. A failure AFTER the files
  * finalize must leave the download `DOWNLOADED` and give the translation
- * intent the real typed failure — while a finalize-stage failure keeps the
+ * intent the real typed failure â€” while a finalize-stage failure keeps the
  * existing download-failure semantics exactly.
  */
 class DownloaderHandoffFailureSplitTest {
@@ -112,7 +112,7 @@ class DownloaderHandoffFailureSplitTest {
             onDiskKeys = listOf("000.jpg"),
         )
 
-        // The download's terminal status is settled — a post-finalization
+        // The download's terminal status is settled â€” a post-finalization
         // failure must not flip it back to ERROR.
         download.status shouldBe Download.State.DOWNLOADED
         verify {
@@ -307,7 +307,7 @@ class DownloaderHandoffFailureSplitTest {
 
     /**
      * The typed translation-intent failure uses the R10 admission-failure
-     * typing (phase ADMISSION_FAILED, kind QUEUE_ADMISSION_FAILED) — the files
+     * typing (phase ADMISSION_FAILED, kind QUEUE_ADMISSION_FAILED) â€” the files
      * are fine, so it is never a download failure. Exercised on a real
      * in-memory manager like the slice 2 notification tests.
      */

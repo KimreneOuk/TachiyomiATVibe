@@ -136,14 +136,9 @@ class NextPageAdmittedDuringParkedPublicationTest {
                 } catch (timedOut: TimeoutCancellationException) {
                     val p1Page = store.snapshot("p1").page
                     val p1Job = runCatching { harness.capturedManualJob("p1") }.getOrNull()
-                    val outcomes = runCatching {
-                        val f = harness.scheduler::class.java.getDeclaredField("manualOutcomes")
-                        f.isAccessible = true
-                        @Suppress("UNCHECKED_CAST")
-                        (f.get(harness.scheduler) as Map<String, Any>).entries
-                            .filter { it.key.endsWith(":p1") }
-                            .joinToString { "${it.key}=${it.value}" }
-                    }.getOrDefault("?")
+                    val outcomes = harness.readerCoordinator
+                        .outcomesForChapter(harness.CHAPTER_ID)
+                        .value["p1"]
                     throw AssertionError(
                         "T917 D11 RED defect: the second page's native admission never arrived " +
                             "while the first page's cleaned-image publication was still parked — " +

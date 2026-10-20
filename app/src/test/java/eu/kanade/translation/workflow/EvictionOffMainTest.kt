@@ -5,7 +5,6 @@ import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -34,7 +33,6 @@ class EvictionOffMainTest {
         val coordinator = ReaderTeardownCoordinator(
             applicationScopeProvider = { CoroutineScope(SupervisorJob() + Dispatchers.IO) },
             readerTeardownMutexProvider = { Mutex() },
-            schedulerProvider = { mockk<TranslationScheduler>(relaxed = true) },
             activeStoresProvider = { activeStores },
             translatorProvider = { mockk<ChapterTranslator>(relaxed = true) },
             sessionCoordinatorProvider = { mockk<TranslationSessionCoordinator>(relaxed = true) },
@@ -69,7 +67,6 @@ class EvictionOffMainTest {
         val coordinator = ReaderTeardownCoordinator(
             applicationScopeProvider = { CoroutineScope(SupervisorJob() + Dispatchers.IO) },
             readerTeardownMutexProvider = { Mutex() },
-            schedulerProvider = { mockk<TranslationScheduler>(relaxed = true) },
             activeStoresProvider = { activeStores },
             translatorProvider = { mockk<ChapterTranslator>(relaxed = true) },
             sessionCoordinatorProvider = { mockk<TranslationSessionCoordinator>(relaxed = true) },
@@ -100,7 +97,6 @@ class EvictionOffMainTest {
         val evictionThread = AtomicReference<Thread>()
         val controller = ChapterDataResetController(
             findTranslationDocumentFn = { _, _, _, _ -> null },
-            schedulerProvider = { mockk<TranslationScheduler>(relaxed = true) },
             cancelPageTranslationsFn = {},
             cancelPageTranslationFn = { _, _ -> false },
             removeFromTranslationQueueFn = {},

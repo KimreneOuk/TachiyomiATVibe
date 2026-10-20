@@ -132,7 +132,6 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { TranslationFileProvider(app) }
         addSingletonFactory { eu.kanade.translation.pipeline.execution.TranslationStreamRegistry() }
         addSingletonFactory { TranslationManager(app) }
-        addSingletonFactory { get<TranslationManager>().scheduler }
 
         addSingletonFactory { TrackerManager() }
         addSingletonFactory { DelayedTrackingStore(app) }

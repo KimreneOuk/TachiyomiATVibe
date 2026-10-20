@@ -2,9 +2,9 @@ package eu.kanade.translation.workflow
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.scheduling.TranslationScheduler
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -66,13 +66,13 @@ class TranslationManagerReaderTeardownTest {
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns queue
 
-        val scheduler = mockk<TranslationScheduler>(relaxed = true)
+        val readerCoordinator = mockk<ReaderTranslationCoordinator>(relaxed = true)
         val activeStores = ActiveChapterStoreRegistry().apply {
             register(41L, readerStore)
             register(42L, batchStore)
         }
         val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val manager = uninitializedManager(scheduler, translator, activeStores, managerScope)
+        val manager = uninitializedManager(readerCoordinator, translator, activeStores, managerScope)
         val readerExecutor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "reader-main-test")
         }
@@ -123,12 +123,12 @@ class TranslationManagerReaderTeardownTest {
         }
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns MutableStateFlow(listOf(pausedBatch))
-        val scheduler = mockk<TranslationScheduler>(relaxed = true)
+        val readerCoordinator = mockk<ReaderTranslationCoordinator>(relaxed = true)
         val activeStores = ActiveChapterStoreRegistry().apply {
             register(42L, batchStore)
         }
         val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val manager = uninitializedManager(scheduler, translator, activeStores, managerScope)
+        val manager = uninitializedManager(readerCoordinator, translator, activeStores, managerScope)
 
         try {
             manager.requestReaderStop("reader closed").await()
@@ -139,22 +139,22 @@ class TranslationManagerReaderTeardownTest {
     }
 
     @Test
-    fun `await reader stop moves scheduler teardown off caller thread`() = runBlocking<Unit> {
-        val schedulerStarted = CountDownLatch(1)
-        val schedulerRelease = CountDownLatch(1)
-        val schedulerThread = AtomicReference<Thread>()
-        val scheduler = mockk<TranslationScheduler>(relaxed = true)
-        coEvery { scheduler.awaitReaderStop() } coAnswers {
-            schedulerThread.set(Thread.currentThread())
-            schedulerStarted.countDown()
-            schedulerRelease.await(5, TimeUnit.SECONDS)
+    fun `await reader stop moves coordinator teardown off caller thread`() = runBlocking<Unit> {
+        val coordinatorStarted = CountDownLatch(1)
+        val coordinatorRelease = CountDownLatch(1)
+        val coordinatorThread = AtomicReference<Thread>()
+        val readerCoordinator = mockk<ReaderTranslationCoordinator>(relaxed = true)
+        coEvery { readerCoordinator.cancelAllAndJoin() } coAnswers {
+            coordinatorThread.set(Thread.currentThread())
+            coordinatorStarted.countDown()
+            coordinatorRelease.await(5, TimeUnit.SECONDS)
             Unit
         }
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns MutableStateFlow(emptyList())
         val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val manager = uninitializedManager(
-            scheduler = scheduler,
+            readerCoordinator = readerCoordinator,
             translator = translator,
             activeStores = ActiveChapterStoreRegistry(),
             applicationScope = managerScope,
@@ -175,35 +175,35 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
-            assertTrue(schedulerStarted.await(5, TimeUnit.SECONDS), "scheduler teardown did not start")
-            assertNotSame(callerThread.get(), schedulerThread.get())
-            schedulerRelease.countDown()
-            assertTrue(callerFinished.await(5, TimeUnit.SECONDS), "caller did not finish after scheduler release")
+            assertTrue(coordinatorStarted.await(5, TimeUnit.SECONDS), "coordinator teardown did not start")
+            assertNotSame(callerThread.get(), coordinatorThread.get())
+            coordinatorRelease.countDown()
+            assertTrue(callerFinished.await(5, TimeUnit.SECONDS), "caller did not finish after coordinator release")
             callerFuture.get(5, TimeUnit.SECONDS)
         } finally {
-            schedulerRelease.countDown()
+            coordinatorRelease.countDown()
             readerExecutor.shutdownNow()
             managerScope.cancel()
         }
     }
 
     @Test
-    fun `request reader stop has no undispatched scheduler prefix`() = runBlocking<Unit> {
-        val schedulerStarted = CountDownLatch(1)
-        val schedulerRelease = CountDownLatch(1)
-        val schedulerThread = AtomicReference<Thread>()
-        val scheduler = mockk<TranslationScheduler>(relaxed = true)
-        coEvery { scheduler.awaitReaderStop() } coAnswers {
-            schedulerThread.set(Thread.currentThread())
-            schedulerStarted.countDown()
-            schedulerRelease.await(5, TimeUnit.SECONDS)
+    fun `request reader stop has no undispatched coordinator prefix`() = runBlocking<Unit> {
+        val coordinatorStarted = CountDownLatch(1)
+        val coordinatorRelease = CountDownLatch(1)
+        val coordinatorThread = AtomicReference<Thread>()
+        val readerCoordinator = mockk<ReaderTranslationCoordinator>(relaxed = true)
+        coEvery { readerCoordinator.cancelAllAndJoin() } coAnswers {
+            coordinatorThread.set(Thread.currentThread())
+            coordinatorStarted.countDown()
+            coordinatorRelease.await(5, TimeUnit.SECONDS)
             Unit
         }
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns MutableStateFlow(emptyList())
         val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val manager = uninitializedManager(
-            scheduler = scheduler,
+            readerCoordinator = readerCoordinator,
             translator = translator,
             activeStores = ActiveChapterStoreRegistry(),
             applicationScope = managerScope,
@@ -227,22 +227,22 @@ class TranslationManagerReaderTeardownTest {
 
             assertTrue(
                 entryReturned.await(5, TimeUnit.SECONDS),
-                "requestReaderStop must return before scheduler teardown joins",
+                "requestReaderStop must return before coordinator teardown joins",
             )
-            assertTrue(schedulerStarted.await(5, TimeUnit.SECONDS), "scheduler teardown did not start")
-            assertNotSame(callerThread.get(), schedulerThread.get())
-            schedulerRelease.countDown()
+            assertTrue(coordinatorStarted.await(5, TimeUnit.SECONDS), "coordinator teardown did not start")
+            assertNotSame(callerThread.get(), coordinatorThread.get())
+            coordinatorRelease.countDown()
             deferredRef.get().await()
             callerFuture.get(5, TimeUnit.SECONDS)
         } finally {
-            schedulerRelease.countDown()
+            coordinatorRelease.countDown()
             readerExecutor.shutdownNow()
             managerScope.cancel()
         }
     }
 
     private fun uninitializedManager(
-        scheduler: TranslationScheduler,
+        readerCoordinator: ReaderTranslationCoordinator,
         translator: ChapterTranslator,
         activeStores: ActiveChapterStoreRegistry,
         applicationScope: CoroutineScope,
@@ -256,7 +256,7 @@ class TranslationManagerReaderTeardownTest {
             pipeline = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk(relaxed = true),
-            scheduler = scheduler,
+            readerCoordinator = readerCoordinator,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
         setField(manager, "activeStores", activeStores)

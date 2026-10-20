@@ -1,4 +1,4 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
@@ -6,11 +6,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.just
@@ -126,11 +123,6 @@ class TranslationManagerDownloadFailureRecoveryTest {
     @Test
     fun `completed download advances a failed request into translation`() = runBlocking<Unit> {
         val store = mockk<TranslationPendingRequestStore>(relaxed = true)
-        val scheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        )
         val queue = MutableStateFlow<List<Translation>>(emptyList())
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns queue
@@ -139,7 +131,6 @@ class TranslationManagerDownloadFailureRecoveryTest {
         every { translator.queueChapter(manga, chapter) } answers { queue.value = listOf(queued) }
         val manager = uninitializedManager(
             store,
-            scheduler,
             translator,
             seed = mapOf(
                 10L to TranslationRequestState(
@@ -166,7 +157,6 @@ class TranslationManagerDownloadFailureRecoveryTest {
             verify { store.remove(10L) }
         } finally {
             unmockkObject(TranslationForegroundService.Companion)
-            scheduler.close()
         }
     }
 
@@ -195,11 +185,6 @@ class TranslationManagerDownloadFailureRecoveryTest {
     /** Mirrors TranslationManagerAutoArbitrationTest's test factory fixture. */
     private fun uninitializedManager(
         pendingRequestStore: TranslationPendingRequestStore,
-        scheduler: TranslationScheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        ),
         translator: ChapterTranslator = mockk<ChapterTranslator>(relaxed = true).also {
             every { it.queueState } returns MutableStateFlow(emptyList())
             every { it.isRunning } returns false
@@ -216,7 +201,6 @@ class TranslationManagerDownloadFailureRecoveryTest {
             translator = translator,
             pendingRequestStore = pendingRequestStore,
             pendingRequests = MutableStateFlow(seed),
-            scheduler = scheduler,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
     }

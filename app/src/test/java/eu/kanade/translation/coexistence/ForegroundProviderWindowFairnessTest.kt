@@ -1,4 +1,4 @@
-package eu.kanade.translation.coexistence
+﻿package eu.kanade.translation.coexistence
 
 import eu.kanade.translation.engines.translator.AdmissionPriority
 import eu.kanade.translation.engines.translator.ProviderQuotaPolicy
@@ -12,7 +12,7 @@ import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
@@ -142,7 +142,7 @@ class ForegroundProviderWindowFairnessTest {
                     transport.callsFor("q1") shouldBe 1
                 }
                 val key = harness.CHAPTER_ID.toString() + ":q1"
-                val outcome = readManualOutcome(harness.scheduler, key)
+                val outcome = readManualOutcome(harness.readerCoordinator, key)
                 withClue("window exhaustion is recorded as a typed pause") {
                     outcome!!::class.simpleName shouldBe "Paused"
                 }
@@ -158,9 +158,9 @@ class ForegroundProviderWindowFairnessTest {
 
     // Phase 4 S5 r1: outcomes moved to the queue at the S2 cutover; read them
     // through the live facade instead of the retired reflective map seam.
-    private fun readManualOutcome(scheduler: TranslationScheduler, jobKey: String): SinglePageOutcome? {
+    private fun readManualOutcome(readerCoordinator: ReaderTranslationCoordinator, jobKey: String): SinglePageOutcome? {
         val sep = jobKey.indexOf(':')
-        return scheduler.manualOutcomeFor(jobKey.substring(0, sep).toLong(), jobKey.substring(sep + 1))
+        return readerCoordinator.outcomeFor(jobKey.substring(0, sep).toLong(), jobKey.substring(sep + 1))
     }
 
     private fun pausedRetryAt(outcome: Any): Long? = outcome.javaClass.methods

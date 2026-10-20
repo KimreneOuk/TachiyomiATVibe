@@ -1,4 +1,4 @@
-@file:Suppress("ClassName")
+﻿@file:Suppress("ClassName")
 
 
 package eu.kanade.translation.coexistence
@@ -24,8 +24,8 @@ import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.loadArtifact
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationQueueStore
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.pipeline.AttemptAuthority
 import eu.kanade.translation.pipeline.CleanedOwner
 import eu.kanade.translation.pipeline.CleanedPublication
@@ -41,17 +41,14 @@ import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
 import eu.kanade.translation.pipeline.memory.MemoryGovernance
-import eu.kanade.translation.scheduling.ReaderPageWork
-import eu.kanade.translation.scheduling.ReaderSessionToken
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationSession
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.ReaderPageWork
+import eu.kanade.translation.coordinator.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
+import eu.kanade.translation.coordinator.TranslationSession
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
 import eu.kanade.translation.workflow.ChapterTranslator
-import eu.kanade.translation.workflow.ReaderSessionIntent
-import eu.kanade.translation.workflow.SessionAdmission
 import eu.kanade.translation.workflow.TranslationManager
 import eu.kanade.translation.workflow.TranslationSessionCoordinator
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -72,6 +69,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -98,9 +96,9 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Deterministic coexistence harness.
  *
- * Builds the REAL production graph — TranslationManager → TranslationScheduler
- * → TranslationPipeline (real EngineLane, real SinglePageOnnx/HttpRender phases,
- * ChapterTranslationStore (memory-only) → ChapterTranslator —
+ * Builds the REAL production graph â€” TranslationManager â†’ ReaderTranslationCoordinator
+ * â†’ TranslationPipeline (real EngineLane, real SinglePageOnnx/HttpRender phases,
+ * ChapterTranslationStore (memory-only) â†’ ChapterTranslator â€”
  * using the repository's JVM-only test construction factories and reflection
  * field injection for the graph-specific collaborators.
  * Fakes exist only at sanctioned engine and I/O boundaries.
@@ -108,7 +106,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Every reflection-injected field name is listed in ONE place per target class
  * inside [create]; a production rename fails loudly with NoSuchFieldException.
  *
- * Determinism: no sleeps, no polling — CompletableDeferred gates
+ * Determinism: no sleeps, no polling â€” CompletableDeferred gates
  * and `StateFlow.first {}` only; all production components run on their real
  * Dispatchers.IO/Default scopes and every await sits inside
  * `runBlocking { withTimeout(...) }`.
@@ -118,7 +116,7 @@ internal class TranslationCoexistenceHarness private constructor(
     val barrier: CoexistenceBarrier,
     val store: ChapterTranslationStore,
     val pipeline: TranslationPipeline,
-    val scheduler: TranslationScheduler,
+    val readerCoordinator: ReaderTranslationCoordinator,
     val translator: ChapterTranslator,
     val manager: TranslationManager,
     val fakeRecognition: FakeRecognitionEngine,
@@ -253,7 +251,7 @@ internal class TranslationCoexistenceHarness private constructor(
             val engineRebuildMutex = Mutex()
 
             // Engine cache state the real EngineLane init would set (EngineLane.kt
-            // :161-206) — computed from the REAL preferences so the production
+            // :161-206) â€” computed from the REAL preferences so the production
             // rebuild gate (ensureEnginesBuiltFor) is a true no-op.
             val fromLang = TextRecognizerLanguage.fromPref(preferences.translateFromLanguage())
             val toLang = TextTranslatorLanguage.fromPref(preferences.translateToLanguage())
@@ -449,33 +447,15 @@ internal class TranslationCoexistenceHarness private constructor(
                 } catch (_: NoSuchFieldException) {
                     throw AssertionError(
                         "T917 P5 RED defect (condition B / D8-1): TranslationPipeline has no " +
-                            "injectable HTTP+render result-timer seam (singlePageTimeoutMs) — the " +
+                            "injectable HTTP+render result-timer seam (singlePageTimeoutMs) â€” the " +
                             "withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) deadline cannot be exercised",
                     )
                 }
             } else {
                 runCatching { setField(pipeline, "singlePageTimeoutMs", TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS) }
             }
-            // ---- real scheduler over the real pipeline ----------------------
+            // ---- manager-owned reader coordinator over the real pipeline ----
             val sessionCoordinator = TranslationSessionCoordinator()
-            val scheduler = TranslationScheduler(
-                executor = pipeline,
-                storeResolver = TranslationStoreResolver { chapterId ->
-                    extraStores[chapterId] ?: store
-                },
-                immediateStoreResolver = { extraStores[it] ?: store },
-                // Queue-bound mode: manual taps resolve their stream factory
-                // through the same registry the reader controller populates.
-                manualStreamProvider = { mangaArg, chapterArg, sourceArg, pageKey ->
-                    streamRegistry.peek(mangaArg, chapterArg, sourceArg, pageKey)
-                },
-                readerSessionRejectionReason = { chapterId ->
-                    when (val admission = sessionCoordinator.requestReaderSession(ReaderSessionIntent(chapterId))) {
-                        is SessionAdmission.Rejected -> admission.reason.name
-                        else -> null
-                    }
-                },
-            )
 
             // ---- real ChapterTranslator over the real pipeline --------------
             val translator = ChapterTranslator(
@@ -490,7 +470,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 batchCoordinator = mockk(relaxed = true),
             )
 
-            // Route reader taps through the production scheduler.
+            // Route reader taps through the manager-owned production coordinator.
             val activeStores = ActiveChapterStoreRegistry()
             val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = TranslationManager.createForTesting(
@@ -503,9 +483,11 @@ internal class TranslationCoexistenceHarness private constructor(
                 translator = translator,
                 pendingRequestStore = mockk(relaxed = true),
                 pendingRequests = MutableStateFlow(emptyMap()),
-                scheduler = scheduler,
                 sessionCoordinator = sessionCoordinator,
                 streamRegistry = streamRegistry,
+                readerStoreResolver = { _, chapterArg, _ ->
+                    chapterArg.id?.let { extraStores[it] ?: store }
+                },
             )
             setField(manager, "activeStores", activeStores)
 
@@ -514,7 +496,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 barrier = barrier,
                 store = store,
                 pipeline = pipeline,
-                scheduler = scheduler,
+                readerCoordinator = manager.readerCoordinator,
                 translator = translator,
                 manager = manager,
                 fakeRecognition = fakeRecognition,
@@ -586,7 +568,7 @@ internal class TranslationCoexistenceHarness private constructor(
             if (drainGraceMs != null) {
                 if (!setIfPresent("drainGraceMs", drainGraceMs)) {
                     throw AssertionError(
-                        "T917 D7 RED defect: drainGraceMs is not configurable — the §1.2 " +
+                        "T917 D7 RED defect: drainGraceMs is not configurable â€” the Â§1.2 " +
                             "engine-drain seam is missing from EngineLane",
                     )
                 }
@@ -595,7 +577,7 @@ internal class TranslationCoexistenceHarness private constructor(
             }
         }
 
-        /** Real TranslationPreferences over an in-memory PreferenceStore (STANDARD lane, note §1.2.2). */
+        /** Real TranslationPreferences over an in-memory PreferenceStore (STANDARD lane, note Â§1.2.2). */
         internal fun harnessPreferences(): TranslationPreferences {
             val seeds: MutableMap<String, Any> = mutableMapOf(
                 "translation_engine_category" to TranslationEngineCategory.STANDARD,
@@ -694,11 +676,10 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     * Launches the real manual page path through the same scheduler entry used
-     * by the reader teardown coordinator.
+     * Launches the real manual page path through the manager-owned coordinator.
      */
     fun tapManual(pageKey: String, chapterId: Long = CHAPTER_ID, force: Boolean = false) {
-        scheduler.translatePage(manga, chapterFor(chapterId), source, pageKey, force = force)
+        readerCoordinator.translatePage(manga, chapterFor(chapterId), source, pageKey, force = force)
     }
 
     /**
@@ -708,7 +689,7 @@ internal class TranslationCoexistenceHarness private constructor(
      * Re-seamed in Phase 4 S4: replaces the retired prepared-page boundary as
      * the automatic (drain-not-cancel) execution path.
      */
-    fun submitViewport(
+    suspend fun submitViewport(
         pageKeys: List<String>,
         chapterId: Long = CHAPTER_ID,
         computeClass: TranslatorComputeClass = TranslatorComputeClass.REMOTE_IO,
@@ -720,9 +701,9 @@ internal class TranslationCoexistenceHarness private constructor(
             source = source,
             store = store,
         )
-        val token = scheduler.bindReaderQueueSession(chapterId, session, computeClass)
+        val token = readerCoordinator.bindSession(session, computeClass)
         checkNotNull(token) { "harness: queue session bind was rejected for chapterId=$chapterId" }
-        scheduler.updateReaderViewport(token, 0, pageKeys.size) { index ->
+        readerCoordinator.updateViewport(token, 0, pageKeys.size) { index ->
             pageKeys.getOrNull(index)?.let { pageKey ->
                 ReaderPageWork(pageKey, index) { ByteArrayInputStream("page-$pageKey".toByteArray()) }
             }
@@ -731,20 +712,18 @@ internal class TranslationCoexistenceHarness private constructor(
     }
 
     /**
-     * Awaits (event-driven) the manual attempt's terminal — the queue-bound
-     * equivalent of the removed scheduler job map. The returned handle
+     * Awaits (event-driven) the manual attempt's terminal â€” the queue-bound
+     * equivalent of the removed coordinator outcome flow. The returned handle
      * completes when the queue publishes a typed outcome for the page;
      * cancelling it does not stop the queue-owned worker (stop work through
-     * the scheduler's cancel entries instead).
+     * the coordinator cancellation instead).
      */
     fun capturedManualJob(pageKey: String, chapterId: Long = CHAPTER_ID): Job {
         val terminal = CompletableDeferred<Unit>()
         val watcherScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val watcher = watcherScope.launch {
             withTimeout(AWAIT_TIMEOUT_MS) {
-                while (scheduler.manualOutcomeFor(chapterId, pageKey) == null) {
-                    delay(25)
-                }
+                readerCoordinator.outcomesForChapter(chapterId).first { it.containsKey(pageKey) }
             }
             terminal.complete(Unit)
         }
@@ -817,7 +796,7 @@ internal class TranslationCoexistenceHarness private constructor(
             // Runner-path test setup:
             // the single-page runner's translate/render half builds a
             // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
-            // android.jar throws on. Disk/render IO shim only — no coexistence
+            // android.jar throws on. Disk/render IO shim only â€” no coexistence
             // collaborator is faked.
             bitmapShimInstalled = true
             mockkStatic(android.graphics.Bitmap::class)
@@ -875,7 +854,7 @@ internal class TranslationCoexistenceHarness private constructor(
         trackedJobs.forEach { it.cancel() }
         runBlocking {
             val drained = withTimeoutOrNull(JOB_DRAIN_TIMEOUT_MS) {
-                scheduler.awaitReaderStop(reason = "Coexistence harness teardown")
+                readerCoordinator.cancelAllAndJoin()
                 trackedJobs.joinAll()
                 true
             } ?: false
@@ -968,7 +947,7 @@ internal class TranslationCoexistenceHarness private constructor(
         runCatching { cancelAndJoinRunningJobs() }
         if (graphicsShimsInstalled) runCatching { uninstallGraphicsShims() }
         runCatching { unstubChapterPages() }
-        runCatching { scheduler.close() }
+        runCatching { readerCoordinator.close() }
         runCatching { pipeline.close() }
         runCatching { engineDrainScope.cancel() }
         runCatching { managerScope.cancel() }

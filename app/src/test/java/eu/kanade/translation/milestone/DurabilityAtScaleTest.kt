@@ -1,4 +1,4 @@
-package eu.kanade.translation.milestone
+﻿package eu.kanade.translation.milestone
 
 import com.hippo.unifile.FakeUniFile
 import eu.kanade.tachiyomi.data.translation.BatchTranslationForegroundPolicy
@@ -8,11 +8,8 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.UniFileChapterDocumentIo
-import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.workflow.ChapterTranslator
 import eu.kanade.translation.workflow.TranslationManager
 import io.kotest.matchers.shouldBe
@@ -34,11 +31,6 @@ class DurabilityAtScaleTest {
         pendingRequestStore: TranslationPendingRequestStore,
         seed: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val scheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        )
         val translator = mockk<ChapterTranslator>(relaxed = true).also {
             every { it.queueState } returns MutableStateFlow(emptyList())
             every { it.isRunning } returns false
@@ -54,7 +46,6 @@ class DurabilityAtScaleTest {
             translator = translator,
             pendingRequestStore = pendingRequestStore,
             pendingRequests = MutableStateFlow(seed),
-            scheduler = scheduler,
         )
     }
 

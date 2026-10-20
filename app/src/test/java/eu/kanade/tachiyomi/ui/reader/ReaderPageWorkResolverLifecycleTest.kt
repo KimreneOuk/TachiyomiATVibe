@@ -1,10 +1,10 @@
-package eu.kanade.tachiyomi.ui.reader
+﻿package eu.kanade.tachiyomi.ui.reader
 
 import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.translation.scheduling.ReaderSessionToken
+import eu.kanade.translation.coordinator.ReaderSessionToken
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.jupiter.api.Test
@@ -16,7 +16,7 @@ import java.io.ByteArrayInputStream
  * generation fencing, session/store binding, stream teardown, the shared
  * source-ready predicate, and reset-before-recycle ordering. The N/N+1 demand
  * window and session invalidation at the queue itself are pinned by
- * [eu.kanade.translation.scheduling.ReaderTranslationQueueTest].
+ * [eu.kanade.translation.coordinator.ReaderTranslationCoordinator].
  */
 class ReaderPageWorkResolverLifecycleTest {
 

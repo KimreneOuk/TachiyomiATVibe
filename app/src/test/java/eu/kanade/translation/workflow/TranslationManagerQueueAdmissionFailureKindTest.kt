@@ -7,10 +7,7 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
-import eu.kanade.translation.pipeline.execution.TranslationExecutor
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.mockk.every
@@ -124,11 +121,6 @@ class TranslationManagerQueueAdmissionFailureKindTest {
         sourceManager: SourceManager,
         configValid: Boolean,
     ): TranslationManager {
-        val scheduler = TranslationScheduler(
-            executor = mockk<TranslationExecutor>(relaxed = true),
-            storeResolver = TranslationStoreResolver { null },
-            immediateStoreResolver = { null },
-        )
         val translator = mockk<ChapterTranslator>(relaxed = true)
         every { translator.queueState } returns MutableStateFlow(emptyList())
         every { translator.isRunning } returns false
@@ -142,7 +134,6 @@ class TranslationManagerQueueAdmissionFailureKindTest {
             pipeline = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true),
-            scheduler = scheduler,
             sessionCoordinator = TranslationSessionCoordinator(),
         )
     }

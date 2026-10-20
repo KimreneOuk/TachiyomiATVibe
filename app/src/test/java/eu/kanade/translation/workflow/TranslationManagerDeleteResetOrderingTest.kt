@@ -8,7 +8,7 @@ import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -90,15 +90,12 @@ class TranslationManagerDeleteResetOrderingTest {
         val chapter = mockk<Chapter>(relaxed = true)
         every { chapter.id } returns 42L
 
-        val scheduler = mockk<TranslationScheduler>(relaxed = true)
-        coEvery { scheduler.cancelReaderQueueSession(any()) } coAnswers {
-            log("cancelReaderQueueSession")
-        }
-        coEvery { scheduler.cancelPageTranslations(any()) } answers {
+        val readerCoordinator = mockk<ReaderTranslationCoordinator>(relaxed = true)
+        coEvery { readerCoordinator.cancelChapter(any()) } coAnswers {
             log("cancelPageTranslations")
             Unit
         }
-        every { scheduler.cancelPageTranslation(any(), any()) } answers {
+        every { readerCoordinator.cancelPageAsync(any(), any()) } answers {
             log("cancelPageTranslation")
             true
         }
@@ -144,10 +141,9 @@ class TranslationManagerDeleteResetOrderingTest {
             pipeline = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = mockk(relaxed = true),
-            scheduler = scheduler,
+            readerCoordinator = readerCoordinator,
             streamRegistry = streamRegistry,
         )
-        setField(manager, "scheduler", scheduler)
         setField(manager, "activeStores", activeStores)
         setField(manager, "applicationScope", CoroutineScope(SupervisorJob() + Dispatchers.IO))
         setField(manager, "readerTeardownMutex", Mutex())
@@ -189,10 +185,7 @@ class TranslationManagerDeleteResetOrderingTest {
             events == listOf(
                 // Preamble: capture the durable truth before any teardown (SAF reads).
                 "findMangaDir",
-                // Step 1: cancelReaderQueueSession fences the chapter's queue
-                // session (cancellation epoch) and joins its physical drains.
-                "cancelReaderQueueSession",
-                // Step 2: cancelPageTranslations cancels + joins single-page jobs.
+                // Step 1: the reader coordinator invalidates its session and joins page work.
                 "cancelPageTranslations",
                 // Step 3: removeFromTranslationQueue drops the batch entry...
                 "removeFromQueue",
@@ -235,7 +228,6 @@ class TranslationManagerDeleteResetOrderingTest {
         assertTrue(
             events == listOf(
                 "clearDurableStatusCache",
-                "cancelReaderQueueSession",
                 "cancelPageTranslations",
                 "removeFromQueue",
                 "cancelTranslatorJobAndJoin",
@@ -352,8 +344,13 @@ class TranslationManagerDeleteResetOrderingTest {
         val clearRelease = CompletableDeferred<Unit>()
 
         @Suppress("UNCHECKED_CAST")
-        val scheduler = field(manager, "scheduler") as TranslationScheduler
-        coEvery { scheduler.cancelPageTranslations(any()) } coAnswers {
+        val readerCoordinator = field(manager, "coordinatorRuntime").let { runtime ->
+            runtime.javaClass.getDeclaredField("readerCoordinator").let { field ->
+                field.isAccessible = true
+                field.get(runtime) as ReaderTranslationCoordinator
+            }
+        }
+        coEvery { readerCoordinator.cancelChapter(any()) } coAnswers {
             log("cancelPageTranslations")
             cancelStarted.complete(Unit)
             cancelRelease.await()

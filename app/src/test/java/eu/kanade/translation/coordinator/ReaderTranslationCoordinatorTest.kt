@@ -1,13 +1,9 @@
 package eu.kanade.translation.coordinator
 
-import eu.kanade.translation.engines.translator.TextTranslator
-import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.processing.TranslationProcessor
+import eu.kanade.translation.pipeline.execution.TranslationExecutor
 import io.kotest.matchers.shouldBe
-import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -19,13 +15,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import java.io.ByteArrayInputStream
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
 
 class ReaderTranslationCoordinatorTest {
 
-    private val processor: TranslationProcessor = mockk(relaxed = true)
-    private val recognitionEngine: PageRecognitionEngine = mockk(relaxed = true)
-    private val translator: TextTranslator = mockk(relaxed = true)
+    private val executor: TranslationExecutor = mockk(relaxed = true)
+    private val manga = mockk<Manga>(relaxed = true)
+    private val chapter = mockk<Chapter>(relaxed = true) { every { id } returns 1L }
+    private val source = mockk<HttpSource>(relaxed = true)
     private var isBatchActive = false
 
     private var testScope: CoroutineScope? = null
@@ -35,9 +33,7 @@ class ReaderTranslationCoordinatorTest {
         val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
         testScope = scope
         return ReaderTranslationCoordinator(
-            processor = processor,
-            recognitionEngineProvider = { recognitionEngine },
-            translatorProvider = { translator },
+            executor = executor,
             isBatchActiveForChapter = { isBatchActive },
             scope = scope,
             autoStart = autoStart,
@@ -59,18 +55,18 @@ class ReaderTranslationCoordinatorTest {
         }
 
         val autoReq = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p1.jpg",
             isManual = false,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
         val manualReq = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p2.jpg",
             isManual = true,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
 
         coord.enqueuePage(autoReq) shouldBe true
@@ -86,15 +82,15 @@ class ReaderTranslationCoordinatorTest {
         }
 
         val req = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p1.jpg",
             isManual = true,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
 
         coord.enqueuePage(req) shouldBe true
-        coord.enqueuePage(req) shouldBe true
+        coord.enqueuePage(req) shouldBe false
     }
 
     @Test
@@ -106,18 +102,18 @@ class ReaderTranslationCoordinatorTest {
         }
 
         val req1 = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p1.jpg",
             isManual = false,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
         val req2 = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p2.jpg",
             isManual = false,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
 
         coord.enqueuePage(req1)
@@ -137,15 +133,15 @@ class ReaderTranslationCoordinatorTest {
         }
 
         val req = ReaderTranslationCoordinator.PageRequest(
+            session = TranslationSession("session", manga, chapter, source, store),
             chapterKey = "ch1",
             pageKey = "p1.jpg",
             isManual = true,
-            streamFn = { ByteArrayInputStream(ByteArray(0)) },
-            store = store,
+            streamFn = null,
         )
 
         coord.enqueuePage(req)
 
-        coVerify(exactly = 0) { processor.processSinglePage(any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { executor.translateSinglePage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 }

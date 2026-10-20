@@ -10,8 +10,8 @@ import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.loadArtifact
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.scheduling.OperationPaidCallLifecycle
-import eu.kanade.translation.scheduling.ReaderSessionToken
+import eu.kanade.translation.engines.translator.OperationPaidCallLifecycle
+import eu.kanade.translation.coordinator.ReaderSessionToken
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.TimeoutCancellationException
@@ -144,7 +144,7 @@ class EngineEpochStopRaceTest {
          * release cannot hang teardown on the queue's paid-work retention.
          */
         fun cancelJob() {
-            runCatching { owner.scheduler.cancelPageTranslation(owner.CHAPTER_ID, pageKey) }
+            runCatching { owner.readerCoordinator.cancelPageAsync(owner.CHAPTER_ID.toString(), pageKey) }
         }
     }
 
@@ -155,7 +155,7 @@ class EngineEpochStopRaceTest {
      * outside, render reacquisition). The token yields the typed outcome flow
      * for event-driven terminal assertions.
      */
-    private fun launchAutoPage(pageKey: String): AutoRun {
+    private suspend fun launchAutoPage(pageKey: String): AutoRun {
         val h = checkNotNull(harness)
         return AutoRun(h, h.submitViewport(listOf(pageKey)), pageKey)
     }
@@ -177,7 +177,7 @@ class EngineEpochStopRaceTest {
     private suspend fun awaitQueueOutcome(auto: AutoRun, pageKey: String): SinglePageOutcome? {
         val h = checkNotNull(harness)
         return withTimeout(AWAIT_TIMEOUT_MS) {
-            h.scheduler.readerOutcomes(auto.token).first { it.containsKey(pageKey) }[pageKey]
+            h.readerCoordinator.outcomes(auto.token).first { it.containsKey(pageKey) }[pageKey]
         }
     }
 

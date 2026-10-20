@@ -5,8 +5,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.presentation.TranslationUiProjection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,9 +30,8 @@ internal const val REGISTERED_READER_STORE_WAIT_REASON =
  * so a later phase change, cancel, or retry cannot be overwritten by a stale write.
  */
 internal class TranslationRequestCoordinator(
-    private val pendingRequestStoreProvider: () -> TranslationPendingRequestStore,
-    private val pendingTranslationRequestsStateProvider: () -> MutableStateFlow<Map<Long, TranslationRequestState>>,
-    private val pendingRequestMutationLockProvider: () -> Any,
+    internal val pendingRequestStore: TranslationPendingRequestStore,
+    initialPendingRequests: MutableStateFlow<Map<Long, TranslationRequestState>>? = null,
     private val storeScopeProvider: () -> CoroutineScope,
     private val queueStateProvider: () -> StateFlow<List<Translation>>,
     private val translatorProvider: () -> ChapterTranslator,
@@ -42,13 +41,23 @@ internal class TranslationRequestCoordinator(
     private val reconcilePendingDownloadRekeyFn: suspend (Long) -> Boolean = { true },
 ) {
 
-    private val pendingRequestStore get() = pendingRequestStoreProvider()
-    private val pendingTranslationRequestsState get() = pendingTranslationRequestsStateProvider()
+    internal val pendingTranslationRequestsState = initialPendingRequests ?: MutableStateFlow(
+        pendingRequestStore.load().associateWith { chapterId ->
+            val record = pendingRequestStore.record(chapterId)
+            TranslationRequestState(
+                chapterId = chapterId,
+                phase = record?.phase ?: TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                reason = pendingRequestStore.reason(chapterId),
+                generation = record?.generation ?: 0L,
+                failureKind = record?.failureKind ?: TranslationRequestFailureKind.NONE,
+            )
+        },
+    )
+    internal val pendingRequestMutationLock = Any()
     private val pendingRequestWriteVersions = ConcurrentHashMap<Long, AtomicLong>()
     private val pendingRequestGenerationCounters = ConcurrentHashMap<Long, AtomicLong>()
     private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
     private val pendingGroupIdSequence = AtomicLong(0)
-    private val pendingRequestMutationLock get() = pendingRequestMutationLockProvider()
     private val storeScope get() = storeScopeProvider()
     private val queueState get() = queueStateProvider()
     private val translator get() = translatorProvider()

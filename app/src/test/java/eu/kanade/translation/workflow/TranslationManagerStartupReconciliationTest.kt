@@ -1,4 +1,4 @@
-package eu.kanade.translation.workflow
+﻿package eu.kanade.translation.workflow
 
 import android.content.Context
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
@@ -6,9 +6,9 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.scheduling.InMemorySharedPreferences
-import eu.kanade.translation.scheduling.TranslationPendingRequestRecord
-import eu.kanade.translation.scheduling.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -69,12 +69,6 @@ class TranslationManagerStartupReconciliationTest {
             pipeline = mockk(relaxed = true),
             translator = translator,
             pendingRequestStore = pendingRequestStore,
-            scheduler =
-            eu.kanade.translation.scheduling.TranslationScheduler(
-                executor = mockk<eu.kanade.translation.pipeline.execution.TranslationExecutor>(relaxed = true),
-                storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { null },
-                immediateStoreResolver = { null },
-            ),
             sessionCoordinator = TranslationSessionCoordinator(),
         ).also {
             setField(
@@ -289,7 +283,7 @@ class TranslationManagerStartupReconciliationTest {
             ?: emptySet<Long>()
         // 10L: restored WAITING request (download handoff later in-process);
         // 11L: admitted straight into the translation queue. Both one-shot.
-        // Set equality — the ConcurrentHashMap key set has no stable order.
+        // Set equality â€” the ConcurrentHashMap key set has no stable order.
         marks shouldBe setOf(10L, 11L)
     }
 

@@ -13,7 +13,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.scheduling.TranslationQueueStore
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.pipeline.MemoryPressureClass
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
@@ -147,7 +147,7 @@ internal class ChapterTranslator(
         // The batch worker can be mid-uncancellable native ONNX (OrtSession.run)
         // when cancel() is requested; coroutine cancellation only lands at the
         // next suspension point. Bounding the join prevents a delete from hanging
-        // on a job that won't unwind promptly (matches TranslationScheduler.JOIN_TIMEOUT_MS).
+        // on a job that won't unwind promptly (matches the reader drain policy).
         // On timeout the file delete proceeds and the defunct-store guard
         // (ChapterTranslationStore.markDefunct) neutralizes any late write.
         const val BATCH_JOIN_TIMEOUT_MS = 2_000L
