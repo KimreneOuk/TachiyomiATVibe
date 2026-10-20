@@ -3,9 +3,8 @@ package eu.kanade.translation.pipeline
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.cancelInFlightStages
-import eu.kanade.translation.persistence.AttemptArtifactLease
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -35,9 +34,6 @@ internal class AttemptAuthority(
 ) {
     private val mutex = Mutex()
 
-    /** Binds this attempt's authority to its own lazy-drain artifact progressions. */
-    internal val artifactLease = AttemptArtifactLease(store, pageKey)
-
     /** Fenced identity for the next patch; mutated only under [mutex]. */
     @Volatile
     var precondition: ChapterTranslationStore.PatchPrecondition = initial
@@ -61,7 +57,9 @@ internal class AttemptAuthority(
         if (closed || callerJob?.isCancelled == true) {
             return@withLock rejectedClosed(description)
         }
-        when (val result = store.patchPage(pageKey, precondition, description, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })) {
+        when (val result = store.patchPage(pageKey, precondition, description) { current ->
+            update(current ?: PageTranslation(sourceFileName = pageKey))
+        }) {
             is ChapterTranslationStore.PatchResult.Accepted -> {
                 precondition = result.snapshot.toPrecondition()
                 result
@@ -107,7 +105,9 @@ internal class AttemptAuthority(
         }
         closed = true
         val result = withContext(NonCancellable) {
-            store.patchPage(pageKey, precondition, description, artifactLease, { current -> update(current ?: PageTranslation(sourceFileName = pageKey)) })
+            store.patchPage(pageKey, precondition, description) { current ->
+                update(current ?: PageTranslation(sourceFileName = pageKey))
+            }
         }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {
             precondition = result.snapshot.toPrecondition()
@@ -156,7 +156,7 @@ internal class CleanedOwner {
     private val openBorrows = MutableStateFlow(0)
 
     @Volatile
-    private var receipt: CompletableDeferred<Boolean>? = null
+    private var receipt: Deferred<Boolean>? = null
 
     /** True while a produced bitmap is owned and not yet released. */
     val isAvailable: Boolean
@@ -223,7 +223,7 @@ internal class CleanedOwner {
      * `false` releases; exceptional completion fails closed). Register before
      * enrollment, release at the boundary `finally` - these checks guard that.
      */
-    fun registerReceipt(receipt: CompletableDeferred<Boolean>) {
+    fun registerReceipt(receipt: Deferred<Boolean>) {
         check(!released.get()) { "registerReceipt after release started" }
         check(this.receipt == null) { "persistence receipt already registered" }
         this.receipt = receipt

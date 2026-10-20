@@ -49,16 +49,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val contextDirectoryName = "$artifactRootDirectoryName/context"
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
 
-    // Durable attempt-ledger sidecar directory. One bounded
-    // document per chapter — not versioned sidecars — so a single fixed name.
-    private val attemptsDirectoryName = "$artifactRootDirectoryName/attempts"
-
-    // Versioned sidecar directories. File names are
-    // content-addressed `f-<sha256(contentFingerprint)>.json`; page-scoped
-    // kinds (OCR checkpoints) nest under the injective pageSegment(pageKey).
-    // All are managed so retention bounds them.
-    private val runRecordsDirectoryName = "$artifactRootDirectoryName/runs"
-    private val ocrCheckpointDirectoryName = "$artifactRootDirectoryName/ocr"
     private val envelopePlanDirectoryName = "$artifactRootDirectoryName/envelopes"
 
     fun stageArtifactFile(pageKey: String, stage: ArtifactStage, fingerprint: String): String =
@@ -105,23 +95,12 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
 
-    /** The chapter's single durable attempt-ledger document. */
-    val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"
-
     // Content-addressed sidecar names per kind.
     // Equal content maps to an equal name, so re-publication is idempotent and
     // first admission can use renameNoReplace. The caller supplies the
     // semantic content fingerprint; the name hashes it.
 
-    val runRecordsRootDirectory: String get() = runRecordsDirectoryName
-    val ocrCheckpointsRootDirectory: String get() = ocrCheckpointDirectoryName
     val envelopePlansRootDirectory: String get() = envelopePlanDirectoryName
-
-    fun runRecordFile(contentFingerprint: String): String =
-        contentAddressedFile(runRecordsDirectoryName, contentFingerprint)
-
-    fun ocrCheckpointFile(pageKey: String, contentFingerprint: String): String =
-        pageContentAddressedFile(ocrCheckpointDirectoryName, pageKey, contentFingerprint)
 
     fun envelopePlanFile(contentFingerprint: String): String =
         contentAddressedFile(envelopePlanDirectoryName, contentFingerprint)
@@ -134,12 +113,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private fun contentAddressedFile(directory: String, contentFingerprint: String): String =
         "$directory/${fingerprintSegment(contentFingerprint)}.json"
 
-    private fun pageContentAddressedFile(
-        directory: String,
-        pageKey: String,
-        contentFingerprint: String,
-    ): String = "$directory/${pageSegment(pageKey)}/${fingerprintSegment(contentFingerprint)}.json"
-
     /** Root-relative managed directories the retention reconciler may sweep. */
     val managedDirectories: List<String> = listOf(
         artifactDirectoryName,
@@ -147,9 +120,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
         pageSnapshotDirectoryName,
         contextDirectoryName,
         generationDirectoryName,
-        attemptsDirectoryName,
-        runRecordsDirectoryName,
-        ocrCheckpointDirectoryName,
         envelopePlanDirectoryName,
     )
 

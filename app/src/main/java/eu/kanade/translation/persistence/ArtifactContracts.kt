@@ -75,12 +75,6 @@ enum class FailureCategory {
     SOURCE,
     PROTOCOL,
 
-    /**
-     * The provider call never completed because the process
-     * died mid-call — repeatedly, per the attempt-ledger cap. NOT a provider
-     * fault and never auto-retryable: the user must explicitly force a retry.
-     */
-    INTERRUPTED,
     LEGACY_UNKNOWN,
 }
 
@@ -197,7 +191,6 @@ internal fun DurableFailureMetadata.toUiPauseReason(): String? {
     return when {
         "page missing" in lower -> "Page manifest mismatch: $message"
         "fingerprint" in lower -> "Page fingerprint mismatch: $message"
-        "checkpoint" in lower -> "Page checkpoint rejected: $message"
         else -> "Page consistency check failed: $message"
     }
 }

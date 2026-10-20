@@ -17,10 +17,10 @@ import eu.kanade.translation.model.toDraft
  * The sweep is reader-side AUTOMATIC maintenance: it acquires an AUTO page
  * lease, then repairs one stranded page. Acquisition and mutation are two
  * separate store operations, so a MANUAL reader tap can preempt the sweep in
- * between (MANUAL is the one cross-origin eviction — see
+ * between (MANUAL is the one cross-origin eviction â€” see
  * [PageStageLeaseTable]). The mutation must therefore fence on the EXACT
- * evidence captured at acquisition — token, generation, page version and
- * candidate identity from the granted [PageStageLease] — never on a fresh
+ * evidence captured at acquisition â€” token, generation, page version and
+ * candidate identity from the granted [PageStageLease] â€” never on a fresh
  * snapshot taken at mutation time. A fresh snapshot after a MANUAL eviction
  * would carry the replacement MANUAL owner's token/version and admit the
  * stale AUTO write with borrowed authority, flipping MANUAL's in-flight
@@ -29,7 +29,7 @@ import eu.kanade.translation.model.toDraft
  * With the acquired-evidence fence:
  *  - a preempted sweep's write is rejected fail-closed (lease token or page
  *    version no longer matches the acquisition), and the token-fenced release
- *    removes only the acquired AUTO record — never the MANUAL owner's lease;
+ *    removes only the acquired AUTO record â€” never the MANUAL owner's lease;
  *  - an uncontested sweep (no preemption) still repairs the stranded page;
  *  - denial/cancellation/failure releases nothing it did not acquire.
  */
@@ -99,7 +99,7 @@ internal suspend fun acquireStrandedSweepLease(
 /**
  * The resumed half of the sweep: mutates [pageKey] fencing on the EXACT
  * [lease] evidence captured at acquisition, then releases only that acquired
- * token (attach-aware, so a same-origin sibling attach survives). Returns
+ * token. Returns
  * true only when the guarded write was accepted.
  */
 internal suspend fun mutatePageUnderAcquiredSweepLease(
@@ -120,9 +120,8 @@ internal suspend fun mutatePageUnderAcquiredSweepLease(
         return store.updatePageGuarded(pageKey, expected, STRANDED_PAGE_SWEEP_DESCRIPTION, update) is
             ChapterTranslationStore.PatchResult.Accepted
     } finally {
-        // Token-fenced: removes only OUR acquired record. A MANUAL record
-        // minted by preemption — or a later same-origin re-mint — survives.
-        store.releasePageStageLeaseIfUnattached(pageKey, PageWriteOrigin.AUTO, lease.token)
+        // Token-fenced release removes only the lease acquired by this sweep.
+        store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO, lease.token)
     }
 }
 

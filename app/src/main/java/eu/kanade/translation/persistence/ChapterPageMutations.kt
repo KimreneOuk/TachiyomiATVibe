@@ -25,6 +25,10 @@ internal data class PageWriteRejection(
     val detail: PatchResult.Rejected.Detail? = null,
 )
 
+/** A same-lease drain may advance the manifest version; only a backward move is stale. */
+private fun artifactVersionMovedBackwards(expected: Long?, actual: Long?): Boolean =
+    expected != null && (actual == null || actual < expected)
+
 /**
  * Owns guarded general writes, page mutation transactions, and drift
  * reconciliation for [ChapterTranslationStore].
@@ -38,14 +42,6 @@ internal class ChapterPageMutations(
         pageKey: String,
         expected: PatchPrecondition,
         description: String,
-        patch: (PageTranslation?) -> PageTranslation,
-    ): PatchResult = patchPage(pageKey, expected, description, artifactLease = null, patch = patch)
-
-    internal suspend fun patchPage(
-        pageKey: String,
-        expected: PatchPrecondition,
-        description: String,
-        artifactLease: AttemptArtifactLease?,
         patch: (PageTranslation?) -> PageTranslation,
     ): PatchResult {
         if (store.isDefunct) return rejected(pageKey, description, "store is defunct")
@@ -67,41 +63,14 @@ internal class ChapterPageMutations(
                         return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
                     }
 
-                    val drained = artifactLease?.takeIf { it.belongsTo(store, pageKey) }?.certifiedProgress
-                    val effective = if (
-                        drained != null &&
-                        expected.generation == drained.generation &&
-                        expected.pageVersion == drained.livePageVersion &&
-                        currentLiveVersion == drained.livePageVersion
-                    ) {
-                        val manifestRecord = store.artifactManifest?.pages?.get(pageKey)
-                        val manifestArtifactPageVersion = manifestRecord?.pageVersion
-                        val manifestCandidateGen = manifestRecord?.candidate?.generationId
-                        val manifestDepFingerprint = manifestRecord?.candidate?.dependencyFingerprint
-                            ?: store.pages[pageKey]?.let(StageFingerprints::pageSnapshot)
-                        if (
-                            manifestArtifactPageVersion == drained.artifactPageVersion &&
-                            manifestCandidateGen == drained.candidateGenerationId &&
-                            manifestDepFingerprint == drained.dependencyFingerprint
-                        ) {
-                            expected.copy(
-                                artifactPageVersion = drained.artifactPageVersion,
-                                candidateGenerationId = drained.candidateGenerationId,
-                                dependencyFingerprint = drained.dependencyFingerprint,
-                            )
-                        } else {
-                            expected
-                        }
-                    } else {
-                        expected
-                    }
-
                     val rejection = when {
-                        effective.artifactPageVersion != null &&
-                            effective.artifactPageVersion != store.artifactManifest?.pages?.get(pageKey)?.pageVersion ->
+                        artifactVersionMovedBackwards(
+                            expected.artifactPageVersion,
+                            store.artifactManifest?.pages?.get(pageKey)?.pageVersion,
+                        ) ->
                             "artifact pageVersion changed"
-                        effective.candidateGenerationId != null &&
-                            effective.candidateGenerationId != store.artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
+                        expected.candidateGenerationId != null &&
+                            expected.candidateGenerationId != store.artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                             "candidate generation changed"
                         // The same candidate-grace rule as persistArtifactMutation
                         // applies: `candidate != null` grace
@@ -115,16 +84,16 @@ internal class ChapterPageMutations(
                         // reject. Fail direction preserved: generation, pageVersion,
                         // candidate generation, block fingerprints, and the lease
                         // token fences stay fully armed.
-                        effective.dependencyFingerprint != null &&
+                        expected.dependencyFingerprint != null &&
                             store.artifactManifest?.pages?.get(pageKey)?.candidate != null &&
-                            effective.dependencyFingerprint != store.artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
+                            expected.dependencyFingerprint != store.artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
                             "candidate dependency fingerprint changed"
-                        effective.blockFingerprints != null &&
-                            effective.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                        expected.blockFingerprints != null &&
+                            expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
                             "block fingerprint changed"
-                        effective.leaseToken != null && store.pageLeases[pageKey]?.token != effective.leaseToken ->
+                        expected.leaseToken != null && store.pageLeases[pageKey]?.token != expected.leaseToken ->
                             "page lease token changed"
-                        effective.leaseToken == null && store.pageLeases[pageKey] != null ->
+                        expected.leaseToken == null && store.pageLeases[pageKey] != null ->
                             "page lease token required"
                         else -> null
                     }
@@ -148,7 +117,7 @@ internal class ChapterPageMutations(
                         }
                         val updated = store.ownedPage(pageKey, candidate)
                         store.pages = store.pages.put(pageKey, store.publishPage(updated))
-                        if (!publishLocked(current, updated, effective, artifactLease = artifactLease)) {
+                        if (!publishLocked(current, updated, expected)) {
                             restorePageLocked(pageKey, current)
                             return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
                         }
@@ -438,35 +407,28 @@ internal class ChapterPageMutations(
         updated: PageTranslation,
         expected: PatchPrecondition? = null,
         durableFailure: DurableFailureMetadata? = null,
-        artifactLease: AttemptArtifactLease? = null,
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         // Active reader stores are display-first: publish the complete live
         // snapshot and enqueue the artifact transaction for the IO worker.
-        // Durable failure records remain synchronous so cancellation/retry
-        // semantics never report a failure before its ledger is recorded.
+        // Durable failure metadata remains synchronous so cancellation/retry
+        // semantics never report a failure before its manifest marker is stored.
         if (store.lazyPersistenceEnabled && durableFailure == null) {
-            return publishLazyLocked(pageKey, previous, updated, expected, artifactLease)
+            return publishLazyLocked(pageKey, previous, updated, expected)
         }
         val isDurable = shouldPersistUpdate(previous, updated)
-        var actuallyPersisted = false
         val artifactAccepted = if (isDurable || store.artifactManifest?.pages?.containsKey(pageKey) != true) {
-            val ok = store.publicationBridge.persistArtifactMutation(
+            store.publicationBridge.persistArtifactMutation(
                 pageKey = pageKey,
                 previous = previous,
                 updated = updated,
                 expected = expected,
                 durableFailure = durableFailure,
             )
-            if (ok) actuallyPersisted = true
-            ok
         } else {
             true
         }
         if (!artifactAccepted) return false
-        if (actuallyPersisted) {
-            artifactLease?.stamp(store, pageKey, store.snapshotLocked(pageKey))
-        }
         store.displayPublication.promoteDisplayIfReadyLocked(pageKey, updated)
         store.stateFlow.value = store.snapshotPages()
         store.displayPublication.displaySnapshotLocked(listOf(pageKey))
@@ -478,7 +440,6 @@ internal class ChapterPageMutations(
         previous: PageTranslation?,
         updated: PageTranslation,
         expected: PatchPrecondition?,
-        artifactLease: AttemptArtifactLease? = null,
     ): Boolean {
         val snapshot = store.snapshotLocked(pageKey)
         val shouldQueueArtifact = shouldPersistUpdate(previous, updated) ||
@@ -498,7 +459,6 @@ internal class ChapterPageMutations(
                     artifactPageVersion = snapshot.artifactPageVersion,
                 ),
                 generation = snapshot.generation,
-                artifactLease = artifactLease,
             )
         }
         store.displayPublication.promoteDisplayIfReadyLocked(pageKey, updated)
@@ -584,7 +544,7 @@ internal class ChapterPageMutations(
                     detail = PatchResult.Rejected.Detail.PageVersionMismatch(expected.pageVersion, actualVersion),
                 )
             }
-            expected.artifactPageVersion != null && expected.artifactPageVersion != artifactPage?.pageVersion ->
+            artifactVersionMovedBackwards(expected.artifactPageVersion, artifactPage?.pageVersion) ->
                 PageWriteRejection("artifact pageVersion expected=${expected.artifactPageVersion} actual=${artifactPage?.pageVersion}")
             expected.candidateGenerationId != null &&
                 expected.candidateGenerationId != artifactPage?.candidate?.generationId ->

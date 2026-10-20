@@ -218,14 +218,8 @@ internal class ArtifactRetention(
                 stage?.artifactFileName?.let(::add)
             }
         }
-        // The attempt-ledger sidecar is always reachable —
-        // it is not manifest-pointed, so without this rule the retention sweep
-        // would delete the crash-loop evidence it exists to preserve.
-        add(layout.attemptLedgerFileName)
         // Every manifest pointer keeps its sidecar reachable. Sidecars with no
         // remaining pointer are orphans and are reclaimed here.
-        manifest.activeRun?.fileName?.let(::add)
-        manifest.ocrCheckpoints.values.forEach { pointer -> add(pointer.fileName) }
         manifest.envelopePlan?.fileName?.let(::add)
     }
 }

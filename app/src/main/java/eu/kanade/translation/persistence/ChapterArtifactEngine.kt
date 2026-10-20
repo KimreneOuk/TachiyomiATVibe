@@ -32,50 +32,7 @@ import tachiyomi.core.common.util.system.logcat
  * retention all operate on artifact documents. Flat translation files from
  * pre-artifact builds are not read or migrated.
  */
-/**
- * Controls whether [ChapterArtifactEngine.checkpointOcr] closes the active
- * candidate or opens a successor.
- *
- * - [CLOSE] (default): close the active BATCH candidate (CANCELLED generation
- *   record, candidate pointer cleared, checkpoint pointer installed in ONE
- *   manifest publication). Used whenever the page's future ownership is not
- *   deterministically this Batch run.
- * - [REBASE]: close the BATCH generation G and open a named successor
- *   generation G′ (origin BATCH, dependency fingerprint = the checkpoint's
- *   content fingerprint) in the SAME manifest publication. Used only when the
- *   same run continues to a later phase for the page and will retain or
- *   deterministically re-acquire the lease.
- *
- * An "origin-neutral open candidate" is not representable: `ArtifactOrigin`
- * has exactly two durable values, so neutrality lives in the
- * checkpoint sidecar, never in the candidate.
- */
-enum class OcrCheckpointMode { CLOSE, REBASE }
-
-/**
- * Outcome of reading a generic sidecar document through
- * its manifest pointer — same semantics as [RunRecordRead]/[OcrCheckpointRead],
- * generalized over the document type for persisted sidecar documents.
- */
-typealias RunRecordRead = ChapterProgressRecords.RunRecordRead
-typealias OcrCheckpointRead = ChapterProgressRecords.OcrCheckpointRead
-typealias RecordOutcome = ChapterProgressRecords.RecordOutcome
-typealias CheckpointRecoveryRead = ChapterProgressRecords.CheckpointRecoveryRead
 typealias CandidateOpenState = ChapterCandidateTransactions.CandidateOpenState
-
-sealed interface SidecarRead<out T : Any> {
-    /** Parsed, schema-supported, and semantically valid. */
-    data class Usable<T : Any>(val document: T) : SidecarRead<T>
-
-    /**
-     * A newer schema owns the semantics — unusable here, bytes
-     * preserved untouched, never deleted, quarantined, or overwritten.
-     */
-    data class UnsupportedVersion(val schemaVersion: Int) : SidecarRead<Nothing>
-
-    /** Missing, malformed pointer, corrupt (quarantined), or semantically invalid. */
-    data object Absent : SidecarRead<Nothing>
-}
 
 class ChapterArtifactEngine(
     internal val documents: AtomicChapterDocuments,
@@ -106,7 +63,6 @@ class ChapterArtifactEngine(
         val manifest: ChapterArtifactManifest,
     )
 
-    val progress: ChapterProgressRecords = ChapterProgressRecords(documents, layout, this)
     val candidates: ChapterCandidateTransactions = ChapterCandidateTransactions(documents, layout, this)
 
 
@@ -260,37 +216,6 @@ class ChapterArtifactEngine(
         }
     }
 
-    /**
-     * P3A: re-presents a recorded [IncompletePublicationReceipt] for one
-     * checked retry. The hard guarantee is the store's stale-manifest CAS in
-     * whatever ordinary transaction [retry] runs; this entry adds the honest
-     * fast path — when the durable manifest has moved past the receipt's
-     * [IncompletePublicationReceipt.actualAdvancedManifest], a NEWER state
-     * owns the chapter and the older receipt is retired WITHOUT any write,
-     * because finishing it would overwrite that newer state. The retry
-     * receives the receipt's durably restored candidate manifest when one
-     * exists, else the actually-advanced manifest, so the CAS baseline it
-     * presents is the one the receipt left behind.
-     */
-    fun finishIncompletePublication(
-        receipt: IncompletePublicationReceipt,
-        retry: (ChapterArtifactManifest) -> TransactionOutcome,
-    ): TransactionOutcome {
-        val durable = readManifest()
-        if (durable == null) {
-            return TransactionOutcome.Rejected("manifest is not durable: chapter=${layout.chapterKey}")
-        }
-        val presented = receipt.recoverableCandidateManifest ?: receipt.actualAdvancedManifest
-        if (receipt.actualAdvancedManifest != null && durable != receipt.actualAdvancedManifest) {
-            return TransactionOutcome.Rejected(
-                "newer artifact state owns the chapter; older publication receipt retired without write: " +
-                    "chapter=${layout.chapterKey}",
-            )
-        }
-        return retry(presented ?: durable)
-    }
-
-
     // ------------------------------------------------------------------
     // Crash-safe store transactions.
     //
@@ -320,41 +245,8 @@ class ChapterArtifactEngine(
         data class Rejected(
             val reason: String,
             val candidateOpenState: CandidateOpenState? = null,
-            /** Candidate state durably restored when an immediate terminal publication failed. */
-            val recoverableCandidateManifest: ChapterArtifactManifest? = null,
-            /**
-             * P3A: typed primary-advanced/replica-failed evidence when durable
-             * sidecar artifacts exist without the checked manifest commit
-             * (null = unchanged rejection: nothing advanced).
-             */
-            val incompletePublication: IncompletePublicationReceipt? = null,
         ) : TransactionOutcome
     }
-
-    /**
-     * P3A typed evidence for the P1 three-way outcome's incomplete branch:
-     * durable sidecar files (or a durably restored candidate manifest)
-     * advanced while the checked manifest commit for the intended state did
-     * not complete. Never a rollback and never a success — orphan sidecar
-     * files remain until retention reclaims them, and a caller may re-present
-     * the receipt through [finishIncompletePublication]. [baselineManifest]
-     * is the CAS baseline the failed attempt ran against and
-     * [actualAdvancedManifest] is the manifest actually durable when the
-     * receipt was produced (may be a candidate-restored state, not the
-     * intended one); finishing after the durable state moved past
-     * [actualAdvancedManifest] is refused — a newer state is never
-     * overwritten to finish an older receipt.
-     */
-    data class IncompletePublicationReceipt(
-        val baselineManifest: ChapterArtifactManifest?,
-        val actualAdvancedManifest: ChapterArtifactManifest?,
-        /** Sidecar files durably written by the attempt without their pointers. */
-        val advancedFiles: List<String>,
-        val failureReason: String,
-        /** Durably restored candidate state a retry may re-present, when one exists. */
-        val recoverableCandidateManifest: ChapterArtifactManifest? = null,
-    )
-
 
     /**
      * One immutable sidecar to publish before its manifest pointer may move
@@ -396,86 +288,20 @@ class ChapterArtifactEngine(
                 return TransactionOutcome.Rejected("sidecar outside the managed tree: file=${sidecar.fileName}")
             }
         }
-        // P3A: every durably written sidecar is recorded so a later failure
-        // carries the actual orphan evidence, not a bare rejection.
-        val advancedFiles = mutableListOf<String>()
         sidecars.forEach { sidecar ->
             if (!sidecar.publish()) {
-                val reason = "sidecar publication failed: file=${sidecar.fileName}"
-                return if (advancedFiles.isEmpty()) {
-                    TransactionOutcome.Rejected(reason)
-                } else {
-                    TransactionOutcome.Rejected(
-                        reason,
-                        incompletePublication = IncompletePublicationReceipt(
-                            baselineManifest = manifest,
-                            actualAdvancedManifest = readManifest(),
-                            advancedFiles = advancedFiles.toList(),
-                            failureReason = reason,
-                        ),
-                    )
-                }
+                return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
             }
-            advancedFiles += sidecar.fileName
         }
         val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
         if (!publishManifestInternal(updated)) {
-            val reason = "manifest publication failed; prior manifest remains authoritative"
-            return TransactionOutcome.Rejected(
-                reason,
-                incompletePublication = IncompletePublicationReceipt(
-                    baselineManifest = manifest,
-                    actualAdvancedManifest = readManifest(),
-                    advancedFiles = advancedFiles.toList(),
-                    failureReason = reason,
-                ),
-            )
+            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
         }
         return TransactionOutcome.Committed(updated)
     }
 
-    /**
-     *  [publishSidecarPointers] with the store's standard ONE-shot
-     * stale-manifest rebase-retry ([retryOnStaleManifest], seam-tagged), for
-     * the resume-hydration seams whose caller can hold a snapshot that predates
-     * durable publications performed outside the façade (the background health
-     * concurrent manifest publication) — the page-registration write of the
-     * adoption path. On a stale-manifest rejection ONLY, [updatePointers] is
-     * re-run against the freshly re-read durable manifest — the mutation must
-     * be a pure function of the base manifest so the rebase carries every
-     * fresh durable field forward. Every other rejection reason is returned
-     * as-is; a retry that also fails surfaces the retry's own
-     * rejection, exactly like the store's other wrapped seams.
-     */
-    internal fun publishSidecarPointersWithStaleRetry(
-        manifest: ChapterArtifactManifest,
-        sidecars: List<SidecarPublication>,
-        updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
-        nowEpochMs: Long = System.currentTimeMillis(),
-        seam: String,
-    ): TransactionOutcome = retryOnStaleManifest<TransactionOutcome>(
-        firstAttempt = publishSidecarPointers(
-            manifest = manifest,
-            sidecars = sidecars,
-            updatePointers = updatePointers,
-            nowEpochMs = nowEpochMs,
-        ),
-        callerManifest = manifest,
-        seam = seam,
-    ) { fresh ->
-        publishSidecarPointers(
-            manifest = fresh,
-            sidecars = sidecars,
-            updatePointers = updatePointers,
-            nowEpochMs = nowEpochMs,
-        )
-    }
-
     // ------------------------------------------------------------------
-    // Generic sidecar reading and publication support. Mirrors the
-    // readOcrCheckpoint/readRunRecord idioms exactly (quarantine on corrupt,
-    // unknown-version preservation) and the publishActiveRun
-    // sidecar-then-pointer pattern.
+    // Generic sidecar publication support.
     // ------------------------------------------------------------------
 
     /**
@@ -502,40 +328,6 @@ class ChapterArtifactEngine(
         }
     }
 
-    /**
-     * Reads a generic pointer: well-formedness
-     * gate, parse with quarantine on corruption, unknown-version preservation
-     * (NEVER quarantined), kind check + semantic validation with quarantine on
-     * invalid payloads.
-     */
-    fun <T : Any> readSidecarDocument(
-        pointer: SidecarPointer,
-        serializer: KSerializer<T>,
-        currentSchemaVersion: Int,
-        expectedKind: String,
-        schemaVersionOf: (T) -> Int,
-        kindOf: (T) -> String,
-        isValid: (T) -> Boolean,
-    ): SidecarRead<T> {
-        if (!pointer.isWellFormed()) return SidecarRead.Absent
-        val bytes = io.read(pointer.fileName) ?: return SidecarRead.Absent
-        val document = runCatching {
-            documents.json.decodeFromStream(serializer, bytes.inputStream())
-        }.getOrNull() ?: run {
-            documents.quarantineCorrupt(pointer.fileName)
-            return SidecarRead.Absent
-        }
-        val version = schemaVersionOf(document)
-        if (version > currentSchemaVersion) {
-            return SidecarRead.UnsupportedVersion(version)
-        }
-        if (kindOf(document) != expectedKind || !isValid(document)) {
-            documents.quarantineCorrupt(pointer.fileName)
-            return SidecarRead.Absent
-        }
-        return SidecarRead.Usable(document)
-    }
-
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =
         fileName?.let { documents.readValidated<PageTranslation>(it) }
@@ -548,15 +340,6 @@ class ChapterArtifactEngine(
     internal fun newGenerationId(pageKey: String, nowEpochMs: Long): String =
         "g-$nowEpochMs-${layout.pageSegment(pageKey).takeLast(24)}"
 
-    /**
-     *   stable reason prefix of the stale-manifest CAS rejection. The
-     * one-shot retry on the first-publication seams ([publishActiveRun],
-     * [checkpointOcr], [openCandidate], [retireActiveRun],
-     * [persistLiveCandidate] — including [persistLiveCandidateAndFailure] —
-     * and [promoteLiveCandidate]) keys on this prefix — every OTHER rejection
-     * reason (identity drift, publication failure, future-schema guard) must
-     * keep failing the caller exactly as before.
-     */
     private val staleManifestRejectionReason = "stale manifest snapshot"
 
     internal fun staleManifestRejection(manifest: ChapterArtifactManifest): String? {
@@ -569,59 +352,8 @@ class ChapterArtifactEngine(
         }
     }
 
-    /** The rejection reason iff [outcome] was rejected BY the stale-manifest CAS specifically. */
-    private fun TransactionOutcome.staleManifestRejectionOrNull(): String? =
-        (this as? TransactionOutcome.Rejected)
-            ?.reason
-            ?.takeIf { it.startsWith(staleManifestRejectionReason) }
-
-    /**
-     *  stale-manifest CAS detection exposed to the one seam whose
-     * publication lives outside this store in the envelope-plan artifact layer:
-     * the CAS there keys on the same [staleManifestRejectionReason] prefix
-     * so every other rejection reason keeps failing exactly as before
-     *
-     */
-    internal fun isStaleManifestRejection(outcome: TransactionOutcome): Boolean =
-        outcome.staleManifestRejectionOrNull() != null
-
-    /**
-     *   one-shot stale-manifest retry for the flagged Batch lane's
-     * first-publication seams. When the >8-page open path's background
-     * artifact-health retry republishes a VERIFIED manifest after the
-     * façade cached the pre-verification copy, a dispatch presenting that stale
-     * copy to its FIRST durable publication was CAS-rejected — a spurious
-     * CHECKPOINT_REJECTED preflight failure or PAUSED run on a healthy chapter.
-     * On a stale-manifest rejection specifically: re-read the durable manifest
-     * ONCE, rebuild the intended mutation against the FRESH manifest (never
-     * re-publish the caller's stale object), and retry the publication once.
-     * A retry that also fails — or a durable manifest that vanished — returns
-     * the original Rejected outcome unchanged, so the caller-visible contract
-     * stays "Committed or Rejected".
-     *
-     *  the same race aborted the whole batch RESUME at its other
-     * first-publication seams (candidate open, stage-patch candidate
-     * persist/promote, run-pointer retirement), so the wrapped set now covers
-     * every seam the resume path hits. [recordDurableFailure]'s RecordOutcome
-     * is intentionally OUT of scope — the failure-ledger write is best-effort
-     * by contract (the coordinator logs and continues).
-     */
-    internal inline fun <T> retryOnStaleManifest(
-        firstAttempt: TransactionOutcome,
-        callerManifest: ChapterArtifactManifest,
-        seam: String,
-        retry: (ChapterArtifactManifest) -> TransactionOutcome,
-    ): TransactionOutcome {
-        firstAttempt.staleManifestRejectionOrNull() ?: return firstAttempt
-        val fresh = casBaselineManifest() ?: return firstAttempt
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT artifact stale manifest retried once: seam=$seam " +
-                "chapter=${layout.chapterKey} " +
-                "staleUpdatedAt=${callerManifest.updatedAtEpochMs} " +
-                "freshUpdatedAt=${fresh.updatedAtEpochMs}"
-        }
-        return retry(fresh)
-    }
+    internal fun isStaleManifestRejection(reason: String): Boolean =
+        reason.split(": ").any { it == staleManifestRejectionReason }
 
     internal fun stagePayloadIsValid(record: StageArtifactRecord?): Boolean {
         val fileName = record?.artifactFileName ?: return false
@@ -726,21 +458,7 @@ class ChapterArtifactEngine(
     ): RetentionResult =
         retentionSweep.deleteVerifiedOrphans(candidateOrphans, manifest, stagedReachable)
 
-    /**
-     * Resolves the verification manifest under the facade mutex after the
-     * off-lock candidate crawl. It reads the
-     * verification manifest ITSELF, under the facade Mutex, from the durable
-     * artifact tree. A caller-supplied manifest captured outside this monitor
-     * (e.g. the facade's cached snapshot) can lag an in-flight publication by
-     * its whole body — the crawl may have listed a sidecar whose file was
-     * already written while its manifest pointer was not yet installed — and
-     * verifying against that stale graph deletes a sidecar the just-completed
-     * publication points at (observed: the  COMPLETE run record vanishing
-     * between its publication and the next read, leaving a dangling
-     * `activeRun`). This monitor serializes with every publication's manifest
-     * rotation, so a manifest read here is never older than any installed
-     * pointer. A chapter with no durable manifest verifies nothing.
-     */
+    /** Resolves the live verification manifest under the publication mutex. */
     fun deleteVerifiedRetentionCandidates(
         candidateOrphans: Collection<String>,
     ): RetentionResult {
@@ -808,38 +526,10 @@ class ChapterArtifactEngine(
         readManifestDocument(backupName())?.schemaVersion?.let { it > ChapterArtifactManifest.SCHEMA_VERSION }
             ?: false
 
-    // ------------------------------------------------------------------
-    //  adoption-write manifest coalescing for the batch-resume
-    // rebuild. The resume hydration loop (`buildEnvelopeDispatchWork` →
-    // `adoptCheckpointSnapshot` → the façade's open/persist/promote candidate
-    // transactions) republished the FULL manifest JSON once or more PER PAGE
-    // (~340 rewrites of a ~360KB document on a 206-page chapter, ~1.3s apart),
-    // contributing to a main-thread ANR. While a coalescing window is open
-    // (the coordinator brackets the rebuild in begin/try/finally-end), each
-    // manifest publication only STASHES the intended manifest (last
-    // writer wins — the transaction chain is serialized by the store monitor,
-    // so the stash is always the newest intended state); the durable rewrite
-    // happens at most once per [manifestCoalescingFlushEvery] stashed
-    // publications and ALWAYS on [endManifestCoalescing]. Failure semantics:
-    // a mid-window flush failure fails the owning transaction exactly as a
-    // direct publication failure would (callers see Rejected); the final flush
-    // is best-effort with a WARN — resume re-derives adopted state from the
-    // durable checkpoints. Crash safety is unchanged: the window only widens
-    // the existing sidecar-then-pointer crash window (pointer moves delayed,
-    // sidecar files content-addressed and idempotent); a crash before the
-    // flush leaves the prior manifest authoritative and the resume re-adopts.
-    //
-    // The CAS baseline follows the stash ([casBaselineManifest]): while a
-    // window is open the intended (stashed) manifest — not the lagging file —
-    // is what [staleManifestRejection] compares against, so the serialized
-    // transaction chain never stale-rejects against its own deferred writes
-    // and never rebases onto a manifest that would drop them. With no window
-    // open the baseline is the durable file exactly as before.
+    // Candidate transactions compare against the persisted manifest and return
+    // a stale-snapshot rejection for callers to rebase on.
 
-    /**
-     * Manifest CAS baseline — the durable file. Must only be called while
-     * the facade Mutex is held by the owning ChapterTranslationStore.
-     */
+    /** Manifest CAS baseline. Call only while the owning store mutex is held. */
     internal fun casBaselineManifest(): ChapterArtifactManifest? = readManifest()
 
     // Callers hold the owning ChapterTranslationStore facade Mutex.

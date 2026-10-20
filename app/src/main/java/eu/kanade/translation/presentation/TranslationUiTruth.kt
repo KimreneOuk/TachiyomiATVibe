@@ -96,7 +96,7 @@ object TranslationUiTruth {
      * @param outcome   the scheduler's last typed outcome for this intent, if any.
      * @param durable   the durable display projection of the page.
      * @param partial   durable manifest fact: the committed result is partial.
-     * @param exhausted the  ledger says this page exhausted its attempts.
+     * @param exhausted the current request reports that retries are exhausted.
      * @param cancelled an explicit paid-work cancellation was acknowledged.
      */
     fun forManualOutcome(

@@ -384,13 +384,6 @@ class TranslationManager private constructor(
         },
     ) = reconcilePendingRequestsForStartupImpl(downloadQueueChapterIds, resolveTranslation, hasDownloadedFiles)
 
-    internal suspend fun reconcileAttemptLedgersForStartup(
-        chapterIds: Set<Long>,
-        resolveStore: TranslationStoreResolver = TranslationStoreResolver { chapterId ->
-            activeStores.get(chapterId)
-        },
-    ) = reconcileAttemptLedgersForStartupImpl(chapterIds, resolveStore)
-
     internal fun admitRestoredPendingTranslation(translation: Translation, expectedGeneration: Long) = admitRestoredPendingTranslationImpl(translation, expectedGeneration)
 
     // The mutex stays on the manager so both public stop paths serialize through the same owner.

@@ -217,6 +217,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                         )
                     }
                     if (durableManifest != plan.manifest) {
+                        if (durableManifest != null) store.artifactManifest = durableManifest
                         return@withLock ChapterTranslationStore.PageRekeyOutcome.Rejected(
                             "durable manifest changed during re-key preparation",
                         )
@@ -282,6 +283,10 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                             store.testSeams.afterRekeyManifestPublicationBeforeLiveSwap?.invoke()
                         }
                         is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                            store.publicationBridge.rebaseManifestAfterStaleRejection(
+                                checkNotNull(artifact),
+                                outcome.reason,
+                            )
                             logcat(LogPriority.WARN) {
                                 "TachiyomiAT artifact page re-key publication rejected: ${outcome.reason}"
                             }
@@ -565,8 +570,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
             manifest != null &&
             moves.keys.any { oldKey ->
                 oldKey in manifest.pages ||
-                    manifest.durableFailures.values.any { it.pageKey == oldKey } ||
-                    oldKey in manifest.sourceShaByPageKey
+                    manifest.durableFailures.values.any { it.pageKey == oldKey }
             }
         val oldArtifactContentHashes = moves.keys.associateWith { oldKey ->
             val record = manifest?.pages?.get(oldKey)
@@ -612,7 +616,6 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         if (store.retiredCleanedImages.containsKey(pageKey)) return false
         val manifest = store.artifactManifest ?: return placeholderRecordLocked(pageKey)
         if (manifest.pages.containsKey(pageKey)) return false
-        if (manifest.sourceShaByPageKey.containsKey(pageKey)) return false
         if (manifest.durableFailures.values.any { it.pageKey == pageKey }) return false
         return placeholderRecordLocked(pageKey)
     }
@@ -674,19 +677,12 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
             val newMapKey = "$newPageKey:${failure.stage.name}"
             if (updatedFailures.put(newMapKey, updated) != null) return null
         }
-        val updatedSourceSha = LinkedHashMap<String, String>()
-        base.sourceShaByPageKey.forEach { (oldKey, sourceSha) ->
-            val newKey = moves[oldKey] ?: oldKey
-            if (updatedSourceSha.put(newKey, sourceSha) != null) return null
-        }
         return base.copy(
             pages = prepared.pages,
             durableFailures = updatedFailures,
-            sourceShaByPageKey = updatedSourceSha,
             expectedPageCount = maxOf(
                 base.expectedPageCount ?: 0,
                 prepared.pages.size,
-                updatedSourceSha.size,
             ),
             updatedAtEpochMs = System.currentTimeMillis(),
         )
@@ -711,8 +707,11 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                 }
                 return null
             }
-            is ChapterArtifactEngine.TransactionOutcome.Rejected -> logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact page deletion rejected: pageKey=$pageKey reason=${outcome.reason}"
+            is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
+                store.publicationBridge.rebaseManifestAfterStaleRejection(artifact, outcome.reason)
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT artifact page deletion rejected: pageKey=$pageKey reason=${outcome.reason}"
+                }
             }
         }
         return (outcome as? ChapterArtifactEngine.TransactionOutcome.Rejected)?.reason

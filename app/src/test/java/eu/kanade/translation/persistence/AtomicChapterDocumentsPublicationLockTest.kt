@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
  * `name` under a PROCESS-WIDE per-document-name lock (companion-object state).
  * The temp name is deterministic, so two in-process writers to the same
  * document from DIFFERENT [AtomicChapterDocuments] instances (the device
- * race: batch preflight publishing the run record vs. the >8-page open path's
+ * race: batch preflight publishing the chapter manifest vs. the >8-page open path's
  * background artifact-health manifest republisher) used to
  * collide on `name.tmp` and interleave the rotation — the loser returned a
  * mechanical `false` that every caller mapped to a fatal Rejected.

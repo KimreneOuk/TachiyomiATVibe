@@ -13,10 +13,10 @@ enum class BatchStatusLineKind {
     QUEUED_READY,
     PAUSED,
 
-    /** The run record says the resumed run is revalidating sources. */
+    /** The current batch request is revalidating sources. */
     REBUILDING,
 
-    /** The run record says the resumed run is adopting durable page work. */
+    /** The current batch request is adopting reusable page work. */
     RESTORING,
     BUILDING_CONTEXT,
     FIRST_PASS_STAGES,

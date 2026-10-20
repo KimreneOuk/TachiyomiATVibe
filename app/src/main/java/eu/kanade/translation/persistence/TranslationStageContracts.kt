@@ -12,7 +12,7 @@ import eu.kanade.translation.model.StageFingerprints
  *
  * - [MANUAL]: a reader tap / foreground single-page intent. Evicts an
  *   in-flight [AUTO] lease at acquisition (fenced fail-closed for the evicted
- *   holder) and waits-and-attaches on [BATCH] (never preempts it).
+ *   holder) and is denied while [BATCH] owns the page.
  * - [AUTO]: reader-side automatic maintenance (rolling auto window,
  *   stranded-page sweep). Never preempts anything.
  * - [BATCH]: an ordered chapter batch run.

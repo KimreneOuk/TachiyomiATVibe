@@ -18,7 +18,6 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.persistence.ArtifactManifestProbe
-import eu.kanade.translation.persistence.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterStoreOpener

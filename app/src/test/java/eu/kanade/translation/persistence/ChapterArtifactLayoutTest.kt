@@ -51,15 +51,6 @@ class ChapterArtifactLayoutTest {
     }
 
     @Test
-    fun `control characters and traversal components cannot escape the tree`() {
-        val layout = ChapterArtifactLayout("c")
-        val traversing = layout.ocrCheckpointFile("p", "../../outside")
-        traversing.startsWith("c_artifacts/ocr/${layout.pageSegment("p")}/f-") shouldBe true
-        ChapterArtifactLayout.isSafeSegment(traversing.substringAfterLast('/').removeSuffix(".json")) shouldBe true
-        layout.isManagedPath(traversing) shouldBe true
-    }
-
-    @Test
     fun `file extensions are strictly validated`() {
         val layout = ChapterArtifactLayout("c")
         layout.imageFile("p", "g", "fp", "jpg").startsWith(
@@ -107,42 +98,24 @@ class ChapterArtifactLayoutTest {
             "c_artifacts/pages",
             "c_artifacts/context",
             "c_artifacts/generations",
-            // The attempt-ledger sidecar directory.
-            "c_artifacts/attempts",
-            // Versioned sidecar directories.
-            "c_artifacts/runs",
-            "c_artifacts/ocr",
             "c_artifacts/envelopes",
         )
     }
 
     @Test
-    fun `T924 sidecar names are content-addressed, deterministic, and managed`() {
+    fun `envelope plan names are content-addressed, deterministic, and managed`() {
         val layout = ChapterArtifactLayout("c")
         val fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         val segment = "f-${sha256Hex(fingerprint)}"
 
-        // Chapter-scoped kinds hash the content fingerprint into f-<sha256>.json.
-        val run = layout.runRecordFile(fingerprint)
-        run shouldBe "c_artifacts/runs/$segment.json"
-        run shouldBe layout.runRecordFile(fingerprint)
-        layout.envelopePlanFile(fingerprint) shouldBe "c_artifacts/envelopes/$segment.json"
-        listOf(
-            run,
-            layout.envelopePlanFile(fingerprint),
-        ).forEach { path -> layout.isManagedPath(path) shouldBe true }
+        val envelope = layout.envelopePlanFile(fingerprint)
+        envelope shouldBe "c_artifacts/envelopes/$segment.json"
+        envelope shouldBe layout.envelopePlanFile(fingerprint)
+        layout.isManagedPath(envelope) shouldBe true
 
-        // Page-scoped kinds nest under the injective page segment.
-        val ocr = layout.ocrCheckpointFile("pg/1.jpg", fingerprint)
-        ocr shouldBe "c_artifacts/ocr/${layout.pageSegment("pg/1.jpg")}/$segment.json"
-        ocr shouldBe layout.ocrCheckpointFile("pg/1.jpg", fingerprint)
-        layout.ocrCheckpointFile("pg_1.jpg", fingerprint) shouldNotBe ocr
-        listOf(ocr).forEach { path -> layout.isManagedPath(path) shouldBe true }
-
-        // Distinct content fingerprints never share a sidecar name.
+        // Distinct content fingerprints never share a plan name.
         val other = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-        layout.runRecordFile(other) shouldNotBe run
-        layout.ocrCheckpointFile("pg/1.jpg", other) shouldNotBe ocr
+        layout.envelopePlanFile(other) shouldNotBe envelope
     }
 
     private fun sha256Hex(value: String): String =

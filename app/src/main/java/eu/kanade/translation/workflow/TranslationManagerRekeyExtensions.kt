@@ -18,7 +18,6 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.persistence.ArtifactManifestProbe
-import eu.kanade.translation.persistence.ChapterAttemptLedgerDocument
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterStoreOpener
@@ -264,14 +263,11 @@ internal suspend fun TranslationManager.attemptDownloadRekeyImpl(pending: Transl
                         if (pages.isEmpty()) {
                             val manifestHasPriorEvidence = artifactManifest?.let { manifest ->
                                 manifest.pages.isNotEmpty() ||
-                                    manifest.sourceShaByPageKey.isNotEmpty() ||
                                     manifest.durableFailures.isNotEmpty() ||
                                     manifest.expectedPageCount != null ||
                                     manifest.expectedPageCountTrusted ||
                                     manifest.partialBatchInfo != null ||
                                     manifest.activeCandidateGenerationIds.isNotEmpty() ||
-                                    manifest.activeRun != null ||
-                                    manifest.ocrCheckpoints.isNotEmpty() ||
                                     manifest.envelopePlan != null ||
                                     manifest.cutoverAtEpochMs != null
                             } == true

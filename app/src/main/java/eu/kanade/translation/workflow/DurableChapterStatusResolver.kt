@@ -135,9 +135,7 @@ internal class DurableChapterStatusResolver(
         // preserved untouched); corrupt evidence resolves null rather than
         // masquerading as a cleanly new chapter.
         val state = (read as? DurableChapterRead.Supported)?.state ?: return null
-        return ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { _ ->
-            state.activeRunRecord
-        }
+        return ChapterStatusProjection.artifactStatus(state.statusProjectionData())
     }
 
     fun findTranslationDocument(

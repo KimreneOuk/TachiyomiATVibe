@@ -45,7 +45,7 @@ internal data class StoreStatusProjectionData(
 
 /**
  * Pure durable status projection (P3D / P4 cutover). The decision rules read
- * only the plain-data inputs plus one run-record lookup, so the live store and the
+ * only page records and expected page count, so the live store and the
  * opener's file-only durable read project IDENTICAL statuses from identical
  * durable truth. Manifest is the sole persistence authority.
  */
@@ -67,15 +67,9 @@ internal object ChapterStatusProjection {
      * Derives durable artifact status without consulting the flat-file summary sidecar.
      * Manifest is the sole persistence authority.
      */
-    fun artifactStatus(
-        data: StoreStatusProjectionData,
-        readRunRecord: (SidecarPointer) -> ChapterRunRecord?,
-    ): Translation.State? {
+    fun artifactStatus(data: StoreStatusProjectionData): Translation.State? {
         val manifest = data.manifest ?: return null
         val pagesSnapshot = data.pagesSnapshot
-        if (manifest.activeRun != null) {
-            completedRunRecordStatus(manifest, pagesSnapshot, readRunRecord)?.let { return it }
-        }
         val visiblePages = data.displaySnapshot
         val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
             pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
@@ -156,53 +150,6 @@ internal object ChapterStatusProjection {
         }
     }
 
-    /**
-     * Artifact manifest page records are consulted only
-     * when the active run record is durably COMPLETE. Trusted expected-page
-     * shortfalls count as unevidenced. A committed display bundle, a
-     * TEXTLESS_COMPLETE state, or an open candidate snapshot is completion
-     * evidence; partial translation evidence yields READY_WITH_WARNINGS.
-     */
-    private fun completedRunRecordStatus(
-        manifest: ChapterArtifactManifest,
-        pagesSnapshot: Map<String, PageTranslationView>,
-        readRunRecord: (SidecarPointer) -> ChapterRunRecord?,
-    ): Translation.State? {
-        val record = readRunRecord(manifest.activeRun ?: return null) ?: return null
-        if (record.state != ChapterRunState.COMPLETE) return null
-        val pageRecords = manifest.pages.values
-        if (pageRecords.isEmpty()) return null
-        var doneCount = 0
-        var partialCount = 0
-        var unevidencedCount = 0
-        pageRecords.forEach { pageRecord ->
-            val projection = pageRecord.toArtifactDisplayProjection()
-            val livePartial = pagesSnapshot[pageRecord.pageKey]?.translationStatus ==
-                StageStatus.PARTIAL
-            val done = projection.displayReady ||
-                projection.isTextless ||
-                pageRecord.candidate != null ||
-                pageRecord.displayState.hasCommittedDisplay ||
-                pageRecord.displayState == PageDisplayState.TEXTLESS_COMPLETE
-            if (done) {
-                doneCount++
-                if (pageRecord.translation?.status == ArtifactStageStatus.PARTIAL || livePartial) {
-                    partialCount++
-                }
-            } else {
-                unevidencedCount++
-            }
-        }
-        manifest.expectedPageCount
-            ?.takeIf { manifest.expectedPageCountTrusted }
-            ?.let { expected -> (expected - pageRecords.size).coerceAtLeast(0) }
-            ?.let { shortfall -> unevidencedCount += shortfall }
-        return when {
-            unevidencedCount > 0 -> Translation.State.ERROR
-            partialCount > 0 -> Translation.State.READY_WITH_WARNINGS
-            else -> Translation.State.TRANSLATED
-        }
-    }
 }
 
 // Durable status and failure views are projected from one store snapshot. The
@@ -233,10 +180,7 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     /**
      * Derives durable artifact status without consulting the flat-file summary sidecar.
      */
-    fun artifactStatus(): Translation.State? =
-        ChapterStatusProjection.artifactStatus(projectionData()) { pointer ->
-            store.readRunRecord(pointer)
-        }
+    fun artifactStatus(): Translation.State? = ChapterStatusProjection.artifactStatus(projectionData())
 }
 
 

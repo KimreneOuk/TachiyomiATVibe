@@ -2,17 +2,6 @@ package eu.kanade.translation.persistence
 
 import com.hippo.unifile.UniFile
 
-/** Bounded scalar record of an attempt's own verified artifact drain progress. */
-sealed interface CheckpointOcrResult {
-    data class Committed(
-        val snapshot: ChapterTranslationStore.PageSnapshot,
-        val manifest: ChapterArtifactManifest,
-        val ocrContentFingerprint: String? = null,
-    ) : CheckpointOcrResult
-
-    data class Rejected(val reason: String) : CheckpointOcrResult
-}
-
 /** Durable admission result for a page mutation. */
 sealed interface MutationAdmission {
     data object Granted : MutationAdmission

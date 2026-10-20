@@ -77,7 +77,6 @@ class TranslationManagerDeleteResetOrderingTest {
             log("storeFlush")
             true
         }
-        coEvery { store.retireActiveRun(any()) } returns true
         return store
     }
 

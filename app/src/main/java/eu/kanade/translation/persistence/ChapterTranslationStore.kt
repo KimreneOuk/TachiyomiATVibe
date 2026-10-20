@@ -20,9 +20,7 @@ import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -114,18 +112,6 @@ class ChapterTranslationStore internal constructor(
         crossinline block: (ChapterArtifactEngine) -> T,
     ): T? = mutex.withLock {
         artifactEngine?.let(block)
-    }
-
-    /** Read-only run-record projection used by progress/status consumers. */
-    internal fun readActiveRunRecord(): ChapterRunRecord? {
-        return readRunRecord(artifactManifest?.activeRun)
-    }
-
-    /** Reads the record addressed by one already-captured manifest pointer. */
-    internal fun readRunRecord(pointer: SidecarPointer?): ChapterRunRecord? {
-        val pointer = pointer?.takeIf { it.isWellFormed() } ?: return null
-        val artifact = artifactEngine ?: return null
-        return (artifact.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
     }
 
     /** Read-only manifest projection for context/status consumers. */
@@ -289,10 +275,6 @@ class ChapterTranslationStore internal constructor(
         companion object Key : CoroutineContext.Key<GenerationContext>
     }
 
-    // Attempt records are written under the store mutex; persistence failures
-    // fail open, and memory-only stores keep no durable ledger.
-    internal val attemptLedger = ChapterAttemptLedger(this)
-
     /**
      * Publication collaborator (Phase 7 S4). Owns mutation admission, lazy
      * artifact-store initialization, the registration CAS, and the candidate
@@ -379,38 +361,6 @@ class ChapterTranslationStore internal constructor(
 
     internal fun isLazyGenerationCurrent(expectedGeneration: Long): Boolean =
         !defunct && generation == expectedGeneration
-
-    /**
-     * Queues disk work behind the store's persistence worker.  The returned
-     * handle is a durability result, not display admission: callers may render
-     * from the live state immediately and await it at a terminal commit/barrier.
-     *
-     * Receipt handshake: [receipt] is the CALLER-HELD completion channel and
-     * the returned handle. The store completes it EXACTLY once, normally, and
-     * exclusively: `true` only after [work] physically returned, `false` when
-     * the task was rejected up front (defunct store, stale generation, no
-     * persistence target, closed drain scope), discarded before its turn,
-     * cancelled or failed mid-run — or when the caller did not stay enrollable
-     * up to the queue mutation (cancellation before the lock). A `false`
-     * before [work] ran means the work never started; a completion of either
-     * value after queueing means the work already exited, so a resource owner
-     * may treat it as borrower-exit proof. An enrolled caller must never
-     * complete the receipt itself — a fabricated completion would look like
-     * borrower exit to a resource owner. Callers enroll under
-     * [kotlinx.coroutines.NonCancellable]; once this function is entered the
-     * receipt always terminates.
-     */
-    internal suspend fun enqueueLazyPersistence(
-        expectedGeneration: Long,
-        receipt: CompletableDeferred<Boolean>,
-        work: suspend () -> Boolean,
-    ): Deferred<Boolean> = writeDrain.enqueueLazyPersistence(expectedGeneration, receipt, work)
-
-    internal fun takeLazyPersistenceTaskLocked(): LazyPersistenceTask? = writeDrain.takeLazyPersistenceTaskLocked()
-
-    internal fun hasPendingLazyPersistenceLocked(): Boolean = writeDrain.hasPendingLazyPersistenceLocked()
-
-    internal suspend fun flushPendingLazyMutations(): Boolean = writeDrain.flushPendingLazyMutations()
 
     @Volatile
     internal var defunct = false
@@ -511,50 +461,6 @@ class ChapterTranslationStore internal constructor(
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
         statusProjector.durableFailuresSnapshot()
 
-    // ------------------------------------------------------------------
-    // Durable attempt ledger.
-    // All methods delegate to store/ChapterAttemptLedger.kt under the store
-    // mutex. Ledger writes are fail-open; only AUTO origins can be refused
-    // (the crash-loop cap binds auto-retry loops, never the user).
-    // ------------------------------------------------------------------
-
-    /**
-     * Records a started paid attempt BEFORE the provider call. Returns false
-     * only when [AttemptOrigin.AUTO] is refused by the consecutive-attempt cap.
-     */
-    suspend fun recordAttemptStart(
-        pageKey: String,
-        providerKeyHash: String,
-        origin: AttemptOrigin,
-        generation: Long = currentGeneration,
-    ): Boolean = recordAttemptStart(pageKey, providerKeyHash, origin, generation, null)
-
-    @JvmName("recordAttemptStartWithFingerprint")
-    suspend fun recordAttemptStart(
-        pageKey: String,
-        providerKeyHash: String,
-        origin: AttemptOrigin,
-        generation: Long = currentGeneration,
-        requestContextFingerprint: String? = null,
-    ): Boolean = ChapterStoreAttempts.recordAttemptStart(
-        this, pageKey, providerKeyHash, origin, generation, requestContextFingerprint,
-    )
-
-    suspend fun autoAttemptAllowed(pageKey: String): Boolean =
-        ChapterStoreAttempts.autoAttemptAllowed(this, pageKey)
-
-    suspend fun resolveAttempt(pageKey: String) =
-        ChapterStoreAttempts.resolveAttempt(this, pageKey)
-
-    suspend fun consumeUnresolvedAttemptsAtStartup(): Map<String, Int> =
-        ChapterStoreAttempts.consumeUnresolvedAttemptsAtStartup(this)
-
-    suspend fun applyAttemptCapPause(pageKey: String, consecutiveUnresolved: Int): Boolean =
-        ChapterStoreAttempts.applyAttemptCapPause(this, pageKey, consecutiveUnresolved)
-
-    suspend fun clearAttemptCapForManualRetry(pageKey: String): Boolean =
-        ChapterStoreAttempts.clearAttemptCapForManualRetry(this, pageKey)
-
     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
         generation++
         logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
@@ -581,28 +487,12 @@ class ChapterTranslationStore internal constructor(
     suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) =
         pageStageLeaseTable.releasePageStageLease(pageKey, origin)
 
-    /**
-     *   envelope-completion release — removes the page's BATCH lease
-     * only while no sibling batch component has attached to the same token
-     * (see `PageStageLeaseTable.releasePageStageLeaseIfUnattached`); returns
-     * true when this call removed the record.
-     */
-    suspend fun releasePageStageLeaseIfUnattached(
+    /** Releases only the lease record held under [expectedToken]. */
+    suspend fun releasePageStageLease(
         pageKey: String,
         origin: PageWriteOrigin,
         expectedToken: Long,
-    ): Boolean = pageStageLeaseTable.releasePageStageLeaseIfUnattached(pageKey, origin, expectedToken)
-
-    /**
-     *  track V: undoes a same-origin sibling attach (see
-     * `PageStageLeaseTable.detachPageStageLeaseIfAttached`); returns true when
-     * an attach was undone.
-     */
-    suspend fun detachPageStageLeaseIfAttached(
-        pageKey: String,
-        origin: PageWriteOrigin,
-        expectedToken: Long,
-    ): Boolean = pageStageLeaseTable.detachPageStageLeaseIfAttached(pageKey, origin, expectedToken)
+    ): Boolean = pageStageLeaseTable.releasePageStageLease(pageKey, origin, expectedToken)
 
     /** Cancels the active artifact candidate and releases its matching writer lease. */
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
@@ -614,21 +504,7 @@ class ChapterTranslationStore internal constructor(
 
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
 
-    /**
-     *   true while [pageKey] holds an ACTIVE page-stage lease acquired
-     * by [PageWriteOrigin.BATCH] — i.e. a batch run currently owns the page's
-     * stage state and will release the lease itself at the owning stage step or
-     * run teardown. Lock-free reader over the lease table's
-     * `synchronized(pageLeases)` map (same discipline as [pageLeaseOwner]); a
-     * momentary race with a concurrent acquire/release is benign for the
-     * cancel-writer gating this query exists for. Reader/manual cancel writers
-     * must SKIP pages that answer true: a cancel write built from the current
-     * snapshot carries the batch's own lease token, sails through the write
-     * fence, and bumps the page version mid-stage — the flagged batch lane's
-     * `checkpointOcr` then rejects (CHECKPOINT_REJECTED) on a healthy page, or
-     * a mid-TRANSLATE write fails `mergeTranslation` and pauses the whole run
-     * after the provider call was paid.
-     */
+    /** Whether [pageKey] currently holds a BATCH page-stage lease. */
     fun hasActiveBatchStageLease(pageKey: String): Boolean =
         pageStageLeaseTable.pageLeaseOwner(pageKey) == PageWriteOrigin.BATCH
 
@@ -646,14 +522,6 @@ class ChapterTranslationStore internal constructor(
         description: String,
         patch: (PageTranslation?) -> PageTranslation,
     ): PatchResult = pageMutations.patchPage(pageKey, expected, description, patch)
-
-    internal suspend fun patchPage(
-        pageKey: String,
-        expected: PatchPrecondition,
-        description: String,
-        artifactLease: AttemptArtifactLease?,
-        patch: (PageTranslation?) -> PageTranslation,
-    ): PatchResult = pageMutations.patchPage(pageKey, expected, description, artifactLease, patch)
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) =
         pageMutations.updatePage(pageKey, update)
@@ -715,60 +583,6 @@ class ChapterTranslationStore internal constructor(
         description: String = "stage:render",
     ): StagePatchResult = stageMerges.mergeRender(patch, description)
 
-    suspend fun checkpointOcr(
-        pageKey: String,
-        generation: Long,
-        expectedPageVersion: Long,
-        expectedLeaseToken: Long,
-        expectedCandidateGenerationId: String?,
-        expectedArtifactPageVersion: Long?,
-        expectedDependencyFingerprint: String?,
-        sourceOrientation: String? = null,
-        sourceSha256: String? = null,
-        expectedPriorOcrFingerprints: List<String>? = null,
-        mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
-        nowEpochMs: Long = System.currentTimeMillis(),
-        description: String = "ocr checkpoint",
-    ): CheckpointOcrResult = stageMerges.checkpointOcr(
-        pageKey = pageKey,
-        generation = generation,
-        expectedPageVersion = expectedPageVersion,
-        expectedLeaseToken = expectedLeaseToken,
-        expectedCandidateGenerationId = expectedCandidateGenerationId,
-        expectedArtifactPageVersion = expectedArtifactPageVersion,
-        expectedDependencyFingerprint = expectedDependencyFingerprint,
-        sourceOrientation = sourceOrientation,
-        sourceSha256 = sourceSha256,
-        expectedPriorOcrFingerprints = expectedPriorOcrFingerprints,
-        mode = mode,
-        nowEpochMs = nowEpochMs,
-        description = description,
-    )
-
-    suspend fun hydrateOcrFromCheckpoint(
-        pageKey: String,
-        generation: Long,
-        expectedPageVersion: Long,
-        expectedLeaseToken: Long,
-        expectedCandidateGenerationId: String?,
-        expectedDependencyFingerprint: String?,
-        expectedArtifactPageVersion: Long?,
-        checkpointPointer: SidecarPointer,
-        observedSourceSha256: String?,
-        description: String = "checkpoint:hydrate:ocr",
-    ): StagePatchResult = stageMerges.hydrateOcrFromCheckpoint(
-        pageKey,
-        generation,
-        expectedPageVersion,
-        expectedLeaseToken,
-        expectedCandidateGenerationId,
-        expectedDependencyFingerprint,
-        expectedArtifactPageVersion,
-        checkpointPointer,
-        observedSourceSha256,
-        description,
-    )
-
     fun resolveDisplayPage(pageKey: String): PageTranslationView? =
         displayPublication.resolveDisplayPage(pageKey)
 
@@ -795,9 +609,6 @@ class ChapterTranslationStore internal constructor(
 
     suspend fun demoteCommittedDisplay(pageKey: String, reason: String): String? =
         displayPublication.demoteCommittedDisplay(pageKey, reason)
-
-    suspend fun retireActiveRun(reason: String): Boolean =
-        displayPublication.retireActiveRun(reason)
 
     internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean =
         displayPublication.cancelArtifactCandidateLocked(pageKey)
@@ -988,4 +799,3 @@ class ChapterTranslationStore internal constructor(
         )
     }
 }
-

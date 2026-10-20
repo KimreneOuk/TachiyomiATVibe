@@ -8,7 +8,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.workflow.withDurablePause
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -91,8 +90,6 @@ class DurableChapterReadProjectionTest {
         "Chapter 1.json",
     )
 
-    private fun hex(seed: String): String = StageFingerprints.sha256Hex(seed.toByteArray())
-
     @Test
     fun `supported read projects the committed status with zero writes`() = runTest {
         writeCommittedChapter()
@@ -104,7 +101,7 @@ class DurableChapterReadProjectionTest {
         state.manifest.pages.keys shouldBe setOf("page.jpg")
         state.pages.keys shouldBe setOf("page.jpg")
         state.display.keys shouldBe setOf("page.jpg")
-        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { null } shouldBe
+        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) shouldBe
             Translation.State.READY_WITH_WARNINGS
         treeSnapshot() shouldBe before
     }
@@ -124,7 +121,7 @@ class DurableChapterReadProjectionTest {
         // untouched and nothing is quarantined or promoted.
         val state = (read as DurableChapterRead.Supported).state
         state.manifest.expectedPageCount shouldBe 1
-        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { null } shouldBe
+        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) shouldBe
             Translation.State.READY_WITH_WARNINGS
         manifest.readText() shouldBe "{ broken json"
         treeSnapshot() shouldBe before
@@ -205,7 +202,7 @@ class DurableChapterReadProjectionTest {
 
         val read = readChapter()
         val state = (read as DurableChapterRead.Supported).state
-        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { null } shouldBe
+        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) shouldBe
             Translation.State.PAUSED
         val paused = TranslationProgressSnapshot.empty(
             7L,
@@ -217,67 +214,22 @@ class DurableChapterReadProjectionTest {
     }
 
     @Test
-    fun `a complete run record over committed pages projects translated`() = runTest {
-        val runRecord = ChapterRunRecord(
-            runId = "run-1",
-            state = ChapterRunState.COMPLETE,
-            frozenConfig = RunConfigSnapshot(
-                sourceLang = "en",
-                targetLang = "ja",
-                ocrEngine = "manga-ocr",
-                ocrModelHash = hex("ocr"),
-                detectorModelHash = hex("det"),
-                inpaintMode = "auto",
-                providerKey = "gemini:gemini-2.5",
-                protocolVersion = 1,
-                readingOrderVersion = 1,
-            ),
-            frozenRunConfigFingerprint = hex("cfg"),
-            orderedSourceDigest = hex("src"),
-            analysisPolicyFingerprint = hex("ap"),
-            envelopePolicyFingerprint = hex("ep"),
-            createdAtEpochMs = 1L,
-            updatedAtEpochMs = 2L,
-        )
-        val manifest = ChapterArtifactManifest(
-            chapterKey = "Chapter 1",
-            pages = mapOf(
-                "001.jpg" to PageArtifactRecord(
-                    pageKey = "001.jpg",
-                    displayState = PageDisplayState.DISPLAY_READY,
-                    committed = CommittedBundleMetadata(
-                        generationId = "g1",
-                        displayBase = DisplayBaseReference(
-                            kind = DisplayBaseKind.CLEANED_IMAGE,
-                            fileName = "001.cleaned.jpg",
-                            validated = true,
-                        ),
-                        promotedAtEpochMs = 1L,
-                    ),
-                ),
-            ),
-            expectedPageCount = 1,
-            expectedPageCountTrusted = true,
-            activeRun = SidecarPointer(
-                fileName = "runs/run-1.json",
-                schemaVersion = ChapterRunRecord.SCHEMA_VERSION,
-                contentFingerprint = hex("run"),
-            ),
-        )
+    fun `trusted expected page count and committed records project translated`() = runTest {
+        writeCommittedChapter()
+        val writtenManifest = ArtifactDocumentJson.decodeFromString<ChapterArtifactManifest>(manifestFile().readText())
         manifestFile().writeText(
-            ArtifactDocumentJson.encodeToString(ChapterArtifactManifest.serializer(), manifest),
-        )
-        File(mangaDir, "runs").mkdirs()
-        File(mangaDir, "runs/run-1.json").writeText(
-            ArtifactDocumentJson.encodeToString(ChapterRunRecord.serializer(), runRecord),
+            ArtifactDocumentJson.encodeToString(
+                ChapterArtifactManifest.serializer(),
+                writtenManifest.copy(expectedPageCount = 1, expectedPageCountTrusted = true),
+            ),
         )
         val before = treeSnapshot()
 
         val read = readChapter()
 
         val state = (read as DurableChapterRead.Supported).state
-        state.activeRunRecord?.state shouldBe ChapterRunState.COMPLETE
-        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) { state.activeRunRecord } shouldBe
+        state.manifest.expectedPageCount shouldBe 1
+        ChapterStatusProjection.artifactStatus(state.statusProjectionData()) shouldBe
             Translation.State.TRANSLATED
         treeSnapshot() shouldBe before
     }

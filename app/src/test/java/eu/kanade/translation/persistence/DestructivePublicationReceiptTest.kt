@@ -146,7 +146,6 @@ class DestructivePublicationReceiptTest {
         val outcome = store.candidates.demoteLivePage(future, "page.jpg")
 
         val rejected = outcome.shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
-        rejected.incompletePublication shouldBe null
         io.writtenNames shouldBe emptyList()
         String(io.read(manifestName)!!) shouldBe json.encodeToString(future)
     }

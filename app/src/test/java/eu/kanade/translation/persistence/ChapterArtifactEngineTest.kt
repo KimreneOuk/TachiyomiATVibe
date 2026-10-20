@@ -206,72 +206,6 @@ class ChapterArtifactEngineTest {
     }
 
     @Test
-    fun `recordDurableFailure reports NotStored on write failure and keeps the prior manifest`() {
-        val io = FakeChapterDocumentIo()
-        val store = artifactStore(io)
-        val first = store.loadArtifact(seededSnapshot())
-        val failure = DurableFailureMetadata(
-            pageKey = "page.jpg",
-            stage = ArtifactStage.TRANSLATION,
-            status = ArtifactStageStatus.FAILED_TERMINAL,
-            category = FailureCategory.PROVIDER_REFUSAL,
-            retryCount = 3,
-            lastFailureMessage = "refused",
-            lastFailedAtEpochMs = 100L,
-        )
-
-        io.failWrites = true
-        val outcome = store.progress.recordDurableFailure(first.manifest, failure)
-        val notStored = outcome.shouldBeInstanceOf<ChapterProgressRecords.RecordOutcome.NotStored>()
-        notStored.reason shouldNotBe ""
-        io.failWrites = false
-        store.readManifest() shouldBe first.manifest
-    }
-
-    @Test
-    fun `recordDurableFailure reports NotStored on rename failure`() {
-        val io = FakeChapterDocumentIo()
-        val store = artifactStore(io)
-        val first = store.loadArtifact(seededSnapshot())
-        val failure = DurableFailureMetadata(
-            pageKey = "page.jpg",
-            stage = ArtifactStage.OCR,
-            status = ArtifactStageStatus.FAILED_TERMINAL,
-            category = FailureCategory.SOURCE,
-            retryCount = 1,
-            lastFailedAtEpochMs = 100L,
-        )
-
-        // Make the final temp->primary rename fail.
-        io.ownedRenamesToFail += AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
-        val outcome = store.progress.recordDurableFailure(first.manifest, failure)
-        outcome.shouldBeInstanceOf<ChapterProgressRecords.RecordOutcome.NotStored>()
-        // Prior manifest still parses as the authoritative document.
-        store.readManifest() shouldBe first.manifest
-    }
-
-    @Test
-    fun `recordDurableFailure is durable on the happy path`() {
-        val io = FakeChapterDocumentIo()
-        val store = artifactStore(io)
-        val manifest = store.loadArtifact(seededSnapshot()).manifest
-        val failure = DurableFailureMetadata(
-            pageKey = "page.jpg",
-            stage = ArtifactStage.TRANSLATION,
-            status = ArtifactStageStatus.FAILED_TERMINAL,
-            category = FailureCategory.PROVIDER_REFUSAL,
-            retryCount = 3,
-            lastFailureMessage = "refused",
-            lastFailedAtEpochMs = 100L,
-            failureFingerprint = "fp",
-        )
-        val outcome = store.progress.recordDurableFailure(manifest, failure)
-        val stored = outcome.shouldBeInstanceOf<ChapterProgressRecords.RecordOutcome.Stored>()
-        stored.manifest.durableFailures.getValue("page.jpg:TRANSLATION") shouldBe failure
-        store.readManifest().shouldNotBeNull().durableFailures.getValue("page.jpg:TRANSLATION") shouldBe failure
-    }
-
-    @Test
     fun `reconcileRetention uses canonical layout paths for all managed subtrees`() {
         val io = FakeChapterDocumentIo()
         val committedImage = layout.imageFile("0001.jpg", "g1", "fp1", "jpg")
@@ -569,7 +503,7 @@ class ChapterArtifactEngineTest {
     }
 
     @Test
-    fun `immediate promotion final manifest failure leaves a readable candidate after reopen`() {
+    fun `immediate promotion failure leaves the prior candidate authoritative`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
         val opened = store.candidates.openCandidate(
@@ -596,10 +530,13 @@ class ChapterArtifactEngineTest {
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
 
         outcome.reason.contains("manifest publication failed") shouldBe true
-        val reopened = transactionStore(io).load().manifest
+        val reopenedStore = transactionStore(io)
+        val reopened = reopenedStore.load().manifest
         val candidate = reopened.pages.getValue("page.jpg").candidate.shouldNotBeNull()
-        candidate.pageSnapshotFileName shouldBe layout.candidatePageSnapshotFile("page.jpg", generationId)
-        transactionStore(io).readPageSnapshot(candidate.pageSnapshotFileName!!) shouldBe page
+        candidate.generationId shouldBe generationId
+        candidate.pageSnapshotFileName shouldBe null
+        reopenedStore.reconcileRetention(reopened)
+        io.files.containsKey(layout.committedPageSnapshotFile("page.jpg", generationId)) shouldBe false
     }
 
     @Test
@@ -730,7 +667,7 @@ class ChapterArtifactEngineTest {
             start.countDown()
 
             val outcomes = futures.map { it.get(5, TimeUnit.SECONDS) }
-            //  the second opener's stale-CAS rejection retries once
+            // The second opener's stale-CAS rejection is rebased explicitly below.
             // against the fresh manifest — where the first opener's committed
             // candidate has already advanced the page version. That is
             // GENUINE drift, so the retry rejects with the real drift reason,
@@ -740,7 +677,16 @@ class ChapterArtifactEngineTest {
             val rejected = outcomes
                 .filterIsInstance<ChapterArtifactEngine.TransactionOutcome.Rejected>()
                 .single()
-            rejected.reason shouldBe "stale page version: pageKey=page.jpg expected=0 actual=1"
+            rejected.reason.startsWith("stale manifest snapshot") shouldBe true
+            val durableBeforeRebase = artifact.readManifest().shouldNotBeNull()
+            val rebased = artifact.candidates.openCandidate(
+                manifest = durableBeforeRebase,
+                pageKey = "page.jpg",
+                origin = ArtifactOrigin.BATCH,
+                expectedPageVersion = 0L,
+                dependencyFingerprint = "concurrent-deps",
+            ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Rejected>()
+            rebased.reason shouldBe "stale page version: pageKey=page.jpg expected=0 actual=1"
             val committed = outcomes
                 .filterIsInstance<ChapterArtifactEngine.TransactionOutcome.Committed>()
                 .single()
@@ -811,9 +757,7 @@ class ChapterArtifactEngineTest {
         page.pageVersion shouldBe 3L
         page.committed.shouldNotBeNull().generationId shouldBe "g-1757040000000-0001jpg-5baa61e4"
         page.displayState shouldBe PageDisplayState.DISPLAY_READY
-        // New additive pointer fields load with neutral defaults.
-        manifest.activeRun shouldBe null
-        manifest.ocrCheckpoints shouldBe emptyMap()
+        // The retained envelope-plan pointer defaults to neutral state.
         manifest.envelopePlan shouldBe null
     }
 

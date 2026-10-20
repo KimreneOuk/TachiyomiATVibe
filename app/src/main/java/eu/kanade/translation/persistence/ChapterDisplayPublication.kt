@@ -205,33 +205,6 @@ internal class ChapterDisplayPublication(
         }
     }
 
-    /**
-     * Retires the artifact manifest\'s `activeRun` pointer under the store mutex.
-     */
-    suspend fun retireActiveRun(reason: String): Boolean {
-        if (store.isDefunct) return false
-        return mutex.withLock {
-            val artifact = store.artifactEngine ?: return@withLock false
-            val manifest = store.artifactManifest ?: return@withLock false
-            when (val outcome = artifact.progress.retireActiveRun(manifest, reason)) {
-                is TransactionOutcome.Committed -> {
-                    store.artifactManifest = outcome.manifest
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT artifact active run retired: chapter=${manifest.chapterKey} reason=$reason"
-                    }
-                    true
-                }
-                is TransactionOutcome.Rejected -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact active run retirement rejected: " +
-                            "chapter=${manifest.chapterKey} reject=${outcome.reason} resetReason=$reason"
-                    }
-                    false
-                }
-            }
-        }
-    }
-
     internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
         val artifact = store.artifactEngine ?: return true
         val manifest = store.artifactManifest ?: return true
@@ -241,6 +214,7 @@ internal class ChapterDisplayPublication(
             store.artifactManifest = outcome.manifest
             return true
         } else if (outcome is TransactionOutcome.Rejected) {
+            store.publicationBridge.rebaseManifestAfterStaleRejection(artifact, outcome.reason)
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact candidate cancel rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
@@ -266,12 +240,7 @@ internal class ChapterDisplayPublication(
                 null
             }
             is TransactionOutcome.Rejected -> {
-                outcome.incompletePublication?.let { receipt ->
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT artifact display demotion incomplete: pageKey=$pageKey " +
-                            "orphanFiles=${receipt.advancedFiles.size} reason=${receipt.failureReason}"
-                    }
-                }
+                store.publicationBridge.rebaseManifestAfterStaleRejection(artifact, outcome.reason)
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT artifact display demotion rejected: pageKey=$pageKey reason=${outcome.reason}"
                 }

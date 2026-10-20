@@ -85,22 +85,24 @@ object BatchProgressReconciler {
      * COMPLETED outcome the coordinator has already resolved every expected
      * page to a terminal state per `t924PageTerminalAtFinalize` (unresolved
      * pages make the chapter a retryable ERROR BEFORE finalize), so the
-     * COMPLETE record itself is the completion authority:
+     * live completed outcome reports that this request reached its terminal
+     * boundary:
      *
      *  - every expected page counts done — including pages MISSING from
-     *    [pageMap] entirely (the run's COMPLETE record covers them; the
-     *    durable per-page evidence lives in the manifest, consumed by the
-     *    run-record-aware `StoreStatusProjector.artifactStatus`);
+     *    [pageMap] entirely (the current coordinator resolved the expected
+     *    work set before reporting completion; durable chapter status is
+     *    projected separately from page records and the trusted expected count);
      *  - pages with `translationStatus == PARTIAL` count into the partial
      *    bucket (chapter READY_WITH_WARNINGS) instead of done;
      *  - no stranded pages and no failures are ever manufactured here.
      *
      * Use ONLY for COMPLETED outcomes — the strict [reconcile] remains the
      * projection for non-terminal shapes (the pause branch and the durable
-     * status projector when no COMPLETE run record owns the chapter).
+     * durable status projector, which reads page records and the trusted
+     * expected page count).
      * [activeGeneration] is accepted for signature parity with [reconcile]
      * and is deliberately unused: a COMPLETED run is generation-agnostic
-     * by definition.
+     * for this live progress snapshot.
      */
     fun reconcileFlaggedCompleted(
         pageMap: Map<String, PageTranslationView>,

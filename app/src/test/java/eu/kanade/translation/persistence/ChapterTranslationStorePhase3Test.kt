@@ -102,12 +102,13 @@ class ChapterTranslationStorePhase3Test {
         concurrent.count { it is LeaseAcquisition.Granted } shouldBe 1
         concurrent.count { it is LeaseAcquisition.Denied } shouldBe 1
         val granted = concurrent.filterIsInstance<LeaseAcquisition.Granted>().single().lease
-        val sameOwner = store.tryAcquirePageStageLease(
+        store.tryAcquirePageStageLease(
             "p1",
             PageStage.Inpaint,
             granted.origin,
-        ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
-        sameOwner.token shouldBe granted.token
+        ).shouldBeInstanceOf<LeaseAcquisition.Denied>()
+        store.pageLeaseOwner("p1") shouldBe granted.origin
+        store.snapshot("p1").leaseToken shouldBe granted.token
 
         val beforeRelease = store.snapshot("p1")
         store.releasePageStageLease("p1", granted.origin)

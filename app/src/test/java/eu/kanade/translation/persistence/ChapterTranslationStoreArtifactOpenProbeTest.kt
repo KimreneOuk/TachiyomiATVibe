@@ -403,6 +403,69 @@ class ChapterTranslationStoreArtifactOpenProbeTest {
     }
 
     @Test
+    fun `same lease accepts a forward artifact page version after a drain advances it`() = runTest {
+        writeArtifactChapter()
+        val store = openChapterStore()
+        val pageKey = "page.jpg"
+        val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val original = store.snapshot(pageKey)
+        val candidateSnapshot = store.updatePageGuarded(
+            pageKey,
+            original.precondition(),
+            "open candidate before lazy drain",
+        ) { page ->
+            page!!.copy(ocrStatus = StageStatus.RUNNING)
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>().snapshot
+        val engine = checkNotNull(store.artifactEngine)
+        val manifest = checkNotNull(store.artifactManifest)
+        val record = manifest.pages.getValue(pageKey)
+        record.candidate shouldNotBe null
+
+        val advanced = engine.publishSidecarPointers(
+            manifest = manifest,
+            sidecars = emptyList(),
+            updatePointers = { current ->
+                current.copy(
+                    pages = current.pages + (pageKey to record.copy(pageVersion = record.pageVersion + 1)),
+                )
+            },
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+        store.artifactManifest = advanced.manifest
+
+        store.updatePageGuarded(pageKey, candidateSnapshot.precondition(), "patch after lazy drain") { page ->
+            page!!.copy(translationStatus = StageStatus.RUNNING)
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH, lease.token)
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `stale manifest rejection refreshes facade for the caller retry`() = runTest {
+        writeArtifactChapter()
+        val store = openChapterStore()
+        val pageKey = "page.jpg"
+        val engine = checkNotNull(store.artifactEngine)
+        val stale = checkNotNull(store.artifactManifest)
+        val external = engine.publishSidecarPointers(
+            manifest = stale,
+            sidecars = emptyList(),
+            updatePointers = { current -> current.copy(updatedAtEpochMs = current.updatedAtEpochMs + 1) },
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+
+        store.updatePageGuarded(pageKey, store.snapshot(pageKey).precondition(), "stale CAS attempt") { page ->
+            page!!.copy(ocrStatus = StageStatus.RUNNING)
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+        store.artifactManifest shouldBe external.manifest
+
+        store.updatePageGuarded(pageKey, store.snapshot(pageKey).precondition(), "retry from rebased manifest") { page ->
+            page!!.copy(ocrStatus = StageStatus.RUNNING)
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        store.closeAndFlush()
+    }
+
+    @Test
     fun `production promotion retains a held previous cleaned stream until release`() = runTest {
         writeArtifactChapter()
         val store = openChapterStore()

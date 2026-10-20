@@ -12,19 +12,13 @@ import org.junit.jupiter.api.Test
 
 /**
  * Durable-manifest format fixtures. Every format family the consumers need —
- * candidate-scoped snapshot/fingerprint, committed/previous display, inventory
- * and durable failures, and CLOSE/REBASE checkpoints — round-trips through the
+ * candidate-scoped snapshot/fingerprint, committed/previous display, inventory,
+ * and durable failures — round-trips through the
  * shared durable-document Json, ordinary emission stays byte-compatible.
  */
 class Schema5FormatPreparationTest {
 
     private val hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
-    private fun checkpointPointer(fingerprint: String) = SidecarPointer(
-        fileName = "Chapter 1_artifacts/ocr/p0/f-$fingerprint.json",
-        schemaVersion = PageOcrCheckpoint.SCHEMA_VERSION,
-        contentFingerprint = fingerprint,
-    )
 
     @Test
     fun `ordinary emission keeps the durable fields neutral`() {
@@ -37,7 +31,7 @@ class Schema5FormatPreparationTest {
     }
 
     // ------------------------------------------------------------------
-    // Round-trips of every schema5 format family.
+    // Round-trips of every retained format family.
     // ------------------------------------------------------------------
 
     @Test
@@ -96,10 +90,6 @@ class Schema5FormatPreparationTest {
             expectedPageCount = 2,
             expectedPageCountTrusted = true,
             durableFailures = mapOf("p0:TRANSLATION" to failure),
-            // CLOSE checkpoint pointer; the REBASE successor reuses the same
-            // pointer shape (origin neutrality lives in the sidecar).
-            ocrCheckpoints = mapOf("p0" to checkpointPointer(hex)),
-            sourceShaByPageKey = mapOf("p0" to hex),
         )
 
         val encoded = ArtifactDocumentJson.encodeToString(ChapterArtifactManifest.serializer(), manifest)
@@ -117,9 +107,6 @@ class Schema5FormatPreparationTest {
         decoded.expectedPageCountTrusted shouldBe true
         // Durable failure family.
         decoded.durableFailures.getValue("p0:TRANSLATION").pageKey shouldBe "p0"
-        // CLOSE/REBASE checkpoint family.
-        decoded.ocrCheckpoints.getValue("p0").isWellFormed() shouldBe true
-        OcrCheckpointMode.entries.toSet() shouldBe setOf(OcrCheckpointMode.CLOSE, OcrCheckpointMode.REBASE)
     }
 
     @Test

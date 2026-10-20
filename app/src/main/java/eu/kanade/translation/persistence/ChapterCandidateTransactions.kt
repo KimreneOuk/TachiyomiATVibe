@@ -8,7 +8,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.persistence.ChapterArtifactEngine.IncompletePublicationReceipt
 import eu.kanade.translation.persistence.ChapterArtifactEngine.SidecarPublication
 import eu.kanade.translation.persistence.ChapterArtifactEngine.TransactionOutcome
 import eu.kanade.translation.model.isTextlessTerminal
@@ -43,21 +42,7 @@ class ChapterCandidateTransactions internal constructor(
         ) : CandidateOpenState
     }
 
-    /**
-     * Persists the mutable live candidate in its own immutable sidecar and
-     * advances only the candidate pointer. The committed pointer is untouched
-     * until [promoteLiveCandidate] succeeds.
-     *
-     *   /  a stale-manifest CAS rejection (the leading
-     * [candidateWriteRejection] check) triggers ONE retry against the freshly
-     * re-read durable manifest — this is the store transaction behind the
-     * façade's stage-patch/candidate persistence, and the batch resume path
-     * must not surface a spurious ARTIFACT_PUBLICATION_FAILED whole-batch
-     * abort on a healthy chapter. The whole transaction re-runs against the
-     * FRESH manifest, so genuine drift still rejects with its real reason.
-     * Every other rejection reason is returned as-is.
-     * [persistLiveCandidateAndFailure] delegates here and inherits the retry.
-     */
+    /** Persists one immutable live candidate snapshot and advances its pointer. */
     fun persistLiveCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -69,47 +54,6 @@ class ChapterCandidateTransactions internal constructor(
         sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
         durableFailure: DurableFailureMetadata? = null,
-    ): TransactionOutcome = engine.retryOnStaleManifest<TransactionOutcome>(
-        firstAttempt = persistLiveCandidateOnce(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-            pageSnapshot,
-            origin,
-            sourceIdentity,
-            nowEpochMs,
-            durableFailure,
-        ),
-        callerManifest = manifest,
-        seam = "persistLiveCandidate",
-    ) { fresh ->
-        persistLiveCandidateOnce(
-            fresh,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-            pageSnapshot,
-            origin,
-            sourceIdentity,
-            nowEpochMs,
-            durableFailure,
-        )
-    }
-
-    private fun persistLiveCandidateOnce(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        generationId: String,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        pageSnapshot: PageTranslation,
-        origin: ArtifactOrigin,
-        sourceIdentity: SourceIdentity?,
-        nowEpochMs: Long,
-        durableFailure: DurableFailureMetadata?,
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
             manifest,
@@ -137,13 +81,7 @@ class ChapterCandidateTransactions internal constructor(
                 status = failure.status,
                 fingerprint = expectedDependencyFingerprint,
                 origin = origin,
-                // Generation-less by intent: a durable failure is a page-level
-                // ledger fact, not candidate work product. Candidate stamping
-                // would make the NEXT attempt's teardown (cancelCandidate strips
-                // candidate-owned records and their ledger keys) erase the
-                // previous attempt's entry before the consecutive-unresolved
-                // count is charged — the attempt cap could never advance across
-                // attempts or restarts. Success-path cleanup stays explicit.
+                // Durable failure metadata is page-level retry state, not candidate work product.
                 generationId = null,
                 updatedAtEpochMs = nowEpochMs,
             )
@@ -171,15 +109,7 @@ class ChapterCandidateTransactions internal constructor(
         )
         if (!engine.publishManifestInternal(updated)) {
             val reason = "manifest publication failed; candidate snapshot pointer unchanged"
-            return TransactionOutcome.Rejected(
-                reason,
-                incompletePublication = IncompletePublicationReceipt(
-                    baselineManifest = manifest,
-                    actualAdvancedManifest = engine.readManifest(),
-                    advancedFiles = listOf(fileName),
-                    failureReason = reason,
-                ),
-            )
+            return TransactionOutcome.Rejected(reason)
         }
         return TransactionOutcome.Committed(updated, generationId)
     }
@@ -213,20 +143,7 @@ class ChapterCandidateTransactions internal constructor(
         durableFailure = failure,
     )
 
-    /**
-     * Commits the complete live candidate page and atomically moves the
-     * committed pointer. Both snapshots are published before the manifest
-     * pointer changes, so a crash can only leave an orphan candidate file,
-     * never a committed pointer to a missing or partial page.
-     *
-     *   /  a stale-manifest CAS rejection (the leading
-     * [candidateWriteRejection] check) triggers ONE retry against the freshly
-     * re-read durable manifest — the batch resume's candidate-promotion
-     * transaction must not surface a spurious ARTIFACT_PUBLICATION_FAILED
-     * whole-batch abort on a healthy chapter. The whole transaction re-runs
-     * against the FRESH manifest, so genuine drift still rejects with its real
-     * reason. Every other rejection reason is returned as-is.
-     */
+    /** Commits the live candidate and atomically moves the committed pointer. */
     fun promoteLiveCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -248,7 +165,6 @@ class ChapterCandidateTransactions internal constructor(
         sourceIdentity = sourceIdentity,
         nowEpochMs = nowEpochMs,
         persistCandidateSnapshot = true,
-        seam = "promoteLiveCandidate",
     )
 
     /**
@@ -280,52 +196,9 @@ class ChapterCandidateTransactions internal constructor(
         sourceIdentity = sourceIdentity,
         nowEpochMs = nowEpochMs,
         persistCandidateSnapshot = false,
-        seam = "promoteLiveCandidateImmediately",
     )
 
     private fun promoteLiveCandidateTransaction(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        generationId: String,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        pageSnapshot: PageTranslation,
-        origin: ArtifactOrigin,
-        sourceIdentity: SourceIdentity?,
-        nowEpochMs: Long,
-        persistCandidateSnapshot: Boolean,
-        seam: String,
-    ): TransactionOutcome = engine.retryOnStaleManifest<TransactionOutcome>(
-        firstAttempt = promoteLiveCandidateOnce(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-            pageSnapshot,
-            origin,
-            sourceIdentity,
-            nowEpochMs,
-            persistCandidateSnapshot,
-        ),
-        callerManifest = manifest,
-        seam = seam,
-    ) { fresh ->
-        promoteLiveCandidateOnce(
-            fresh,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-            pageSnapshot,
-            origin,
-            sourceIdentity,
-            nowEpochMs,
-            persistCandidateSnapshot,
-        )
-    }
-
-    private fun promoteLiveCandidateOnce(
         manifest: ChapterArtifactManifest,
         pageKey: String,
         generationId: String,
@@ -359,59 +232,6 @@ class ChapterCandidateTransactions internal constructor(
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
         }
-        // P3A: files durably written by this attempt, carried as orphan
-        // evidence when the checked manifest commit does not complete.
-        val advancedFiles = mutableListOf<String>()
-        fun incompleteReceipt(failureReason: String): IncompletePublicationReceipt = IncompletePublicationReceipt(
-            baselineManifest = manifest,
-            actualAdvancedManifest = engine.readManifest(),
-            advancedFiles = advancedFiles.toList(),
-            failureReason = failureReason,
-        )
-        fun rejectAndRestoreCandidate(reason: String): TransactionOutcome.Rejected {
-            if (persistCandidateSnapshot) {
-                return TransactionOutcome.Rejected(reason, incompletePublication = incompleteReceipt(reason))
-            }
-
-            val candidateFile = candidate.pageSnapshotFileName
-                ?: layout.candidatePageSnapshotFile(pageKey, generationId)
-            val candidateFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
-            if (!documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
-                return TransactionOutcome.Rejected(
-                    "$reason; recovery candidate snapshot publication failed: pageKey=$pageKey",
-                    incompletePublication = incompleteReceipt(
-                        "$reason; recovery candidate snapshot publication failed",
-                    ),
-                )
-            }
-            advancedFiles += candidateFile
-            val recoverablePage = page.copy(
-                source = resolvedPage.source,
-                candidate = candidate.copy(
-                    pageSnapshotFileName = candidateFile,
-                    pageSnapshotFingerprint = candidateFingerprint,
-                ),
-                pageVersion = page.pageVersion + 1,
-            )
-            val recoverableManifest = manifest.copy(
-                pages = manifest.pages + (pageKey to recoverablePage),
-                updatedAtEpochMs = nowEpochMs,
-            )
-            if (!engine.publishManifestInternal(recoverableManifest)) {
-                return TransactionOutcome.Rejected(
-                    "$reason; recovery candidate manifest publication failed: pageKey=$pageKey",
-                    incompletePublication = incompleteReceipt(reason),
-                )
-            }
-            return TransactionOutcome.Rejected(
-                reason = reason,
-                recoverableCandidateManifest = recoverableManifest,
-                incompletePublication = incompleteReceipt(reason).copy(
-                    actualAdvancedManifest = recoverableManifest,
-                    recoverableCandidateManifest = recoverableManifest,
-                ),
-            )
-        }
         if (persistCandidateSnapshot) {
             val candidateFile = candidate.pageSnapshotFileName
                 ?: layout.candidatePageSnapshotFile(pageKey, generationId)
@@ -421,13 +241,11 @@ class ChapterCandidateTransactions internal constructor(
             if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
                 return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
             }
-            advancedFiles += candidateFile
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
         if (!documents.publishJson(committedFile, pageSnapshot.detachedCopy())) {
-            return rejectAndRestoreCandidate("committed page snapshot publication failed: pageKey=$pageKey")
+            return TransactionOutcome.Rejected("committed page snapshot publication failed: pageKey=$pageKey")
         }
-        advancedFiles += committedFile
         val pageSnapshotFingerprint = StageFingerprints.pageSnapshot(pageSnapshot)
         val displayBase = DisplayBaseReference(
             kind = if (pageSnapshot.cleanedImageName != null) DisplayBaseKind.CLEANED_IMAGE else DisplayBaseKind.ORIGINAL_SOURCE,
@@ -451,24 +269,15 @@ class ChapterCandidateTransactions internal constructor(
             promotedAtEpochMs = nowEpochMs,
             pageSnapshotFileName = committedFile,
         )
-
         val promotedTranslation = resolvedPage.translation?.copy(
-            status = if (pageSnapshot.isTextlessTerminal) {
-                ArtifactStageStatus.TEXTLESS
-            } else {
-                ArtifactStageStatus.READY
-            },
+            status = if (pageSnapshot.isTextlessTerminal) ArtifactStageStatus.TEXTLESS else ArtifactStageStatus.READY,
             fingerprint = pageSnapshotFingerprint,
             origin = origin,
             generationId = null,
             artifactFileName = committedFile,
             updatedAtEpochMs = nowEpochMs,
         ) ?: StageArtifactRecord(
-            status = if (pageSnapshot.isTextlessTerminal) {
-                ArtifactStageStatus.TEXTLESS
-            } else {
-                ArtifactStageStatus.READY
-            },
+            status = if (pageSnapshot.isTextlessTerminal) ArtifactStageStatus.TEXTLESS else ArtifactStageStatus.READY,
             fingerprint = pageSnapshotFingerprint,
             origin = origin,
             artifactFileName = committedFile,
@@ -487,22 +296,18 @@ class ChapterCandidateTransactions internal constructor(
                         PageDisplayState.DISPLAY_READY
                     },
                     translation = promotedTranslation,
-                    // The legacy two-step path persisted the candidate (+1) before promotion
-                    // (+1). Preserve that version transition while omitting the intermediate
-                    // candidate snapshot and manifest publication.
                     pageVersion = page.pageVersion + if (persistCandidateSnapshot) 1 else 2,
                 )
-                ),
+            ),
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
             durableFailures = manifest.durableFailures - "$pageKey:${ArtifactStage.TRANSLATION.name}",
             updatedAtEpochMs = nowEpochMs,
         )
         if (!engine.publishManifestInternal(updated)) {
-            return rejectAndRestoreCandidate("manifest publication failed; committed pointer unchanged")
+            return TransactionOutcome.Rejected("manifest publication failed; committed pointer unchanged")
         }
         return TransactionOutcome.Committed(updated, generationId)
     }
-
     /** Cancels a live candidate while retaining the committed pointer. */
     fun cancelLiveCandidate(
         manifest: ChapterArtifactManifest,
@@ -537,10 +342,8 @@ class ChapterCandidateTransactions internal constructor(
             durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
-        // P3A: a user reset is destructive — its completion must leave a
-        // verified same-state backup so a later backup recovery cannot
+        // A user reset uses checked publication so backup recovery cannot
         // resurrect the removed committed/candidate pointers.
-        val advancedFiles = emptyList<String>()
         return when (val receipt = engine.publishDestructiveManifest(updated)) {
             is DestructiveManifestReceipt.Complete ->
                 TransactionOutcome.Committed(updated, candidateGenerationId)
@@ -552,14 +355,6 @@ class ChapterCandidateTransactions internal constructor(
                 )
             is DestructiveManifestReceipt.NotPublished -> TransactionOutcome.Rejected(
                 "manifest publication failed; reset pointers remain authoritative",
-                incompletePublication = advancedFiles.takeIf { it.isNotEmpty() }?.let {
-                    IncompletePublicationReceipt(
-                        baselineManifest = manifest,
-                        actualAdvancedManifest = engine.readManifest(),
-                        advancedFiles = it,
-                        failureReason = receipt.reason,
-                    )
-                },
             )
         }
     }
@@ -579,9 +374,7 @@ class ChapterCandidateTransactions internal constructor(
             durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
-        // P3A: page removal is destructive — same-state backup requirement
-        // mirrors [demoteLivePage]. Nothing file-level advances before the
-        // manifest publication here, so a refusal is an unchanged rejection.
+        // Page removal is destructive and uses checked manifest publication.
         return when (val receipt = engine.publishDestructiveManifest(updated)) {
             is DestructiveManifestReceipt.Complete ->
                 TransactionOutcome.Committed(updated)
@@ -593,21 +386,7 @@ class ChapterCandidateTransactions internal constructor(
         }
     }
 
-    /**
-     * Opens (or idempotently reopens) a candidate generation for one page.
-     * This records the candidate in the artifact manifest. Preconditions bind
-     * the caller to the current page version and dependency fingerprint (stale
-     * workers are rejected).
-     *
-     *   /  a stale-manifest CAS rejection (the >8-page open
-     * path's background health verify republishing after the façade cached its
-     * copy) triggers ONE retry against the freshly re-read durable manifest —
-     * the batch resume's first candidate open must not surface a spurious
-     * ARTIFACT_PUBLICATION_FAILED whole-batch abort on a healthy chapter. The
-     * whole transaction (identity checks included) re-runs against the FRESH
-     * manifest, so genuine drift still rejects — with a non-stale reason, on
-     * the retry attempt. Every other rejection reason is returned as-is.
-     */
+    /** Opens or idempotently reopens a candidate generation. */
     fun openCandidate(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -615,35 +394,6 @@ class ChapterCandidateTransactions internal constructor(
         expectedPageVersion: Long,
         dependencyFingerprint: String,
         nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome = engine.retryOnStaleManifest<TransactionOutcome>(
-        firstAttempt = openCandidateOnce(
-            manifest,
-            pageKey,
-            origin,
-            expectedPageVersion,
-            dependencyFingerprint,
-            nowEpochMs,
-        ),
-        callerManifest = manifest,
-        seam = "openCandidate",
-    ) { fresh ->
-        openCandidateOnce(
-            fresh,
-            pageKey,
-            origin,
-            expectedPageVersion,
-            dependencyFingerprint,
-            nowEpochMs,
-        )
-    }
-
-    private fun openCandidateOnce(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        origin: ArtifactOrigin,
-        expectedPageVersion: Long,
-        dependencyFingerprint: String,
-        nowEpochMs: Long,
     ): TransactionOutcome {
         engine.staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         val page = manifest.pages[pageKey]
@@ -718,14 +468,7 @@ class ChapterCandidateTransactions internal constructor(
             val reason = "manifest publication failed; prior manifest remains authoritative"
             return TransactionOutcome.Rejected(
                 reason,
-                candidateOpenState = candidateOpenState,
-                incompletePublication = IncompletePublicationReceipt(
-                    baselineManifest = manifest,
-                    actualAdvancedManifest = engine.readManifest(),
-                    advancedFiles = emptyList(),
-                    failureReason = reason,
-                ),
-            )
+                candidateOpenState = candidateOpenState,            )
         }
         return TransactionOutcome.Committed(
             updated,
@@ -785,15 +528,7 @@ class ChapterCandidateTransactions internal constructor(
         )
         if (!engine.publishManifestInternal(updated)) {
             val reason = "manifest publication failed; candidate remains recorded"
-            return TransactionOutcome.Rejected(
-                reason,
-                incompletePublication = IncompletePublicationReceipt(
-                    baselineManifest = manifest,
-                    actualAdvancedManifest = engine.readManifest(),
-                    advancedFiles = emptyList(),
-                    failureReason = reason,
-                ),
-            )
+            return TransactionOutcome.Rejected(reason)
         }
         // Delete only the known files unlinked by this cancellation. A full
         // SAF tree sweep per page made relaunch slow on large chapters;

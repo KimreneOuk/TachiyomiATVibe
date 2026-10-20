@@ -39,20 +39,16 @@ data class AiBatchProgress(
 }
 
 /**
- * Batch phase projection. [REBUILDING] and [RESTORING] are derived from the
- * durable run record (state + phase counters) by the batch progress
- * projector — never a competing state machine: every other producer keeps
- * emitting the original four values, and a snapshot without run-record
- * rebuild truth keeps its legacy phase.
+ * Batch phase projection. [REBUILDING] and [RESTORING] describe transient
+ * source and page reconciliation reported by the live batch progress tracker.
  */
 enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED, REBUILDING, RESTORING }
 
 /**
  * Rebuild/restore payload carried alongside
  * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING].
- * Counts come from the active run record's phase counters
- * (`ocrPagesTotal` / `ocrPagesDone`), so "restored" means durable work the
- * resumed run has re-adopted so far — never fabricated progress.
+ * Counts come from live reconciliation events, so "restored" means page work
+ * the current batch request has revalidated so far.
  */
 @Immutable
 data class BatchRebuildProgress(
@@ -127,7 +123,7 @@ data class TranslationProgressSnapshot(
     /**
      * Rebuild/restore counts for
      * [TranslationBatchPhase.REBUILDING]/[TranslationBatchPhase.RESTORING],
-     * stamped by the batch progress projector from the durable run record.
+     * stamped by the batch progress tracker from current reconciliation events.
      * Null whenever the phase is not a rebuild/restore phase.
      */
     val rebuildProgress: BatchRebuildProgress? = null,

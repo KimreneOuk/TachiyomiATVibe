@@ -8,8 +8,8 @@ import kotlinx.serialization.Serializable
  *
  * `chapter.translation.manifest.json`-equivalent sibling keyed by the chapter's
  * established file-name stem. Holds schema version, page records with committed
- * and candidate metadata, active candidate ids, durable failures, and current
- * run metadata. Large payloads stay immutable files under the artifact tree;
+ * and candidate metadata, active candidate ids, durable failures, and batch
+ * progress metadata. Large payloads stay immutable files under the artifact tree;
  * the manifest never duplicates image bytes.
  */
 @Serializable
@@ -26,7 +26,7 @@ data class ChapterArtifactManifest(
      *  The documented delta of a subset
      * admission over a partially-downloaded chapter. Missing pages are NEVER
      * registered as page records — the durable record carries the absence
-     * here instead of faking stages, failures, or attempt entries. Null when
+     * here instead of faking stages or failures. Null when
      * the last admission's cross-check proved the chapter complete (or no
      * partial admission ever ran). Additive nullable: tolerated in both
      * directions by `ignoreUnknownKeys` ( precedent).
@@ -36,32 +36,8 @@ data class ChapterArtifactManifest(
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
     val cutoverAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,
-    // 04 additive pointer extensions: appended at the END of the
-    // declaration  with neutral defaults so schemaVersion 2
-    // manifests decode unchanged. A v3 rewrite stamps the current
-    // [SCHEMA_VERSION] so a rolled-back build refuses the chapter read-only
-    // instead of silently stripping these pointers on rewrite.
-    /** The one Batch run record attempt currently owning the chapter, if any. */
-    val activeRun: SidecarPointer? = null,
-    /** Origin-neutral per-page OCR checkpoints; key = pageKey. */
-    val ocrCheckpoints: Map<String, SidecarPointer> = emptyMap(),
     /** The durable whole-chapter envelope plan. */
     val envelopePlan: SidecarPointer? = null,
-    /**
-     *  R2a (write-time digests): the durable per-page source SHA-256
-     * (lowercase 64-hex), recorded AT FIRST ADMISSION — every OCR checkpoint
-     * publication (CLOSE, REBASE, adopt) stamps the page's source identity in
-     * the SAME atomic manifest transaction that moves the checkpoint pointer,
-     * never at run end. Run-start identity and checkpoint-reuse decisions
-     * consume this record without re-reading page bytes; a page with no
-     * record falls back to the dispatch-time observation. Additive map with
-     * a neutral default, tolerated in both decode directions by
-     * `ignoreUnknownKeys` ( precedent): a rolled-back build that strips it
-     * only loses the optimization (the fallback re-observes), never
-     * correctness — so no schema bump is owed. Bounded to one entry per
-     * manifest page record.
-     */
-    val sourceShaByPageKey: Map<String, String> = emptyMap(),
 ) {
     companion object {
         /**
@@ -177,53 +153,6 @@ data class CandidateGenerationMetadata(
 )
 
 /**
- *  Which lane started a paid provider
- * attempt. The crash-loop cap binds auto-retry loops only — never the user.
- */
-enum class AttemptOrigin { MANUAL, AUTO, BATCH }
-
-/**
- * One durable started provider attempt (`attempts/ledger.json`). Written
- * BEFORE the paid call so a process death mid-call leaves a trace; consumed by
- * startup reconciliation as a counted interrupted attempt.
- */
-@Serializable
-data class AttemptLedgerEntry(
-    val pageKey: String,
-    val providerKeyHash: String,
-    val origin: AttemptOrigin,
-    val generation: Long,
-    val startedAtEpochMs: Long,
-    val requestContextFingerprint: String? = null,
-)
-
-/**
- * The chapter's single durable attempt-ledger document: bounded started-attempt
- * entries (oldest evicted) plus the per-page count of CONSECUTIVE unresolved
- * attempts that drives the crash-loop cap. A completed call (commit success OR
- * typed provider failure) resolves the page's entries and resets its counter;
- * only a process death leaves an entry behind.
- */
-@Serializable
-data class ChapterAttemptLedgerDocument(
-    val schemaVersion: Int = SCHEMA_VERSION,
-    val kind: String = KIND_ATTEMPT_LEDGER,
-    val entries: List<AttemptLedgerEntry> = emptyList(),
-    val consecutiveUnresolved: Map<String, Int> = emptyMap(),
-) {
-    companion object {
-        const val SCHEMA_VERSION = 1
-        const val KIND_ATTEMPT_LEDGER = "ATTEMPT_LEDGER"
-
-        /** Oldest entries are evicted past this bound (bounded memory/disk). */
-        const val MAX_ENTRIES = 64
-
-        /** Consecutive unresolved attempts after which the page is capped. */
-        const val MAX_CONSECUTIVE_UNRESOLVED = 3
-    }
-}
-
-/**
  * 03: a pointer to one immutable, content-addressed sidecar document.
  * [contentFingerprint] is
  * the semantic content identity of the pointed document (64 lowercase hex);
@@ -275,4 +204,3 @@ data class ProfilePointer(
 /** True when [value] is 64 lowercase hexadecimal characters (a SHA-256 form). */
 internal fun String.isSha256Hex(): Boolean =
     length == 64 && all { it in '0'..'9' || it in 'a'..'f' }
-

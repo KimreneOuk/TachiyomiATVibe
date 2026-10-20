@@ -147,7 +147,7 @@ class CleanedImagePublisher(
                 val cleaned = if (authorized) {
                     runCatching { files.delete(newName) }.getOrDefault(false)
                 } else {
-                    // Unbounded retained debt is a ledger-worthy condition:
+                    // Unbounded retained debt is a retention-worthy condition:
                     // plan §10 requires it at ERROR, unlike the generic
                     // rejected summary below.
                     logcat(LogPriority.ERROR) {

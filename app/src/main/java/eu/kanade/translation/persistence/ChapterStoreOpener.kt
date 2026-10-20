@@ -60,7 +60,7 @@ internal sealed interface DurableChapterRead {
 /**
  * One publication-free durable chapter read. Every map mirrors what an open
  * would seed into a live store ([ChapterTranslationStore.state]/[ChapterTranslationStore.display]
- * and the opening status ledger), assembled read-only through the opener and
+ * and its opening page-state projection), assembled read-only through the opener and
  * the pure status projector — no store or writer is built.
  */
 internal class DurableChapterState(
@@ -69,8 +69,6 @@ internal class DurableChapterState(
     val pages: Map<String, PageTranslationView>,
     /** Committed-first display projection (the store `display` flow equivalent). */
     val display: Map<String, PageTranslationView>,
-    /** The durable active run record, when the manifest points at a usable one. */
-    val activeRunRecord: ChapterRunRecord?,
 ) {
     /** Retryable/terminal failure truth the pause affordance and status project from. */
     val durableFailures: Map<String, DurableFailureMetadata>
@@ -213,12 +211,7 @@ internal object ChapterStoreOpener {
         val documents = AtomicChapterDocuments(ReadOnlyChapterDocumentIo(UniFileChapterDocumentIo(parent)))
         val engine = ChapterArtifactEngine(documents, layout)
         val hydration = hydrateChapterState(engine, manifest)
-        val statePages: Map<String, PageTranslationView> =
-            applyCheckpointRecoveryFallback(
-                engine = engine,
-                manifest = manifest,
-                projectedPages = hydration.legacyPages.mapValues { (_, page) -> page.toPublishedPage() },
-            )
+        val statePages = hydration.legacyPages.mapValues { (_, page) -> page.toPublishedPage() }
         // Mirror the store's open-time display seed: committed bundles first,
         // then the live page. Keys are the live state's keys, exactly like
         // displaySnapshotLocked(pages.keys + committedDisplay.keys): a
@@ -232,61 +225,13 @@ internal object ChapterStoreOpener {
         val display = statePages.mapValues { (pageKey, page) ->
             committedDisplay[pageKey] ?: page
         }
-        val activeRunRecord = manifest.activeRun
-            ?.takeIf { it.isWellFormed() }
-            ?.let { pointer ->
-                (engine.progress.readRunRecord(pointer) as? ChapterProgressRecords.RunRecordRead.Usable)?.record
-            }
         return DurableChapterRead.Supported(
             DurableChapterState(
                 manifest = manifest,
                 pages = statePages,
                 display = display,
-                activeRunRecord = activeRunRecord,
             ),
         )
-    }
-
-    /**
-     * Reader fallback: restores saved OCR from a page's verified
-     * recovery checkpoint into the projected page state — publication-free
-     * and writer-free (no store, no lease; the store
-     * hydration's provenance verification runs identically through
-     * [ChapterArtifactEngine.readRecoveryCheckpoint], the one classified
-     * checkpoint read). Eligibility is deliberately narrow:
-     *
-     * - the CURRENT manifest still points at the checkpoint;
-     * - the manifest recorded the page's source SHA (checkpoint publications
-     *   stamp it atomically with the pointer), so identity is verifiable
-     *   without re-reading source bytes;
-     * - the page has NO content-backed candidate or committed snapshot —
-     *   newer/committed work always wins, the checkpoint is the recovery
-     *   authority only when nothing else carries content.
-     *
-     * An unusable checkpoint never fails the read: the page keeps its
-     * placeholder projection and the chapter stays supported.
-     */
-    private fun applyCheckpointRecoveryFallback(
-        engine: ChapterArtifactEngine,
-        manifest: ChapterArtifactManifest,
-        projectedPages: Map<String, PageTranslationView>,
-    ): Map<String, PageTranslationView> {
-        var pages = projectedPages
-        manifest.ocrCheckpoints.forEach { (pageKey, pointer) ->
-            val record = manifest.pages[pageKey]
-            if (record?.candidate?.pageSnapshotFileName != null) return@forEach
-            if (record?.committed?.pageSnapshotFileName != null) return@forEach
-            val recordedSha = manifest.sourceShaByPageKey[pageKey] ?: return@forEach
-            when (val recovery = engine.progress.readRecoveryCheckpoint(pointer, recordedSha)) {
-                is ChapterProgressRecords.CheckpointRecoveryRead.Usable ->
-                    pages = pages + (pageKey to recovery.ocrSnapshot.toPublishedPage())
-                is ChapterProgressRecords.CheckpointRecoveryRead.Unusable -> logcat(LogPriority.WARN) {
-                    "TachiyomiAT durable reader checkpoint recovery unavailable: " +
-                        "pageKey=$pageKey reason=${recovery.reason}"
-                }
-            }
-        }
-        return pages
     }
 
     /** Opens an artifact and installs only the state reconstructed from its manifest and snapshots. */

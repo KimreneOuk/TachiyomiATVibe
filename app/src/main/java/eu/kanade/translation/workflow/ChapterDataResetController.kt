@@ -262,9 +262,7 @@ internal class ChapterDataResetController(
 
     /**
      * Applies one reset transform across a store's pages, demotes every
-     * committed display pointer, and retires the recorded run — collecting
-     * each destructive publication's typed incomplete reason instead of
-     * presenting a partial reset as success.
+     * committed display pointer, and flushes the resulting state.
      */
     private suspend fun resetStoreData(
         store: ChapterTranslationStore,
@@ -279,11 +277,6 @@ internal class ChapterDataResetController(
             store.demoteCommittedDisplay(pageKey, reason)?.let { failures += "$pageKey: $it" }
         }
         store.flush()
-        //   the reset must also retire the recorded run so a
-        // future dispatch can never short-circuit on its COMPLETE record.
-        if (!store.retireActiveRun(reason)) {
-            failures += "active run retirement rejected: $reason"
-        }
     }
 
     suspend fun resetTranslationData(
