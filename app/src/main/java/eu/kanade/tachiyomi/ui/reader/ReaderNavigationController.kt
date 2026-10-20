@@ -40,7 +40,7 @@ import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
@@ -187,7 +187,7 @@ internal class ReaderNavigationController(private val owner: ReaderViewModel) {
         // TachiyomiAT: if we're switching to a different chapter, cancel all
         // translation work belonging to the chapter we're leaving. Otherwise the
         // previous chapter's single-page jobs (running on the singleton
-        // ChapterTranslator) keep holding its single `translatorPermit` and
+        // BatchTranslationCoordinator) keep holding its single `translatorPermit` and
         // starve the new chapter's work — appearing as "translate does nothing"
         // after navigating.
         val previousChapter = state.value.currentChapter

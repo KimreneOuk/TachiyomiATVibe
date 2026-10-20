@@ -18,7 +18,7 @@ import eu.kanade.translation.presentation.NotificationAction
 import eu.kanade.translation.presentation.SurfaceVisibility
 import eu.kanade.translation.presentation.TranslationNotificationCopy
 import eu.kanade.translation.presentation.TranslationUiTruth
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

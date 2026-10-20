@@ -21,7 +21,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -64,7 +64,7 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * RED defect named here: "cancelled batch strands chapter in translating state
  * with no restart affordance". When a batch is cancelled and its queue entry is
- * already gone (ChapterTranslator.kt CancellationException branch), no
+ * already gone (BatchTranslationCoordinator.kt CancellationException branch), no
  * statusFlow emission ever reaches the screen: queue membership IS the
  * acknowledgement, and a removed entry is dropped without a terminal
  * emission. The chapter item keeps its stale QUEUE/TRANSLATING/PAUSED state,
@@ -316,7 +316,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
         // item stays stale until the aborted snapshot arrives.
         translationQueueState.value = emptyList()
 
-        // The ChapterTranslator CancellationException branch aborts the tracker;
+        // The BatchTranslationCoordinator CancellationException branch aborts the tracker;
         // the observed snapshot becomes terminal-aborted with no queue entry.
         batchProgressFlow.value = terminalAbortedSnapshot(donePages = 1)
 

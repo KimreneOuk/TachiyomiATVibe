@@ -22,8 +22,8 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.presentation.TranslationSettingsSummary
 import eu.kanade.translation.presentation.snapshotTranslationSummary
-import eu.kanade.translation.workflow.ChapterQueuePreflight
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.coordinator.ChapterQueuePreflight
+import eu.kanade.translation.TranslationManager
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.clearMocks

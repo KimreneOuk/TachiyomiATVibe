@@ -6,21 +6,26 @@ import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.LeaseAcquisition
 import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.processing.adaptive.DevicePermitPriority
+import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +65,13 @@ internal class ReaderTranslationCoordinator(
     private val isAutoTranslateEnabled: () -> Boolean = { true },
     private val prepareEngines: suspend () -> Unit = {},
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
+    private val activeStoresProvider: () -> ActiveChapterStoreRegistry? = { null },
+    private val batchCoordinator: BatchTranslationCoordinator? = null,
+    private val sessionCoordinator: TranslationSessionCoordinator? = null,
+    private val clearPendingRequests: () -> Unit = {},
+    private val disposeBatchTracker: (Long) -> Unit = {},
+    private val unregisterActiveStore: suspend (Long) -> Unit = {},
+    private val retryPendingRekeysAfterReaderLeave: suspend () -> Unit = {},
     autoStart: Boolean = true,
 ) : Closeable {
 
@@ -73,6 +85,8 @@ internal class ReaderTranslationCoordinator(
     )
 
     private val mutex = Mutex()
+    private val readerTeardownMutex = Mutex()
+    private val activeStores get() = activeStoresProvider()
     private val manualQueue = LinkedHashMap<String, PageRequest>()
     private val autoQueue = LinkedHashMap<String, PageRequest>()
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
@@ -205,6 +219,31 @@ internal class ReaderTranslationCoordinator(
                 }
             }
         }
+    }
+
+    suspend fun switchReaderSession(chapterId: Long?): SessionAdmission {
+        val sessions = checkNotNull(sessionCoordinator) { "Reader session admission is not wired" }
+        val batches = checkNotNull(batchCoordinator) { "Batch coordinator is not wired" }
+        return withContext(Dispatchers.IO) {
+            sessions.switchBatchToReader(
+                intent = ReaderSessionIntent(chapterId = chapterId, confirmBatchSwitch = true),
+                pauseBatch = batches::pauseForSessionSwitch,
+                joinBatch = batches::cancelTranslatorJobAndJoinForSession,
+                onJoinTimeout = { timeoutMs ->
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT reader admission waiting for batch unwind after $timeoutMs ms"
+                    }
+                },
+            )
+        }
+    }
+
+    fun onMemoryPressure(level: Int) {
+        val batches = batchCoordinator
+        batches?.onMemoryPressure(level, MemoryPressurePolicy.classify(level))
+        reconcileAll(admissionGuard = { chapterId ->
+            batches?.isChapterBatchActive(chapterId, includePaused = true) != true
+        })
     }
 
     suspend fun openSession(manga: Manga, chapter: Chapter, source: HttpSource): TranslationSession? {
@@ -647,6 +686,97 @@ internal class ReaderTranslationCoordinator(
             readerStopInFlight = false
         }
     }
+
+    /** Schedules joined reader teardown on the coordinator lifetime. */
+    fun stopReaderTranslations(reason: String) {
+        scope.launch(start = CoroutineStart.DEFAULT) {
+            readerTeardownMutex.withLock {
+                sessionCoordinator?.abortPausingToBatch()
+                cancelAllPageTranslations(cancelBatchQueue = false, reason = reason)
+                if (!isAnyBatchTranslationActive()) {
+                    batchCoordinator?.stop(reason, closeEngines = false)
+                }
+                sessionCoordinator?.finishSession(TranslationSessionState.READER_SESSION)
+            }
+        }
+    }
+
+    fun requestReaderStop(reason: String): Deferred<Unit> =
+        scope.async(start = CoroutineStart.DEFAULT) { awaitReaderStop(reason) }
+
+    suspend fun awaitReaderStop(reason: String) {
+        withContext(Dispatchers.IO) {
+            readerTeardownMutex.withLock {
+                sessionCoordinator?.abortPausingToBatch()
+                cancelAllAndJoin()
+                val chapterIdsToEvict = activeStores?.chapterIds()
+                    ?.filterNot { isChapterBatchActive(it, includePaused = true) }
+                    .orEmpty()
+                chapterIdsToEvict.forEach { unregisterActiveStore(it) }
+                sessionCoordinator?.finishSession(TranslationSessionState.READER_SESSION)
+            }
+            retryPendingRekeysAfterReaderLeave()
+        }
+    }
+
+    fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
+        cancelPageAsync(chapterId.toString(), pageKey)
+
+    suspend fun cancelRunningChapterForReplace(chapterId: Long) {
+        val chapter = batchCoordinator?.queuedTranslationOrNull(chapterId)?.chapter ?: return
+        cancelChapter(chapterId.toString())
+        activeStores?.get(chapterId)?.clearTransientQueuePages("Replaced by another chapter's batch")
+        batchCoordinator.removeFromQueue(chapter)
+    }
+
+    suspend fun cancelPageTranslations(chapterId: Long, reason: String = "Translation cancelled") {
+        cancelChapter(chapterId.toString())
+        if (isChapterBatchActive(chapterId, includePaused = true)) return
+        disposeBatchTracker(chapterId)
+        activeStores?.get(chapterId)?.clearTransientQueuePages(reason)
+        withContext(Dispatchers.IO) { unregisterActiveStore(chapterId) }
+    }
+
+    suspend fun cancelAllPageTranslations(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) {
+        cancelAllAndJoin()
+        val chapterIdsToEvict = activeStores?.chapterIds()
+            ?.filter { cancelBatchQueue || !isChapterBatchActive(it, includePaused = true) }
+            .orEmpty()
+        chapterIdsToEvict.mapNotNull { activeStores?.get(it) }.forEach { store ->
+            store.clearTransientQueuePages(reason)
+        }
+        chapterIdsToEvict.forEach { unregisterActiveStore(it) }
+        if (cancelBatchQueue) {
+            batchCoordinator?.clearQueue()
+            clearPendingRequests()
+            sessionCoordinator?.finishSession()
+        } else {
+            sessionCoordinator?.finishSession(TranslationSessionState.READER_SESSION)
+        }
+    }
+
+    suspend fun cancelAllPageTranslationsOffMain(
+        cancelBatchQueue: Boolean = false,
+        reason: String = "All translation cancelled",
+    ) = withContext(Dispatchers.IO) {
+        cancelAllPageTranslations(cancelBatchQueue, reason)
+    }
+
+    private fun isAnyBatchTranslationActive(): Boolean = batchCoordinator?.queueState?.value?.any {
+        it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
+    } == true
+
+    private fun isChapterBatchActive(chapterId: Long, includePaused: Boolean): Boolean =
+        batchCoordinator?.queueState?.value?.any { translation ->
+            translation.chapter.id == chapterId && (
+                translation.status == Translation.State.QUEUE ||
+                    translation.status == Translation.State.TRANSLATING ||
+                    (includePaused && translation.status == Translation.State.PAUSED)
+                )
+        } == true
 
     private fun updatePendingCountLocked() {
         _pendingCount.value = manualQueue.size + autoQueue.size

@@ -10,7 +10,7 @@ import tachiyomi.core.common.util.system.ImageUtil
 import java.io.InputStream
 
 /**
- * canonical chapter page enumeration shared by `ChapterTranslator`
+ * canonical chapter page enumeration shared by `BatchTranslationCoordinator`
  * and the reader processor (previously two ~45-line line-for-line identical
  * copies that only drifted in comments).
  *

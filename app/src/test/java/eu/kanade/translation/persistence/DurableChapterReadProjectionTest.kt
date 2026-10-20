@@ -8,7 +8,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.workflow.withDurablePause
+import eu.kanade.translation.coordinator.withDurablePause
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.test.runTest

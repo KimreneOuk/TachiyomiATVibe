@@ -8,7 +8,7 @@ import eu.kanade.translation.engines.translator.ProviderRequestKey
 import eu.kanade.translation.engines.translator.ProviderRequestMetadata
 import eu.kanade.translation.engines.translator.SystemProviderRequestClock
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.workflow.ChapterTranslator
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -132,7 +132,7 @@ class QueueSteeringProviderGovernorTest {
         return translation
     }
 
-    private fun createTranslatorWithQueue(initial: List<Translation>): ChapterTranslator {
+    private fun createTranslatorWithQueue(initial: List<Translation>): BatchTranslationCoordinator {
         val mockContext = mockk<android.content.Context>(relaxed = true)
         val mockProvider = mockk<eu.kanade.translation.persistence.TranslationFileProvider>(relaxed = true)
         val mockDownloadProvider = mockk<eu.kanade.tachiyomi.data.download.DownloadProvider>(relaxed = true)
@@ -142,19 +142,18 @@ class QueueSteeringProviderGovernorTest {
         val mockQueueStore = mockk<eu.kanade.translation.coordinator.TranslationQueueStore>(relaxed = true)
         val mockProcessor = mockk<eu.kanade.translation.processing.TranslationProcessor>(relaxed = true)
 
-        val translator = ChapterTranslator(
+        val translator = BatchTranslationCoordinator(
             context = mockContext,
             provider = mockProvider,
             downloadProvider = mockDownloadProvider,
             sourceManager = mockSourceManager,
             translationPreferences = mockPreferences,
-            streamRegistry = mockStreamRegistry,
             queueStore = mockQueueStore,
             processor = mockProcessor,
-            batchCoordinator = mockk(relaxed = true),
+            pageOperation = mockk(relaxed = true),
         )
 
-        val field: Field = ChapterTranslator::class.java.getDeclaredField("_queueState")
+        val field: Field = BatchTranslationCoordinator::class.java.getDeclaredField("_queueState")
         field.isAccessible = true
         @Suppress("UNCHECKED_CAST")
         val stateFlow = field.get(translator) as MutableStateFlow<List<Translation>>

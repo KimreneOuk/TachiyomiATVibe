@@ -50,8 +50,8 @@ import eu.kanade.translation.presentation.TranslationSettingsSummary
 import eu.kanade.translation.presentation.TranslationUiProjection
 import eu.kanade.translation.presentation.snapshotTranslationSummary
 import eu.kanade.translation.persistence.ChapterResetReceipt
-import eu.kanade.translation.workflow.ChapterQueuePreflight
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.coordinator.ChapterQueuePreflight
+import eu.kanade.translation.TranslationManager
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async

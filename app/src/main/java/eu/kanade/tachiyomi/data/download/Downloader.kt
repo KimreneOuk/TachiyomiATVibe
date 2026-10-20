@@ -23,9 +23,10 @@ import eu.kanade.translation.diagnostics.BatchDownloadStage
 import eu.kanade.translation.diagnostics.BatchDownloadTerminalState
 import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
 import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
+import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.onlinePageTranslationKey
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -834,7 +835,7 @@ class Downloader private constructor(
                         onDiskKeyByPageIndex = onDiskKeys,
                     )
                 ) {
-                    is TranslationManager.DownloadRekeyOutcome.Performed -> {
+                    is DownloadRekeyOutcome.Performed -> {
                         if (outcome.skippedCollisions > 0) {
                             // Partial truth: moved pages landed but collision-skipped
                             // destinations keep stale online-key records. Never SUCCESS.
@@ -862,7 +863,7 @@ class Downloader private constructor(
                             )
                         }
                     }
-                    TranslationManager.DownloadRekeyOutcome.Noop -> {
+                    DownloadRekeyOutcome.Noop -> {
                         // Honest no-op (nothing to migrate / already re-keyed).
                         traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                             BatchDownloadDiagnostics.handoff(
@@ -873,7 +874,7 @@ class Downloader private constructor(
                             )
                         }
                     }
-                    TranslationManager.DownloadRekeyOutcome.NoTranslationRecords -> {
+                    DownloadRekeyOutcome.NoTranslationRecords -> {
                         // The chapter has no reusable translation artifacts;
                         // this is an explicit clean admission case, not reuse.
                         traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
@@ -885,11 +886,11 @@ class Downloader private constructor(
                             )
                         }
                     }
-                    is TranslationManager.DownloadRekeyOutcome.Deferred,
-                    is TranslationManager.DownloadRekeyOutcome.Rejected,
+                    is DownloadRekeyOutcome.Deferred,
+                    is DownloadRekeyOutcome.Rejected,
                     -> {
                         if (
-                            outcome is TranslationManager.DownloadRekeyOutcome.Deferred &&
+                            outcome is DownloadRekeyOutcome.Deferred &&
                             outcome.waitingForRegisteredStoreRelease
                         ) {
                             logcat(if (outcome.requestPreserved) LogPriority.INFO else LogPriority.WARN) {
@@ -899,9 +900,9 @@ class Downloader private constructor(
                             return
                         }
                         val reason = when (outcome) {
-                            is TranslationManager.DownloadRekeyOutcome.Deferred ->
+                            is DownloadRekeyOutcome.Deferred ->
                                 "Rekey deferred: ${outcome.reason}"
-                            is TranslationManager.DownloadRekeyOutcome.Rejected ->
+                            is DownloadRekeyOutcome.Rejected ->
                                 "Rekey rejected: ${outcome.reason}"
                             else -> "Rekey not completed"
                         }
@@ -913,7 +914,7 @@ class Downloader private constructor(
                                 BatchDownloadResult.FAILED,
                                 RuntimeException(
                                     reason,
-                                    (outcome as? TranslationManager.DownloadRekeyOutcome.Rejected)?.cause,
+                                    (outcome as? DownloadRekeyOutcome.Rejected)?.cause,
                                 ),
                             )
                         }

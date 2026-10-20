@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Chapter-keyed owner of active translation stores.
@@ -21,8 +22,13 @@ internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
     private val fileStores = LinkedHashMap<String, ChapterTranslationStore>()
     private val openingLocks = LinkedHashMap<String, Mutex>()
+    private val chapterAdmissionLocks = ConcurrentHashMap<Long, Mutex>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
+
+    /** Serializes reader/batch binding and file-backed maintenance for one chapter. */
+    suspend fun <T> withChapterAdmissionLock(chapterId: Long, block: suspend () -> T): T =
+        chapterAdmissionLocks.computeIfAbsent(chapterId) { Mutex() }.withLock { block() }
 
     @Synchronized
     fun get(chapterId: Long): ChapterTranslationStore? = stores[chapterId]

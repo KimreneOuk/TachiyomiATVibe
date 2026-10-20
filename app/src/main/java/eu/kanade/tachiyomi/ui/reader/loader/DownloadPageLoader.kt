@@ -15,7 +15,7 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
 import tachiyomi.core.common.util.system.logcat

@@ -10,8 +10,8 @@ import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.workflow.ChapterTranslator
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.TranslationManager
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -31,7 +31,7 @@ class DurabilityAtScaleTest {
         pendingRequestStore: TranslationPendingRequestStore,
         seed: Map<Long, TranslationRequestState> = emptyMap(),
     ): TranslationManager {
-        val translator = mockk<ChapterTranslator>(relaxed = true).also {
+        val translator = mockk<BatchTranslationCoordinator>(relaxed = true).also {
             every { it.queueState } returns MutableStateFlow(emptyList())
             every { it.isRunning } returns false
         }
@@ -43,7 +43,7 @@ class DurabilityAtScaleTest {
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
             processor = mockk(relaxed = true),
-            translator = translator,
+            batchCoordinator = translator,
             pendingRequestStore = pendingRequestStore,
             pendingRequests = MutableStateFlow(seed),
         )

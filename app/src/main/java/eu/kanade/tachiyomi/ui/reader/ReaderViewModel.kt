@@ -60,8 +60,8 @@ import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
-import eu.kanade.translation.workflow.TranslationManager
-import eu.kanade.translation.workflow.TranslationSessionState
+import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.coordinator.TranslationSessionState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -826,7 +826,7 @@ class ReaderViewModel @JvmOverloads constructor(
     /**
      * TachiyomiAT: cancels reader-owned translation work tied to [chapter] so navigating
      * away from it cannot leave orphaned single-page jobs running on the singleton
-     * ChapterTranslator. Revokes in-flight single-page jobs for this chapter and evicts
+     * BatchTranslationCoordinator. Revokes in-flight single-page jobs for this chapter and evicts
      * the reader page streams its holders registered (those closures otherwise keep page
      * bitmaps alive).
      *

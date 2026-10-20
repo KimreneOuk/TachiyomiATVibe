@@ -47,10 +47,10 @@ import eu.kanade.translation.coordinator.ReaderPageWork
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.coordinator.ReaderSubmission
 import eu.kanade.translation.coordinator.ReaderTrigger
-import eu.kanade.translation.workflow.ReaderSessionIntent
-import eu.kanade.translation.workflow.SessionAdmission
-import eu.kanade.translation.workflow.SessionRejection
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.coordinator.ReaderSessionIntent
+import eu.kanade.translation.coordinator.SessionAdmission
+import eu.kanade.translation.coordinator.SessionRejection
+import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow

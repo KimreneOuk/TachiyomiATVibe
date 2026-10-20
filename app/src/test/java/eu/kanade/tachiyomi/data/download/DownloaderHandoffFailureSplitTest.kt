@@ -9,8 +9,9 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.workflow.TranslationManager
+import eu.kanade.translation.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -77,7 +78,7 @@ class DownloaderHandoffFailureSplitTest {
     private fun mockManager(): TranslationManager = mockk(relaxed = true) {
         coEvery {
             rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
-        } returns TranslationManager.DownloadRekeyOutcome.Noop
+        } returns DownloadRekeyOutcome.Noop
     }
 
     private fun setField(target: Any, fieldName: String, value: Any) {
@@ -130,7 +131,7 @@ class DownloaderHandoffFailureSplitTest {
         coEvery { manager.pendingRequestGeneration(chapterId) } returns 7L
         coEvery {
             manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
-        } returns TranslationManager.DownloadRekeyOutcome.Deferred(
+        } returns DownloadRekeyOutcome.Deferred(
             reason = "translation store registered for chapter or artifact",
             waitingForRegisteredStoreRelease = true,
             requestPreserved = true,
@@ -199,7 +200,7 @@ class DownloaderHandoffFailureSplitTest {
         val manager = mockManager()
         coEvery {
             manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
-        } returns TranslationManager.DownloadRekeyOutcome.NoTranslationRecords
+        } returns DownloadRekeyOutcome.NoTranslationRecords
         val downloader = downloader(manager)
         val download = newDownload()
 
@@ -349,7 +350,7 @@ class DownloaderHandoffFailureSplitTest {
             translationPreferences = mockk(relaxed = true),
             downloadProvider = mockk(relaxed = true),
             processor = mockk(relaxed = true),
-            translator = mockk(relaxed = true),
+            batchCoordinator = mockk(relaxed = true),
             pendingRequestStore = TranslationPendingRequestStore(
                 mockk { every { getSharedPreferences(any(), any()) } returns preferences },
             ),
