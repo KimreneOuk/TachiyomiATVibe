@@ -101,12 +101,11 @@ abstract class OpenAiCompatibleTranslator(
                     safeSummary = "backend has no analysis endpoint",
                 ),
             )
-        val clampedOutputTokens = clampAnalysisOutputToPayload(systemPrompt, userPrompt, maxOutputTokens)
         val payload = buildJsonObject {
             put("model", analysisModelId.orEmpty())
             // Structured extraction: low temperature, honest max_tokens.
             put("temperature", 0.2)
-            put("max_tokens", clampedOutputTokens)
+            put("max_tokens", maxOutputTokens)
             putJsonArray("messages") {
                 addJsonObject {
                     put("role", "system")
@@ -122,52 +121,9 @@ abstract class OpenAiCompatibleTranslator(
             url = url,
             headers = analysisHeaders(),
             payloadJson = payload,
-            reservedOutputTokens = clampedOutputTokens,
+            reservedOutputTokens = maxOutputTokens,
             operation = "analysis_completion",
         )
-    }
-
-    /**
-     * Analysis-only output-budget clamp, counted on the EXACT payload the
-     * dispatch guard will re-count (zero estimate drift): when the honest
-     * final-input count leaves less room than requested, shrink the
-     * reservation to what fits under the 8k window instead of letting the
-     * guard refuse the chunk. Below the analysis output floor the
-     * reservation is returned unchanged — the guard's refusal remains the
-     * honest outcome for an unfixably oversized input.
-     */
-    private fun clampAnalysisOutputToPayload(
-        systemPrompt: String,
-        userPrompt: String,
-        requestedOutputTokens: Int,
-    ): Int {
-        val contract = inputAccountingContract
-        if (contract == null || !contract.isCertified) return requestedOutputTokens
-        val probe = buildJsonObject {
-            put("model", analysisModelId.orEmpty())
-            put("temperature", 0.2)
-            put("max_tokens", requestedOutputTokens)
-            putJsonArray("messages") {
-                addJsonObject {
-                    put("role", "system")
-                    put("content", systemPrompt)
-                }
-                addJsonObject {
-                    put("role", "user")
-                    put("content", userPrompt)
-                }
-            }
-        }.toString()
-        val finalInputTokens = contract.countFinalTokens(probe)
-        val available = 8_192 - 512 - finalInputTokens
-        if (available >= requestedOutputTokens || available < ANALYSIS_MIN_OUTPUT_TOKENS) {
-            return requestedOutputTokens
-        }
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT analysis output budget clamped: backend=$providerBackend " +
-                "requested=$requestedOutputTokens clamped=$available finalInputTokens=$finalInputTokens"
-        }
-        return available
     }
 
     /**
@@ -183,26 +139,7 @@ abstract class OpenAiCompatibleTranslator(
         operation: String = "chat_completion",
         envelopeId: String? = null,
     ): String {
-        val contract = inputAccountingContract
-        if (contract == null || !contract.isCertified) {
-            throw ProviderFailureException(
-                ProviderFailure(
-                    kind = ProviderFailureKind.CONFIGURATION,
-                    retryability = ProviderFailureRetryability.TERMINAL,
-                    safeSummary = "dispatch refused: provider '$providerBackend' has no certified InputAccountingContract",
-                ),
-            )
-        }
-        val finalInputTokens = contract.countFinalTokens(payloadJson)
-        if (finalInputTokens + reservedOutputTokens + 512 > 8_192) {
-            throw ProviderFailureException(
-                ProviderFailure(
-                    kind = ProviderFailureKind.CONFIGURATION,
-                    retryability = ProviderFailureRetryability.TERMINAL,
-                    safeSummary = "dispatch refused under 8k: final input ($finalInputTokens) + output ($reservedOutputTokens) + 512 > 8192 for $providerBackend",
-                ),
-            )
-        }
+        val finalInputTokens = inputAccountingContract?.countFinalTokens(payloadJson) ?: estimatedInputTokens
 
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = payloadJson.toRequestBody(mediaType)
@@ -305,9 +242,6 @@ abstract class OpenAiCompatibleTranslator(
     }
 
     companion object {
-        /** Analysis JSON below this size cannot carry a usable record set. */
-        private const val ANALYSIS_MIN_OUTPUT_TOKENS = 1_024
-
         /**
          * Parses an SSE response body (`data:` lines).
          * Extracts delta.content, text, or message.content from streaming chunks until [DONE].

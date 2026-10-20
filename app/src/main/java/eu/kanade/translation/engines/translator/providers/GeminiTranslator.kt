@@ -5,8 +5,6 @@ import eu.kanade.translation.engines.translator.GeminiInputAccountingContract
 import eu.kanade.translation.engines.translator.InputAccountingContract
 import eu.kanade.translation.engines.translator.ProviderFailure
 import eu.kanade.translation.engines.translator.ProviderFailureException
-import eu.kanade.translation.engines.translator.ProviderFailureKind
-import eu.kanade.translation.engines.translator.ProviderFailureRetryability
 import eu.kanade.translation.engines.translator.ProviderHttpResult
 import eu.kanade.translation.engines.translator.ProviderRequestGovernor
 import eu.kanade.translation.engines.translator.ProviderRequestKey
@@ -175,46 +173,9 @@ open class GeminiTranslator(
     ): String = generateContent(
         systemPrompt = systemPrompt,
         prompt = userPrompt,
-        maxOutputTokens = clampAnalysisOutputToPayload(systemPrompt, userPrompt, maxOutputTokens),
+        maxOutputTokens = maxOutputTokens,
         operation = "analysis",
     )
-
-    /**
-     * Analysis-only output-budget clamp, counted on the EXACT payload the
-     * dispatch guard will re-count (zero estimate drift by construction):
-     * when the honest final-input count leaves less room than requested,
-     * shrink the reservation to what fits under the 8k window instead of
-     * letting the guard refuse the chunk. Below the analysis output floor
-     * the reservation is returned unchanged — the guard's refusal (mapped
-     * to a typed PAUSE upstream) remains the honest outcome for an
-     * unfixably oversized input.
-     */
-    private fun clampAnalysisOutputToPayload(
-        systemPrompt: String,
-        prompt: String,
-        requestedOutputTokens: Int,
-    ): Int {
-        val contract = inputAccountingContract
-        if (contract == null || !contract.isCertified) return requestedOutputTokens
-        val probe = GeminiRequestPayload.create(
-            modelName = modelName,
-            systemPrompt = systemPrompt,
-            prompt = prompt,
-            maxOutputTokens = requestedOutputTokens,
-            temperature = temp,
-            thinkingMode = thinkingMode,
-        )
-        val finalInputTokens = contract.countFinalTokens(probe.payload)
-        val available = 8_192 - 512 - finalInputTokens
-        if (available >= requestedOutputTokens || available < ANALYSIS_MIN_OUTPUT_TOKENS) {
-            return requestedOutputTokens
-        }
-        logcat(LogPriority.WARN, tag = "GeminiTranslator") {
-            "event=analysis_output_budget_clamped model=${ShortHash.hash(modelName)} " +
-                "requested=$requestedOutputTokens clamped=$available finalInputTokens=$finalInputTokens"
-        }
-        return available
-    }
 
     override suspend fun promptText(prompt: String): String =
         try {
@@ -254,26 +215,7 @@ open class GeminiTranslator(
     }
 
     private suspend fun post(payload: String, reservedOutputTokens: Int, operation: String): String {
-        val contract = inputAccountingContract
-        if (contract == null || !contract.isCertified) {
-            throw ProviderFailureException(
-                ProviderFailure(
-                    kind = ProviderFailureKind.CONFIGURATION,
-                    retryability = ProviderFailureRetryability.TERMINAL,
-                    safeSummary = "dispatch refused: provider 'gemini' has no certified InputAccountingContract",
-                ),
-            )
-        }
-        val finalInputTokens = contract.countFinalTokens(payload)
-        if (finalInputTokens + reservedOutputTokens + 512 > 8_192) {
-            throw ProviderFailureException(
-                ProviderFailure(
-                    kind = ProviderFailureKind.CONFIGURATION,
-                    retryability = ProviderFailureRetryability.TERMINAL,
-                    safeSummary = "dispatch refused under 8k: final input ($finalInputTokens) + output ($reservedOutputTokens) + 512 > 8192 for gemini",
-                ),
-            )
-        }
+        val finalInputTokens = inputAccountingContract?.countFinalTokens(payload) ?: 0
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
             .header("x-goog-api-key", apiKey)
@@ -342,9 +284,6 @@ open class GeminiTranslator(
 
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-
-        /** Analysis JSON below this size cannot carry a usable record set. */
-        const val ANALYSIS_MIN_OUTPUT_TOKENS = 1_024
     }
 
     private data class RawGeminiResponse(

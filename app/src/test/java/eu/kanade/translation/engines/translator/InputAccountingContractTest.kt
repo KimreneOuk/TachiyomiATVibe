@@ -32,14 +32,12 @@ import kotlin.math.ceil
  * Covers:
  * 1. Certified conservative bounds formulas for all 4 providers (LM Studio, DeepSeek, OpenRouter, Gemini).
  * 2. Uncertified contract behavior.
- * 3. Rejection of dispatches without contract (contract = null) at the transport layer before network calls.
- * 4. Rejection of dispatches with uncertified contracts (isCertified = false) at the transport layer.
- * 5. Per-provider disable mechanism (uncertified contract -> terminal dispatch refusal).
- * 6. Rejection of dispatches where finalInputTokens + reservedOutputTokens + 512 > 8192 before network calls.
- *    (Analysis raw path: an oversized OUTPUT reservation is first clamped to
- *    what fits the window; only an oversized INPUT — under the analysis
- *    output floor — is refused at the guard.)
- * 7. Verification that dispatches within 8k budget pass the transport gate and sync certified tokens to governor.
+ * 3. Dispatches without a contract or with an uncertified contract are NOT
+ *    refused: they proceed with the fallback/uncertified estimate feeding the
+ *    quota governor admission.
+ * 4. Oversized dispatches are NOT refused locally: they proceed and surface
+ *    provider-side HTTP errors instead.
+ * 5. Dispatches sync certified final tokens (+ reserved output) to the governor.
  */
 class InputAccountingContractTest {
 
@@ -72,10 +70,8 @@ class InputAccountingContractTest {
     }
 
     /**
-     * ~[targetBaseTokens] honest base tokens of repeated CJK text: every
-     * certified bound (x1.10..x1.40 + offset) pushes the final payload count
-     * past the point where ANY analysis output reservation fits
-     * (8192 - 512 - finalInput < 1024-token analysis floor).
+     * ~[targetBaseTokens] honest base tokens of repeated CJK text: builds
+     * payloads far beyond any reasonable provider context window.
      */
     private fun oversizedUserPrompt(targetBaseTokens: Int = 6_400): String {
         val unit = "魔剣アルステラは神社の地下に眠っている"
@@ -188,11 +184,12 @@ class InputAccountingContractTest {
     }
 
     // =========================================================================
-    // 2. Transport Rejection Without Contract (contract = null)
+    // 2. Dispatch Without Contract (contract = null) — ungated, fallback estimate
     // =========================================================================
 
     @Test
-    fun `LM Studio dispatch without contract is rejected at transport layer`() = runTest {
+    fun `LM Studio dispatch without contract falls back to raw estimation and is admitted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val translator = object : LmStudioTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
             toLang = TextTranslatorLanguage.ENGLISH,
@@ -200,20 +197,38 @@ class InputAccountingContractTest {
             modelName = "llama-3-8b",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
         ) {
             override val inputAccountingContract: InputAccountingContract? = null
         }
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'lm_studio' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe TranslationContextChunkPlanner.estimateTokens(
+            buildJsonObject {
+                put("model", "llama-3-8b")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `DeepSeek dispatch without contract is rejected at transport layer`() = runTest {
+    fun `DeepSeek dispatch without contract falls back to raw estimation and is admitted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val translator = object : DeepSeekTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
             toLang = TextTranslatorLanguage.ENGLISH,
@@ -221,20 +236,38 @@ class InputAccountingContractTest {
             modelName = "deepseek-chat",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
         ) {
             override val inputAccountingContract: InputAccountingContract? = null
         }
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'deepseek' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe TranslationContextChunkPlanner.estimateTokens(
+            buildJsonObject {
+                put("model", "deepseek-chat")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `OpenRouter dispatch without contract is rejected at transport layer`() = runTest {
+    fun `OpenRouter dispatch without contract falls back to raw estimation and is admitted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val translator = object : OpenRouterTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
             toLang = TextTranslatorLanguage.ENGLISH,
@@ -242,20 +275,38 @@ class InputAccountingContractTest {
             modelName = "anthropic/claude-3.5-sonnet",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
         ) {
             override val inputAccountingContract: InputAccountingContract? = null
         }
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'openrouter' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe TranslationContextChunkPlanner.estimateTokens(
+            buildJsonObject {
+                put("model", "anthropic/claude-3.5-sonnet")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `Gemini dispatch without contract is rejected at transport layer`() = runTest {
+    fun `Gemini dispatch without contract is admitted with zero fallback estimate`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val translator = object : GeminiTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
             toLang = TextTranslatorLanguage.ENGLISH,
@@ -264,24 +315,25 @@ class InputAccountingContractTest {
             maxOutputToken = 1024,
             temp = 0.2f,
             thinkingMode = GeminiThinkingMode.DISABLED,
+            requestGovernor = governor,
         ) {
             override val inputAccountingContract: InputAccountingContract? = null
         }
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'gemini' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        (ex.event.estimatedTokens - 256) shouldBe 0
     }
 
     // =========================================================================
-    // 3. Transport Rejection With Uncertified Contract / Per-Provider Disable
+    // 3. Dispatch With Uncertified Contract — ungated, estimate still forwarded
     // =========================================================================
 
     @Test
-    fun `LM Studio dispatch with uncertified contract is refused at transport layer`() = runTest {
+    fun `LM Studio dispatch with uncertified contract is admitted and counted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val uncertifiedContract = UncertifiedInputAccountingContract("lm_studio", "unverified-model")
         val translator = LmStudioTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -290,19 +342,37 @@ class InputAccountingContractTest {
             modelName = "unverified-model",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
             customAccountingContract = uncertifiedContract,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'lm_studio' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe uncertifiedContract.countFinalTokens(
+            buildJsonObject {
+                put("model", "unverified-model")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `DeepSeek dispatch with uncertified contract is refused at transport layer`() = runTest {
+    fun `DeepSeek dispatch with uncertified contract is admitted and counted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val disabledContract = DeepSeekInputAccountingContract("deepseek-chat", isCertified = false)
         val translator = DeepSeekTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -311,19 +381,37 @@ class InputAccountingContractTest {
             modelName = "deepseek-chat",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
             customAccountingContract = disabledContract,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'deepseek' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe disabledContract.countFinalTokens(
+            buildJsonObject {
+                put("model", "deepseek-chat")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `OpenRouter dispatch with uncertified contract is refused at transport layer`() = runTest {
+    fun `OpenRouter dispatch with uncertified contract is admitted and counted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val uncertifiedContract = UncertifiedInputAccountingContract("openrouter", "meta-llama/llama-3")
         val translator = OpenRouterTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -332,19 +420,37 @@ class InputAccountingContractTest {
             modelName = "meta-llama/llama-3",
             maxOutputToken = 1024,
             temperature = 0.2f,
+            requestGovernor = governor,
             customAccountingContract = uncertifiedContract,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'openrouter' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe uncertifiedContract.countFinalTokens(
+            buildJsonObject {
+                put("model", "meta-llama/llama-3")
+                put("temperature", 0.2)
+                put("max_tokens", 256)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "system")
+                        put("content", "system")
+                    }
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", "user")
+                    }
+                }
+            }.toString(),
+        )
     }
 
     @Test
-    fun `Gemini dispatch with uncertified contract is refused at transport layer`() = runTest {
+    fun `Gemini dispatch with uncertified contract is admitted and counted`() = runTest {
+        val (governor, _) = interceptingGovernor()
         val disabledContract = GeminiInputAccountingContract("gemini-1.5-flash", isCertified = false)
         val translator = GeminiTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -353,23 +459,34 @@ class InputAccountingContractTest {
             modelName = "gemini-1.5-flash",
             maxOutputToken = 1024,
             temp = 0.2f,
+            requestGovernor = governor,
             customAccountingContract = disabledContract,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system", "user", 256)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused: provider 'gemini' has no certified InputAccountingContract"
+        ex.event.outcome shouldBe "admitted"
+        val finalInput = ex.event.estimatedTokens - 256
+        finalInput shouldBe disabledContract.countFinalTokens(
+            eu.kanade.translation.engines.translator.providers.GeminiRequestPayload.create(
+                modelName = "gemini-1.5-flash",
+                systemPrompt = "system",
+                prompt = "user",
+                maxOutputTokens = 256,
+                temperature = 0.2f,
+                thinkingMode = GeminiThinkingMode.DISABLED,
+            ).payload,
+        )
     }
 
     // =========================================================================
-    // 4. Transport Rejection Under 8k Ceiling (finalInput + reservedOutput + 512 > 8192)
+    // 4. Oversized Dispatch Is No Longer Refused Locally — it proceeds to the
+    //    governor and surfaces provider-side HTTP errors instead.
     // =========================================================================
 
     @Test
-    fun `LM Studio dispatch exceeding 8k budget is rejected at transport layer`() = runTest {
+    fun `LM Studio oversized dispatch is admitted ungated`() = runTest {
         val (governor, _) = interceptingGovernor()
         val translator = LmStudioTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -381,19 +498,15 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        // The INPUT is oversized: no honest output reservation fits under the
-        // analysis floor, the clamp stands down, and the guard refuses.
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused under 8k"
-        ex.failure.safeSummary shouldContain "lm_studio"
+        ex.event.outcome shouldBe "admitted"
+        (ex.event.estimatedTokens > 7800) shouldBe true
     }
 
     @Test
-    fun `DeepSeek dispatch exceeding 8k budget is rejected at transport layer`() = runTest {
+    fun `DeepSeek oversized dispatch is admitted ungated`() = runTest {
         val (governor, _) = interceptingGovernor()
         val translator = DeepSeekTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -405,17 +518,15 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused under 8k"
-        ex.failure.safeSummary shouldContain "deepseek"
+        ex.event.outcome shouldBe "admitted"
+        (ex.event.estimatedTokens > 7800) shouldBe true
     }
 
     @Test
-    fun `OpenRouter dispatch exceeding 8k budget is rejected at transport layer`() = runTest {
+    fun `OpenRouter oversized dispatch is admitted ungated`() = runTest {
         val (governor, _) = interceptingGovernor()
         val translator = OpenRouterTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -427,17 +538,15 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused under 8k"
-        ex.failure.safeSummary shouldContain "openrouter"
+        ex.event.outcome shouldBe "admitted"
+        (ex.event.estimatedTokens > 7800) shouldBe true
     }
 
     @Test
-    fun `Gemini dispatch exceeding 8k budget is rejected at transport layer`() = runTest {
+    fun `Gemini oversized dispatch is admitted ungated`() = runTest {
         val (governor, _) = interceptingGovernor()
         val translator = GeminiTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -449,17 +558,15 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        val ex = shouldThrow<ProviderFailureException> {
+        val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system prompt", oversizedUserPrompt(), maxOutputTokens = 7800)
         }
-        ex.failure.kind shouldBe ProviderFailureKind.CONFIGURATION
-        ex.failure.retryability shouldBe ProviderFailureRetryability.TERMINAL
-        ex.failure.safeSummary shouldContain "dispatch refused under 8k"
-        ex.failure.safeSummary shouldContain "gemini"
+        ex.event.outcome shouldBe "admitted"
+        (ex.event.estimatedTokens > 7800) shouldBe true
     }
 
     @Test
-    fun `Gemini analysis output reservation is clamped to the 8k window instead of refused`() = runTest {
+    fun `Gemini analysis dispatch passes the requested output reservation through unchanged`() = runTest {
         val (governor, _) = interceptingGovernor()
         val translator = GeminiTranslator(
             fromLang = TextRecognizerLanguage.JAPANESE,
@@ -471,18 +578,27 @@ class InputAccountingContractTest {
             requestGovernor = governor,
         )
 
-        // A small input with an oversized requested output no longer refuses:
-        // the reservation is clamped to what fits and the dispatch proceeds.
+        // A small input with an oversized requested output dispatches as-is:
+        // the reservation is neither clamped nor refused.
         val ex = shouldThrow<AdmissionInterceptException> {
             translator.postStructuredAnalysisRaw("system prompt", "user prompt", maxOutputTokens = 7800)
         }
         ex.event.outcome shouldBe "admitted"
-        // finalInputTokens + reservedOutput stays inside the dispatch window.
-        (ex.event.estimatedTokens <= 8_192 - 512) shouldBe true
+        val finalInput = ex.event.estimatedTokens - 7800
+        finalInput shouldBe translator.inputAccountingContract!!.countFinalTokens(
+            eu.kanade.translation.engines.translator.providers.GeminiRequestPayload.create(
+                modelName = "gemini-1.5-flash",
+                systemPrompt = "system prompt",
+                prompt = "user prompt",
+                maxOutputTokens = 7800,
+                temperature = 0.2f,
+                thinkingMode = GeminiThinkingMode.DISABLED,
+            ).payload,
+        )
     }
 
     // =========================================================================
-    // 5. Dispatches Within 8k Budget Pass Transport Gate & Sync Final Tokens
+    // 5. Dispatches Sync Certified Final Tokens (+ Reserved Output) To The Governor
     // =========================================================================
 
     @Test

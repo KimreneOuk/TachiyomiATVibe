@@ -12,8 +12,10 @@ enum class AccountingMode {
 }
 
 /**
- *  Transport-layer input accounting contract required for all AI dispatches under 8,192 context limit.
- * Dispatches without a certified contract are refused before network calls.
+ *  Transport-layer input accounting contract for AI dispatches.
+ *  Dispatches are NOT gated on this contract: it only supplies the final
+ *  model request input-token estimate consumed by the quota governor.
+ *  [isCertified] marks estimator trustworthiness and is informational.
  */
 interface InputAccountingContract {
     val providerBackend: String
@@ -92,8 +94,9 @@ class GeminiInputAccountingContract(
 }
 
 /**
- * Uncertified placeholder contract for testing or disabled providers.
- * Any dispatch under this contract is rejected at the transport gate.
+ * Uncertified placeholder contract for testing or unverified providers.
+ * Dispatches under this contract are sent as-is; the estimate is still
+ * forwarded to the quota governor.
  */
 class UncertifiedInputAccountingContract(
     override val providerBackend: String,
