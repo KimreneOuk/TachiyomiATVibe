@@ -12,6 +12,7 @@ import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.util.getChapterPages
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -70,6 +71,7 @@ class ChapterTranslatorTerminalExitsTest {
     private val preferences = mockk<TranslationPreferences>(relaxed = true)
     private val streamRegistry = mockk<TranslationStreamRegistry>(relaxed = true)
     private val pipeline = mockk<TranslationPipeline>(relaxed = true)
+    private val batchCoordinator = mockk<BatchTranslationCoordinator>(relaxed = true)
 
     private val registry = TranslationBatchTrackerRegistry()
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -97,6 +99,7 @@ class ChapterTranslatorTerminalExitsTest {
             streamRegistry,
             TranslationQueueStore(context),
             pipeline,
+            batchCoordinator = batchCoordinator,
         )
     }
 
@@ -176,10 +179,10 @@ class ChapterTranslatorTerminalExitsTest {
 
         stubEnumeration()
         // The batch worker only runs when the translator job is active; inject
-        // an active job so the pipeline call is reached, then make it explode.
+        // an active job so the coordinator call is reached, then make it explode.
         val activeJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { awaitCancellation() }
         coEvery {
-            pipeline.translateBatch(any(), any(), any(), any(), any(), any(), any())
+            batchCoordinator.translateChapter(any(), any(), any(), any(), any(), any(), any(), any())
         } throws RuntimeException("provider exploded")
 
         try {

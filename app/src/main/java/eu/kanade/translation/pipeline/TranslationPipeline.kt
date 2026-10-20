@@ -49,8 +49,6 @@ import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
 import eu.kanade.translation.pipeline.adaptive.DevicePermitPriority
 import eu.kanade.translation.pipeline.adaptive.DevicePriorityHandle
-import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
-import eu.kanade.translation.pipeline.batch.NativeLaneRunner
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.TranslationCompletionOutcome
@@ -94,10 +92,10 @@ class TranslationPipeline private constructor(
     private val provider: TranslationFileProvider,
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
-    private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
+    internal val streamRegistry: TranslationStreamRegistry = Injekt.get(),
     /**  test seam; production defaults preserve the result timer contract. */
     private val stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
-    private val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+    internal val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
     /**
      * Test seam for the HTTP+render result timer.
      * Production defaults preserve the [SINGLE_PAGE_TIMEOUT_MS] contract; tests
@@ -308,7 +306,7 @@ class TranslationPipeline private constructor(
         }
     }
 
-    private suspend fun drainDeferredPublications(deferred: DeferredPagePublications) {
+    internal suspend fun drainDeferredPublications(deferred: DeferredPagePublications) {
         val span = TranslationTrace.beginStage(
             TranslationTraceStage.DEFERRED_STORAGE_DRAIN,
             lane = TranslationTraceLane.STORAGE,
@@ -332,7 +330,7 @@ class TranslationPipeline private constructor(
 
     private val textTranslator get() = engines.textTranslator
 
-    private val recognitionEngine get() = engines.recognitionEngine
+    internal val recognitionEngine get() = engines.recognitionEngine
 
     private val currentInpaintingMode get() = engines.currentInpaintingMode
 
@@ -409,28 +407,6 @@ class TranslationPipeline private constructor(
         chapter: Chapter,
         source: HttpSource,
     ): ChapterTranslationStore? = pageStoreWriter.resolveActiveStore(manga, chapter, source)
-
-    private suspend fun markPageTimedOut(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
-        nativeTimer: Boolean = true,
-    ) {
-        // The store placeholder names the timer that actually
-        // fired — native (`withNativeLane`) vs HTTP+render (`withTimeoutOrNull`).
-        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs, nativeTimer)
-    }
-
-    private suspend fun updatePageFromCurrentSnapshot(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        description: String,
-        expectedGeneration: Long? = null,
-        update: (PageTranslation?) -> PageTranslation,
-    ): ChapterTranslationStore.PatchResult =
-        pageStoreWriter.updatePageFromCurrentSnapshot(store, pageKey, description, expectedGeneration, update)
 
     private suspend fun markAttemptFailed(attempt: AttemptAuthority?, error: Throwable) {
         attempt?.write("single-page failure") { current ->
@@ -810,268 +786,8 @@ class TranslationPipeline private constructor(
         }
     }
 
-    private suspend fun releaseSinglePageResources(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        deferredPublications: DeferredPagePublications,
-        sourceCustody: SourceBitmapCustody,
-        owner: CleanedOwner,
-    ) {
-        try {
-            drainDeferredPublications(deferredPublications)
-        } finally {
-            try {
-                chapter.id?.let { chapterId ->
-                    streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-                }
-            } finally {
-                try {
-                    sourceCustody.close()
-                } finally {
-                    try {
-                        owner.release()
-                    } finally {
-                        try {
-                            engines.endTranslatorUse()
-                        } finally {
-                            try {
-                                recognitionEngine.reclaimPooledMemory()
-                            } catch (e: Throwable) {
-                                logcat(LogPriority.WARN, e) {
-                                    "Failed to reclaim pooled recognition memory for $pageKey"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private sealed interface InpaintLaneResult {
-        object Produced : InpaintLaneResult
-        object SoftNull : InpaintLaneResult
-    }
-
-    private sealed interface NativeBranchOutcome {
-        object Success : NativeBranchOutcome
-        object SoftNull : NativeBranchOutcome
-        object TimedOut : NativeBranchOutcome
-        data class Failed(val throwable: Throwable) : NativeBranchOutcome
-    }
-
-    /** Segment-2 child of the shared single-page T3: native inpaint lane + enrollment. */
-    private suspend fun runNativeInpaintBranch(
-        traceRun: TranslationRunTrace?,
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-        nativeDraft: PageTranslation,
-        sourceCustody: SourceBitmapCustody,
-        owner: CleanedOwner,
-        attempt: AttemptAuthority,
-        deferredPublications: DeferredPagePublications,
-        stageListener: TranslationStageListener?,
-    ): NativeBranchOutcome {
-        try {
-            val laneResult: InpaintLaneResult? = withNativeLane(
-                timeoutMs = nativeTimeoutMs,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = {
-                    deferredPublications.orphaned = true
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT Segment 2 native inpaint timed out for $pageKey"
-                    }
-                },
-                priority = DevicePermitPriority.FOREGROUND,
-            ) {
-                val inpaintSpan = traceRun?.beginStage(
-                    TranslationTraceStage.INPAINT,
-                    lane = TranslationTraceLane.NATIVE,
-                    provider = TranslationTraceProvider.CPU,
-                )
-                val s = sourceCustody.take()
-                if (s == null) {
-                    inpaintSpan?.end(TranslationTraceOutcome.CANCELLED)
-                    return@withNativeLane InpaintLaneResult.SoftNull
-                }
-                try {
-                    stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
-                    val cleaned = try {
-                        recognitionEngine.inpaint(s, nativeDraft)
-                    } finally {
-                        inpaintSpan?.end()
-                    }
-                    if (cleaned != null) {
-                        owner.produce(cleaned, CleanedProvenance.INPAINT)
-                        InpaintLaneResult.Produced
-                    } else {
-                        InpaintLaneResult.SoftNull
-                    }
-                } finally {
-                    if (!owner.owns(s)) {
-                        try {
-                            s.recycle()
-                        } catch (e: Exception) {
-                            logcat(LogPriority.ERROR, e) {
-                                "TachiyomiAT segment 2 source bitmap recycle failed: pageKey=$pageKey"
-                            }
-                        }
-                    }
-                }
-            }
-            if (laneResult != null && owner.isAvailable) {
-                cleanedPublication.enrollCleanedPersistence(
-                    manga = manga,
-                    chapter = chapter,
-                    source = source,
-                    pageKey = pageKey,
-                    store = store,
-                    pageTranslation = nativeDraft,
-                    owner = owner,
-                    attempt = attempt,
-                    deferredPublications = deferredPublications,
-                )
-            }
-            return when (laneResult) {
-                is InpaintLaneResult.Produced -> NativeBranchOutcome.Success
-                is InpaintLaneResult.SoftNull -> NativeBranchOutcome.SoftNull
-                null -> NativeBranchOutcome.TimedOut
-            }
-        } catch (t: Throwable) {
-            if (t is CancellationException) throw t
-            logcat(LogPriority.ERROR, t) { "TachiyomiAT native inpaint branch failed: pageKey=$pageKey" }
-            return NativeBranchOutcome.Failed(t)
-        }
-    }
-
-    /** Post-join native-outcome resolution: terminal markers, failure writes, render. */
-    private suspend fun resolveNativeCompletion(
-        nativeResult: NativeBranchOutcome,
-        httpOutcome: TranslationCompletionOutcome,
-        nativeDraft: PageTranslation,
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        httpCtx: OnnxPhaseResult,
-        owner: CleanedOwner,
-        attempt: AttemptAuthority,
-        stageListener: TranslationStageListener?,
-        origin: PageWriteOrigin,
-    ): TranslationCompletionOutcome {
-        if (nativeResult is NativeBranchOutcome.TimedOut) {
-            val translationDurable = httpOutcome is TranslationCompletionOutcome.Completed
-            attempt.markTimeout { current ->
-                val msg = PageStoreWriter.timeoutFailureMessage(nativeTimer = true)
-                current.apply {
-                    if (inpaintStatus != StageStatus.READY) {
-                        inpaintStatus = StageStatus.FAILED
-                        inpaintError = msg
-                    }
-                    if (!translationDurable) {
-                        if (translationStatus != StageStatus.READY && translationStatus != StageStatus.PARTIAL) {
-                            translationStatus = StageStatus.FAILED
-                            translationError = msg
-                        }
-                    }
-                    errorMessage = msg
-                    retryCount += 1
-                    attemptCount += 1
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            return TranslationCompletionOutcome.Failed(anchorPageKey = pageKey, reason = "native phase timed out")
-        }
-
-        if (nativeResult is NativeBranchOutcome.SoftNull && nativeDraft.blocks.isEmpty()) {
-            val message = "Masked textless inpainting produced no cleaned image"
-            attempt.write("masked textless inpaint failure") { current ->
-                current.apply {
-                    inpaintStatus = StageStatus.FAILED
-                    inpaintError = message
-                    errorMessage = message
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            return TranslationCompletionOutcome.Failed(anchorPageKey = pageKey, reason = message)
-        }
-
-        if (nativeResult is NativeBranchOutcome.Failed) {
-            val nativeError = nativeResult.throwable.message ?: "native inpaint failed"
-            attempt.write("native inpaint failure") { current ->
-                current.apply {
-                    inpaintStatus = StageStatus.FAILED
-                    inpaintError = nativeError
-                    errorMessage = nativeError
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            return TranslationCompletionOutcome.Failed(anchorPageKey = pageKey, reason = nativeError)
-        }
-
-        if (httpOutcome !is TranslationCompletionOutcome.Completed) {
-            return httpOutcome
-        }
-
-        return singlePageHttpRenderPhase.renderSinglePageTranslated(
-            manga = manga,
-            chapter = chapter,
-            source = source,
-            pageKey = pageKey,
-            ctx = httpCtx,
-            owner = owner,
-            attempt = attempt,
-            origin = origin,
-        )
-    }
-
-    /**
-     * Lease admission for reader-originated single-page work. Session
-     * admission prevents a BATCH-owned page from being reached by a reader;
-     * any low-level denial is returned as a typed rejection. A MANUAL request
-     * still evicts an in-flight AUTO lease under reader-session policy.
-     */
-    private suspend fun acquireReaderPageLease(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        stage: PageStage,
-        origin: PageWriteOrigin,
-        site: TranslationTraceSite,
-    ): LeaseAcquisition = TranslationTrace.withLeaseWait(
-        site = site,
-        leaseKind = when (stage) {
-            PageStage.Ocr -> TranslationTraceLeaseKind.OCR
-            PageStage.Translation -> TranslationTraceLeaseKind.TRANSLATION
-            PageStage.Inpaint -> TranslationTraceLeaseKind.INPAINT
-            PageStage.Render -> TranslationTraceLeaseKind.RENDER
-        },
-    ) {
-        store.tryAcquirePageStageLease(pageKey, stage, origin)
-    }
-
-    private suspend fun releaseReaderPageLease(
-        store: ChapterTranslationStore?,
-        pageKey: String,
-        origin: PageWriteOrigin,
-    ) {
-        if (store == null) return
-        store.releasePageStageLease(pageKey, origin)
-    }
-
-    /** Releases the batch's page lease at an atomic stage boundary (terminal render/failure). */
-    private suspend fun releaseBatchPageLease(store: ChapterTranslationStore, pageKey: String) {
-        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
-    }
-
     // CleanedPublication owns cleaned-image files and their durable store metadata.
-    private val cleanedPublication = CleanedPublication(
+    internal val cleanedPublication = CleanedPublication(
         provider = provider,
         streamRegistry = streamRegistry,
         currentInpaintingMode = { currentInpaintingMode },
@@ -1080,7 +796,7 @@ class TranslationPipeline private constructor(
 
     // SinglePageHttpRenderPhase owns provider translation and display rendering.
     // Engine reads come from EngineLane at call time so rebuilds remain visible.
-    private val singlePageHttpRenderPhase = SinglePageHttpRenderPhase(
+    internal val singlePageHttpRenderPhase = SinglePageHttpRenderPhase(
         translationPreferences = translationPreferences,
         provider = provider,
         streamRegistry = streamRegistry,
@@ -1106,75 +822,6 @@ class TranslationPipeline private constructor(
         activeStoreResolverProvider = { activeStoreResolver },
         engineRebuildMutex = engineRebuildMutex,
     )
-
-    private suspend fun deleteRetiredCleanedFile(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-    ) {
-        cleanedPublication.deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
-    }
-
-    // BatchChapterTranslator owns chapter-wide sequencing; this class supplies
-    // its shared engine, storage, and native-lane collaborators.
-    private val batchChapterTranslator = BatchChapterTranslator(
-        provider = provider,
-        translationPreferences = translationPreferences,
-        nativeLane = object : NativeLaneRunner {
-            override suspend fun <T> run(
-                timeoutMs: Long,
-                chapterId: Long?,
-                chapterName: String,
-                pageKey: String,
-                onTimeout: suspend () -> Unit,
-                block: suspend () -> T,
-            ): T? = withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block = block)
-        },
-        engineRebuildMutex = engineRebuildMutex,
-        ensureEnginesBuiltFor = this::ensureEnginesBuiltFor,
-        recognitionEngineFn = { recognitionEngine },
-        textTranslatorFn = { textTranslator },
-        computeSourceFingerprintFn = this::computeSourceFingerprint,
-        batchExpectedFingerprintsFn = this::batchExpectedFingerprints,
-        inpaintingModeFromPref = this::inpaintingModeFromPref,
-        inpaintingStampDecision = this::inpaintingStampDecision,
-        releaseBatchPageLease = this::releaseBatchPageLease,
-        persistPageWithOomRecovery = this::persistPageWithOomRecovery,
-        loadPersistedCleanedBitmap = this::loadPersistedCleanedBitmap,
-        deleteRetiredCleanedFile = this::deleteRetiredCleanedFile,
-        markPageTimedOut = this::markPageTimedOut,
-        analyzePage = this::analyzePage,
-        decodePageBitmapForTranslation = this::decodePageBitmapForTranslation,
-        preflightInpaintGate = this::preflightInpaintGate,
-        inpaintPage = this::inpaintPage,
-        retryInpaintDownscaled = this::retryInpaintDownscaled,
-        persistCleanedBitmap = this::persistCleanedBitmap,
-        updatePageFromCurrentSnapshotFn = { store, pageKey, description, update ->
-            this.updatePageFromCurrentSnapshot(store = store, pageKey = pageKey, description = description, update = update)
-        },
-        onBatchClosedFn = { onBatchClosed },
-    )
-
-    suspend fun translateBatch(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        store: ChapterTranslationStore,
-        orderedStreams: List<Pair<String, () -> InputStream>>,
-        tracker: TranslationBatchProgressTracker? = null,
-        naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.pipeline.batch.progress.ReconciliationResult? =
-        batchChapterTranslator.translateBatch(manga, chapter, source, store, orderedStreams, tracker, naturalPageIndexes)
-
-    // EngineLane serializes engine rebuilds with native admission.
-    private suspend fun ensureEnginesBuiltFor(
-        fromLang: TextRecognizerLanguage,
-        toLang: TextTranslatorLanguage,
-    ) {
-        engines.ensureEnginesBuiltFor(fromLang, toLang)
-    }
 
     // Keep this entry point for existing pipeline call sites while the phase
     // owner handles bitmap lifetime and native-stage execution.
@@ -1207,37 +854,6 @@ class TranslationPipeline private constructor(
             inlineInpaint = inlineInpaint,
         )
 
-    private suspend fun loadPersistedCleanedBitmap(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        cleanedImageName: String,
-    ): Bitmap? = cleanedPublication.loadPersistedCleanedBitmap(manga, chapter, source, cleanedImageName)
-
-    private suspend fun persistCleanedBitmap(
-        pageTranslation: PageTranslation,
-        cleanedBitmap: Bitmap,
-        companionDir: UniFile?,
-        pageKey: String,
-        chapterName: String,
-        store: ChapterTranslationStore,
-        sourceId: Long,
-        mangaId: Long,
-        chapterId: Long?,
-        expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ): ChapterTranslationStore.PageSnapshot? = cleanedPublication.persistCleanedBitmap(
-        pageTranslation,
-        cleanedBitmap,
-        companionDir,
-        pageKey,
-        chapterName,
-        store,
-        sourceId,
-        mangaId,
-        chapterId,
-        expectedPrecondition,
-    )
-
     private suspend fun persistOnnxCleanedImage(
         manga: Manga,
         chapter: Chapter,
@@ -1257,17 +873,6 @@ class TranslationPipeline private constructor(
         attempt,
         deferredPublications,
     )
-
-    private suspend fun retryInpaintDownscaled(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        streams: List<Pair<String, () -> InputStream>>,
-        decoded: DecodedPage,
-        pageTranslation: PageTranslation,
-    ): PageTranslation =
-        singlePageOnnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
 
     private suspend fun retryInpaintDownscaledAdmitted(
         manga: Manga,
@@ -1319,24 +924,6 @@ class TranslationPipeline private constructor(
         return result
     }
 
-    private suspend fun analyzePage(
-        fileName: String,
-        bitmap: Bitmap,
-        decoded: DecodedPage,
-        store: ChapterTranslationStore,
-        batchFingerprints: BatchExpectedFingerprints,
-    ): PageTranslation =
-        singlePageOnnxPhase.analyzePage(fileName, bitmap, decoded, store, batchFingerprints)
-
-    private suspend fun inpaintPage(
-        fileName: String,
-        bitmap: Bitmap,
-        pageTranslation: PageTranslation,
-        batchFingerprint: String?,
-        guardedWrite: suspend (String, (PageTranslation?) -> PageTranslation) -> ChapterTranslationStore.PatchResult,
-    ): PageTranslation =
-        singlePageOnnxPhase.inpaintPage(fileName, bitmap, pageTranslation, batchFingerprint, guardedWrite)
-
     // MemoryGovernance owns decode budgets and recovery policy.
     fun forceReleaseNativeBuffers() {
         MemoryGovernance.forceReleaseNativeBuffers { recognitionEngine }
@@ -1344,10 +931,6 @@ class TranslationPipeline private constructor(
 
     private fun preflightAnalyzeGate(bitmap: Bitmap, fileName: String) {
         MemoryGovernance.preflightAnalyzeGate({ recognitionEngine }, bitmap, fileName)
-    }
-
-    private fun preflightInpaintGate(bitmap: Bitmap, fileName: String) {
-        MemoryGovernance.preflightInpaintGate({ recognitionEngine }, bitmap, fileName)
     }
 
     private fun reclaimTranslationMemory(reason: String, trimImageCache: Boolean) {
@@ -1368,32 +951,9 @@ class TranslationPipeline private constructor(
         MemoryGovernance.handleCriticalTranslationOom(this::forceReleaseNativeBuffers, stage, oom)
     }
 
-    private suspend fun persistPageWithOomRecovery(
-        store: ChapterTranslationStore,
-        fileName: String,
-        pageTranslation: PageTranslation,
-        expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ): ChapterTranslationStore.PatchResult =
-        pageStoreWriter.persistPageWithOomRecovery(store, fileName, pageTranslation, expectedPrecondition)
-
     // PageDecode owns source decoding and stable content fingerprints.
     private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? =
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
-
-    private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? =
-        PageDecode.decodePageBitmapForTranslation(
-            context = context,
-            recognitionEngine = { recognitionEngine },
-            fileName = fileName,
-            streamFn = streamFn,
-            onSourceBounds = { width, height ->
-                val sourcePixels = DeviceStageNormalization.sourcePixels(width, height)
-                TranslationTrace.currentRun()?.recordSourcePixels(sourcePixels)
-            },
-        )
-
-    private suspend fun computeSourceFingerprint(streamFn: () -> InputStream): String? =
-        PageDecode.computeSourceFingerprint(streamFn)
 
     private fun batchExpectedFingerprints(
         fromLang: TextRecognizerLanguage,

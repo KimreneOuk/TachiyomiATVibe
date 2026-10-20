@@ -103,7 +103,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
         val record = ChapterRunRecord(
             runId = "run-li4-publish-1",
             state = ChapterRunState.RUN_SNAPSHOT,
-            frozenConfig = eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.frozenRunConfig(
+            frozenConfig = frozenRunConfigSnapshot(
                 sourceLang = "ja",
                 targetLang = "en",
                 ocrEngine = "FakeOcrEngine",
@@ -348,7 +348,7 @@ class ChapterArtifactEngineStaleManifestRetryTest {
     private fun li4RunRecord(runId: String) = ChapterRunRecord(
         runId = runId,
         state = ChapterRunState.RUN_SNAPSHOT,
-        frozenConfig = eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.frozenRunConfig(
+        frozenConfig = frozenRunConfigSnapshot(
             sourceLang = "ja",
             targetLang = "en",
             ocrEngine = "FakeOcrEngine",

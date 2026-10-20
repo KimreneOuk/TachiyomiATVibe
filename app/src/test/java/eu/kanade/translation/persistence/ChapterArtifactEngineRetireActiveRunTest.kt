@@ -45,7 +45,7 @@ class ChapterArtifactEngineRetireActiveRunTest {
         val record = ChapterRunRecord(
             runId = "run-li2-store-1",
             state = ChapterRunState.RUN_SNAPSHOT,
-            frozenConfig = eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.frozenRunConfig(
+            frozenConfig = frozenRunConfigSnapshot(
                 sourceLang = "ja",
                 targetLang = "en",
                 ocrEngine = "FakeOcrEngine",

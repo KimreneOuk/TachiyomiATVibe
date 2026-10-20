@@ -577,7 +577,7 @@ class ChapterArtifactEngine(
 
     /**
      *  stale-manifest CAS detection exposed to the one seam whose
-     * publication lives OUTSIDE this store ([EnvelopePlanPublication.publish]):
+     * publication lives outside this store in the envelope-plan artifact layer:
      * the CAS there keys on the same [staleManifestRejectionReason] prefix
      * so every other rejection reason keeps failing exactly as before
      *

@@ -16,6 +16,7 @@ import eu.kanade.translation.persistence.loadArtifact
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.persistence.fixtureFingerprint
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -88,7 +89,7 @@ class ResetRetiresActiveRunTest {
             updatedAtEpochMs = 1L,
         )
         check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
-        val frozen = eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.frozenRunConfig(
+        val frozen = eu.kanade.translation.persistence.frozenRunConfigSnapshot(
             sourceLang = "ja",
             targetLang = "en",
             ocrEngine = "FakeOcrEngine",
@@ -100,7 +101,7 @@ class ResetRetiresActiveRunTest {
             state = ChapterRunState.COMPLETE,
             frozenConfig = frozen,
             frozenRunConfigFingerprint =
-            eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.runConfigFingerprint(frozen),
+            frozen.fixtureFingerprint(),
             orderedSourceDigest = hex64("ordered-source"),
             analysisPolicyFingerprint = hex64("analysis-policy"),
             envelopePolicyFingerprint = hex64("envelope-policy"),

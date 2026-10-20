@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
  * healthy COMPLETED chapter as fully stranded → chapter ERROR.
  *
  *  : the former pure selector
- * `BatchChapterTranslator.postPassReconciliation` was collapsed — dispatch is
+ * legacy post-pass reconciliation was collapsed — dispatch is
  * always a flagged lane now, so the shell's single post-pass site calls
  * [BatchProgressReconciler.reconcileFlaggedCompleted] directly and the
  * selector tests were deleted with it. The legacy

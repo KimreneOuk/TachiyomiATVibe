@@ -563,7 +563,7 @@ internal fun TranslationManager.translateChapterPreflightImpl(manga: Manga, chap
  * [removeFromTranslationQueue] only drops the queue entry; the chapter's
  * ChapterTranslationStore and its persisted OCR/inpaint/translation data
  * stay intact, so a later Start Batch on that chapter resumes via the
- * BatchResumeGateDecider's artifact scan without redoing completed work.
+ * durable artifact scan without redoing completed work.
  */
 
 internal fun TranslationManager.evictStaleQueuedChaptersImpl(keepChapterId: Long, sourceId: Long) {

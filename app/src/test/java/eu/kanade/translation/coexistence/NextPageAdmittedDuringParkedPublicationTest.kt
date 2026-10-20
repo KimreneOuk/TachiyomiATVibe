@@ -103,7 +103,6 @@ class NextPageAdmittedDuringParkedPublicationTest {
                     }
                     val accepted = result is ChapterTranslationStore.PatchResult.Accepted
                     arg<CleanedOwner>(6).registerReceipt(CompletableDeferred(accepted))
-                    harness.nativeStageDone[pageKey]?.complete(Unit)
                     accepted
                 }
 

@@ -12,6 +12,7 @@ import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.persistence.ArtifactStageStatus
 import eu.kanade.translation.persistence.ChapterRunRecord
+import eu.kanade.translation.persistence.ChapterRunRecordCounters
 import eu.kanade.translation.persistence.ChapterRunState
 import eu.kanade.translation.persistence.DurableFailureMetadata
 import eu.kanade.translation.persistence.FailureCategory
@@ -20,7 +21,6 @@ import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.DurableChapterState
 import eu.kanade.translation.pipeline.TranslationPipeline
-import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import kotlinx.coroutines.Dispatchers
@@ -180,8 +180,8 @@ internal fun rebuildTruthFromRunRecord(
     record: ChapterRunRecord?,
 ): Pair<TranslationBatchPhase, BatchRebuildProgress?>? {
     if (record == null) return null
-    val total = record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_TOTAL] ?: 0
-    val done = record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] ?: 0
+    val total = record.phaseCounters[ChapterRunRecordCounters.OCR_PAGES_TOTAL] ?: 0
+    val done = record.phaseCounters[ChapterRunRecordCounters.OCR_PAGES_DONE] ?: 0
     return when (record.state) {
         ChapterRunState.RUN_SNAPSHOT,
         ChapterRunState.SOURCE_VALIDATION,

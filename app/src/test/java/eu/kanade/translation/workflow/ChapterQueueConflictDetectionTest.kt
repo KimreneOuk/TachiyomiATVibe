@@ -10,8 +10,6 @@ import org.junit.jupiter.api.Test
  * Covers same-source conflicts and stale queue eviction used by
  * [TranslationManager.translateChapterPreflight].
  *
- * Artifact reuse for re-queued work is covered by
- * [eu.kanade.translation.pipeline.batch.BatchResumeGateDeciderTest].
  */
 class ChapterQueueConflictDetectionTest {
 

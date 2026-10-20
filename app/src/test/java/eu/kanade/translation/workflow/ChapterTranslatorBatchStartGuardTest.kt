@@ -71,6 +71,7 @@ class ChapterTranslatorBatchStartGuardTest {
             streamRegistry,
             TranslationQueueStore(context),
             pipeline,
+            batchCoordinator = mockk(relaxed = true),
         )
         // queueState is bound to the constructor-time _queueState instance, so
         // the injected flow must replace BOTH fields to be visible to start().

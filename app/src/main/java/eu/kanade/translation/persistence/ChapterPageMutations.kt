@@ -1,7 +1,6 @@
 package eu.kanade.translation.persistence
 
 import eu.kanade.translation.model.stampRenderTerminalIfDisplayComplete
-import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.blockFingerprints

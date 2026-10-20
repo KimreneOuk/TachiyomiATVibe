@@ -151,6 +151,7 @@ class QueueSteeringProviderGovernorTest {
             streamRegistry = mockStreamRegistry,
             queueStore = mockQueueStore,
             pipeline = mockPipeline,
+            batchCoordinator = mockk(relaxed = true),
         )
 
         val field: Field = ChapterTranslator::class.java.getDeclaredField("_queueState")

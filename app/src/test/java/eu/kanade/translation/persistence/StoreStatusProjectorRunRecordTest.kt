@@ -6,7 +6,6 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -91,7 +90,7 @@ class StoreStatusProjectorRunRecordTest {
         expectedPageCount: Int? = null,
     ): ChapterTranslationStore {
         val artifact = artifactsAuthority(pages, expectedPageCount)
-        val frozen = ChapterProfileBatchCoordinator.frozenRunConfig(
+        val frozen = frozenRunConfigSnapshot(
             sourceLang = "ja",
             targetLang = "en",
             ocrEngine = "FakeOcrEngine",
@@ -102,7 +101,7 @@ class StoreStatusProjectorRunRecordTest {
             runId = "run-li1-durable-1",
             state = ChapterRunState.COMPLETE,
             frozenConfig = frozen,
-            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozen),
+            frozenRunConfigFingerprint = frozen.fixtureFingerprint(),
             orderedSourceDigest = hex64("ordered-source"),
             analysisPolicyFingerprint = hex64("analysis-policy"),
             envelopePolicyFingerprint = hex64("envelope-policy"),

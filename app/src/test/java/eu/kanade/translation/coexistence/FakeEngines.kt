@@ -207,7 +207,7 @@ internal class FakeTransportTranslator(
         try {
             pages.forEach { (pageKey, page) ->
                 println("DBG transport call pageKey=$pageKey inst=$instanceId")
-                // The batch identity check in BatchLaneWorkers.translate has passed
+                // The batch identity check has passed
                 // by this point; only now may the native lane's cleaned publication
                 // for this page land.
                 signalTransportStarted(pageKey)

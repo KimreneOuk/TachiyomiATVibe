@@ -63,6 +63,12 @@ data class RunConfigSnapshot(
     val flagProfilePipeline: Boolean? = null,
 )
 
+/** Stable counter keys retained for reading run records written by older releases. */
+object ChapterRunRecordCounters {
+    const val OCR_PAGES_TOTAL = "ocrPagesTotal"
+    const val OCR_PAGES_DONE = "ocrPagesDone"
+}
+
 /** Analysis policy values frozen in the run snapshot. */
 @Serializable
 data class AnalysisPolicySnapshot(

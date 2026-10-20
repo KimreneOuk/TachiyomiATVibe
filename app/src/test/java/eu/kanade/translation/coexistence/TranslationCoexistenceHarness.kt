@@ -2,8 +2,6 @@
 
 
 package eu.kanade.translation.coexistence
-import eu.kanade.translation.persistence.ChapterProgressRecords
-
 import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
@@ -13,7 +11,6 @@ import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.rendering.RenderColorEstimator
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TextRecognizerLanguage
@@ -27,16 +24,11 @@ import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.loadArtifact
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.OcrStagePatch
-import eu.kanade.translation.persistence.PageWriteOrigin
-import eu.kanade.translation.persistence.StagePatchResult
-import eu.kanade.translation.persistence.ocrBlockFingerprints
 import eu.kanade.translation.scheduling.InMemorySharedPreferences
 import eu.kanade.translation.scheduling.TranslationQueueStore
 import eu.kanade.translation.pipeline.AttemptAuthority
 import eu.kanade.translation.pipeline.CleanedOwner
 import eu.kanade.translation.pipeline.CleanedPublication
-import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
@@ -45,20 +37,16 @@ import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
 import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.TranslationPipeline
 import eu.kanade.translation.pipeline.adaptive.DevicePagePermitGate
-import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
-import eu.kanade.translation.pipeline.batch.NativeLaneRunner
-import eu.kanade.translation.pipeline.batch.progress.ReconciliationResult
-import eu.kanade.translation.pipeline.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.pipeline.execution.NativeRunQuarantine
 import eu.kanade.translation.pipeline.execution.TranslationStreamRegistry
-import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.pipeline.planning.BatchExpectedFingerprints
-import eu.kanade.translation.pipeline.toPrecondition
+import eu.kanade.translation.pipeline.memory.MemoryGovernance
 import eu.kanade.translation.scheduling.ReaderPageWork
 import eu.kanade.translation.scheduling.ReaderSessionToken
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationSession
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.getChapterPages
 import eu.kanade.translation.workflow.ChapterTranslator
@@ -112,8 +100,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Builds the REAL production graph — TranslationManager → TranslationScheduler
  * → TranslationPipeline (real EngineLane, real SinglePageOnnx/HttpRender phases,
- * real BatchChapterTranslator → BatchLaneWorkers → SequentialBatchCoordinator →
- * BatchRenderJoin) → ChapterTranslationStore (memory-only) → ChapterTranslator —
+ * ChapterTranslationStore (memory-only) → ChapterTranslator —
  * using the repository's JVM-only test construction factories and reflection
  * field injection for the graph-specific collaborators.
  * Fakes exist only at sanctioned engine and I/O boundaries.
@@ -136,21 +123,11 @@ internal class TranslationCoexistenceHarness private constructor(
     val manager: TranslationManager,
     val fakeRecognition: FakeRecognitionEngine,
     val fakeTransport: FakeTransportTranslator,
-    internal val batchInpaintPageKeys: CopyOnWriteArrayList<String>,
-    val trackerRegistry: TranslationBatchTrackerRegistry,
     val streamRegistry: TranslationStreamRegistry,
     val activeStores: ActiveChapterStoreRegistry,
-    val trackerScope: CoroutineScope,
     val managerScope: CoroutineScope,
-    // Exposed so a test can park cleaned-image
-    // publication at a COMMIT barrier mid-commit (the permit-free-commit
-    // choreography). The real instance stays wired into the phases for their
-    // internal reads.
     internal val cleanedPublicationMock: CleanedPublication,
-    // Exposed so a test can swap in a governed transport
-    // (paid calls admitted through a real ProviderRequestGovernor).
     internal val engineLane: EngineLane,
-    internal val nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
     internal val transportStarted: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
     // Cross-instance transport evidence and the engine-drain
     // scope. transportInstances includes the primary fakeTransport (instance 1).
@@ -161,7 +138,6 @@ internal class TranslationCoexistenceHarness private constructor(
 
     /** Unique process-local identity so concurrent or sequential harnesses never alias chapter state. */
     val CHAPTER_ID: Long get() = chapterId
-    val DISABLED_CHAPTER_ID: Long get() = chapterId + 1L
 
     companion object {
         const val SOURCE_ID = 1L
@@ -205,22 +181,6 @@ internal class TranslationCoexistenceHarness private constructor(
             // Optional test-only HTTP+render result-timer override. Reflection
             // keeps this seam out of the production API.
             httpRenderTimeoutMs: Long? = null,
-            // Cleaned-image file names the fake provider
-            // reports as physically present on disk (non-empty). Document IO is
-            // a sanctioned fake seam; the resume gate's physical-presence check
-            // consults it for pages persisted by an earlier batch run.
-            cleanedImagesOnDisk: Set<String> = emptySet(),
-            //  : drop the fake transport's per-page
-            // "native inpaint lands before the paid call returns"
-            // serialization. The (only) batch pipeline drains inpaint through
-            // the OverlapScheduler — a page is a candidate only AFTER its
-            // translation commit — so the first page's translate would wait
-            // for its own inpaint, which by design can only run after that
-            // same commit: a harness-invented deadlock, not a production
-            // ordering.
-            transportWaitsForNativeStage: Boolean = false,
-            // Optional batch OCR result shape for no-detection integration tests.
-            batchZeroDetectionMaskBoxes: List<InpaintMaskBox>? = null,
         ): TranslationCoexistenceHarness {
             val chapterId = nextChapterId.getAndAdd(2L)
             val barrier = CoexistenceBarrier()
@@ -233,37 +193,10 @@ internal class TranslationCoexistenceHarness private constructor(
             every { context.applicationContext } returns context
             val preferences = harnessPreferences()
             val provider = mockk<eu.kanade.translation.persistence.TranslationFileProvider>(relaxed = true)
-            if (cleanedImagesOnDisk.isNotEmpty()) {
-                val onDisk = mockk<UniFile> {
-                    every { exists() } returns true
-                    every { length() } returns 128L
-                }
-                every {
-                    provider.findPageCleanedImage(any(), any(), any(), any(), any())
-                } answers { if (arg<String>(4) in cleanedImagesOnDisk) onDisk else null }
-            }
             val downloadProvider = mockk<DownloadProvider>(relaxed = true)
             val sourceManager = mockk<SourceManager>(relaxed = true)
             val streamRegistry = TranslationStreamRegistry()
 
-            // With [preRegisterInStore]=false the store starts EMPTY, matching
-            // production's fresh-chapter state where no page record exists
-            // until the batch pre-registers (ChapterTranslator.kt:637) or the
-            // manual path creates it. Pre-registered PENDING entries would
-            // make the single-page planner project WAIT_FOR_DEPENDENCY for
-            // every stage (DETECTION plans RUN and blocks them), while the
-            // manual path would silently resume-skip before any barrier.
-            // An artifact-authority store built by the test
-            // (FakeChapterDocumentIo + production fresh-chapter recipe) replaces
-            // the memory-only default so durable sidecars (attempt ledger,
-            // manifest) are observable across a simulated process death.
-            //  : the (only) batch pipeline REFUSES
-            // chapters without artifact authority, so every batch-driving
-            // suite passes `storeOverride = artifactAuthorityStore(...)` (
-            // recipe: FakeChapterDocumentIo + production fresh-chapter
-            // recipe). The default stays the reader-only memory store so
-            // single-page (manual/auto) suites keep their baseline fixture —
-            // the reader per-page path is untouched by.
             val store = storeOverride ?: ChapterTranslationStore(
                 artifactParentResolver = null,
                 initialPages = if (preRegisterInStore) {
@@ -277,7 +210,6 @@ internal class TranslationCoexistenceHarness private constructor(
 
             // Per-page lane serialization (see FakeTransportTranslator doc).
             val transportStarted = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-            val nativeStageDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
             // Cross-instance evidence and the rebuilt-instance
             // factory the EngineLane epoch retry uses. The primary fake shares
             // the state, so call/serving/close-order evidence is observable
@@ -287,11 +219,7 @@ internal class TranslationCoexistenceHarness private constructor(
             fun newTransport(): FakeTransportTranslator =
                 FakeTransportTranslator(
                     barrier,
-                    waitForNativeStage = if (transportWaitsForNativeStage) {
-                        { pageKey -> nativeStageDone[pageKey]?.await() }
-                    } else {
-                        { _ -> }
-                    },
+                    waitForNativeStage = { _ -> },
                     signalTransportStarted = { pageKey ->
                         println("DBG signalStart $pageKey")
                         transportStarted.computeIfAbsent(pageKey) { CompletableDeferred() }.complete(Unit)
@@ -479,181 +407,6 @@ internal class TranslationCoexistenceHarness private constructor(
                 },
             )
 
-            // ---- batch native/disk collaborator fakes (note §1.2.1) ---------
-            val batchDecode: suspend (String, () -> InputStream) -> DecodedPage? = { pageKey, _ ->
-                barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, pageKey)
-                FakeCoexistence.decodedPage(pageKey)
-            }
-            val batchAnalyze: suspend (
-                String,
-                Bitmap,
-                DecodedPage,
-                ChapterTranslationStore,
-                BatchExpectedFingerprints,
-            ) -> PageTranslation = { pageKey, _, _, batchStore, fingerprints ->
-                val analyzed = FakeCoexistence.analyzedPage(pageKey).apply {
-                    batchZeroDetectionMaskBoxes?.let { masks ->
-                        blocks.clear()
-                        inpaintMaskBoxes = masks
-                    }
-                    sourceFingerprint = "fp-$pageKey"
-                    detectionFingerprint = fingerprints.detection
-                    ocrFingerprint = fingerprints.ocr
-                    // Decoded geometry, exactly like the real recognition
-                    // engines: the batch preflight's OCR checkpoint records
-                    // a complete SourceIdentity (sha256 + width + height +
-                    // orientation), and `orientationOf` derives it from these.
-                    imgWidth = 100f
-                    imgHeight = 100f
-                    // A fresh OCR result carries the current inpaint revision
-                    // (the checkpoint's revision gate rejects stale ones).
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                }
-                //  (now unconditional, ): the REAL
-                // SinglePageOnnxPhase.analyzePage persists the OCR product
-                // through the store BEFORE inpaint (closing the OCR crash
-                // window). The batch preflight checkpoints the STORE's
-                // per-page OCR state, so the recipe performs the production
-                // OCR merge here, under the OCR lease the real native worker
-                // is holding (read fresh from the snapshot).
-                val before = batchStore.snapshot(pageKey)
-                batchStore.mergeOcr(
-                    OcrStagePatch(
-                        pageKey = pageKey,
-                        generation = before.generation,
-                        expectedPageVersion = before.pageVersion,
-                        expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                        ocrResult = analyzed,
-                        expectedLeaseToken = before.leaseToken,
-                    ),
-                    description = "t924 coexistence preflight ocr",
-                ).shouldBeInstanceOf<StagePatchResult.Accepted>()
-                analyzed
-            }
-            val batchInpaintPageKeys = CopyOnWriteArrayList<String>()
-            val batchInpaint: suspend (
-                String,
-                Bitmap,
-                PageTranslation,
-                String?,
-                suspend (String, (PageTranslation?) -> PageTranslation) -> ChapterTranslationStore.PatchResult,
-            ) -> PageTranslation = { pageKey, _, page, batchFingerprint, _ ->
-                batchInpaintPageKeys += pageKey
-                //  track I (round 2) CONVERSION: the old
-                // `transportStarted[pageKey]?.await()` pinned the pre-decoupling
-                // lane order "the page's batch identity check has passed once
-                // the transport started; only then may the native stage write
-                // the page". Track I removed the translation-status candidacy
-                // gate (StageFingerprints.inpaint has no translation input), so
-                // the overlap inpaint legitimately runs BEFORE (or without) the
-                // page's own transport — awaiting it here deadlocked the native
-                // lane (the suspended fake holds the ONE native permit while the
-                // event it waits for may never fire: FAILED predecessors,
-                // reader-owned pages, parked transports). The scheduler's
-                // BATCH write-slot admission (OverlapScheduler slot-free
-                // pre-check) now provides the same-page write-exclusivity this
-                // wait used to approximate, so the fake inpaint runs
-                // unconditionally like the real native worker.
-                println("DBG inpaint $pageKey run")
-                page.inpaintFingerprint = batchFingerprint
-                page.cleanedBitmap = FakeCoexistence.stubBitmap()
-                //    fake fidelity: the real page inpainter
-                // settles the in-memory page's inpaintStatus to READY on success
-                // (the durable store record is publishCleanedThroughStore's
-                // job). Without this the worker's done-check fails the phase in
-                // the TRACKER only — silently in every test that never asserts
-                // the terminal snapshot, and wrongly in those that do.
-                page.inpaintStatus = StageStatus.READY
-                // Return gate of the fake native inpaint = NATIVE_RELEASE (note §2).
-                barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_RELEASE, pageKey)
-                page
-            }
-            val batchPersistCleaned: suspend (
-                PageTranslation,
-                Bitmap,
-                UniFile?,
-                String,
-                String,
-                ChapterTranslationStore,
-                Long,
-                Long,
-                Long?,
-                ChapterTranslationStore.PatchPrecondition?,
-            ) -> ChapterTranslationStore.PageSnapshot? = { page, _, _, pageKey, _, batchStore, _, _, _, expected ->
-                publishCleanedThroughStore(
-                    batchStore,
-                    page,
-                    pageKey,
-                    engineLane.currentInpaintingMode.name,
-                    expected,
-                    nativeStageDone,
-                )
-            }
-            val renderReload: suspend (Manga, Chapter, HttpSource, String) -> Bitmap? = { _, _, _, cleanedImageName ->
-                // First action of the real render path (BatchRenderJoin.kt:154).
-                // The production seam receives the CLEANED FILE NAME; the
-                // barrier is keyed by page key (publishCleanedThroughStore
-                // names the file "$pageKey.cleaned.jpg").
-                barrier.arrive(
-                    CoexistenceBarrier.BarrierPoint.RENDER,
-                    cleanedImageName.removeSuffix(".cleaned.jpg"),
-                )
-                FakeCoexistence.stubBitmap()
-            }
-
-            val batchChapterTranslator = BatchChapterTranslator(
-                provider = provider,
-                translationPreferences = preferences,
-                nativeLane = object : NativeLaneRunner {
-                    override suspend fun <T> run(
-                        timeoutMs: Long,
-                        chapterId: Long?,
-                        chapterName: String,
-                        pageKey: String,
-                        onTimeout: suspend () -> Unit,
-                        block: suspend () -> T,
-                    ): T? {
-                        println("DBG nativeLane run pageKey=$pageKey")
-                        return engineLane.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
-                    }
-                },
-                engineRebuildMutex = engineRebuildMutex,
-                ensureEnginesBuiltFor = { from, to -> engineLane.ensureEnginesBuiltFor(from, to) },
-                recognitionEngineFn = { engineLane.recognitionEngine },
-                textTranslatorFn = { engineLane.textTranslator },
-                computeSourceFingerprintFn = { streamFn -> PageDecode.computeSourceFingerprint(streamFn) },
-                batchExpectedFingerprintsFn = expectedFingerprints,
-                inpaintingModeFromPref = { engineLane.inpaintingModeFromPref() },
-                inpaintingStampDecision = { engineLane.inpaintingStampDecision() },
-                releaseBatchPageLease = { batchStore, pageKey ->
-                    batchStore.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
-                },
-                persistPageWithOomRecovery = { batchStore, fileName, pageTranslation, expected ->
-                    pageStoreWriter.persistPageWithOomRecovery(batchStore, fileName, pageTranslation, expected)
-                },
-                loadPersistedCleanedBitmap = renderReload,
-                deleteRetiredCleanedFile = { manga, chapter, source, pageKey, batchStore ->
-                    realCleanedPublication.deleteRetiredCleanedFile(manga, chapter, source, pageKey, batchStore)
-                },
-                markPageTimedOut = { manga, chapter, source, pageKey ->
-                    pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey)
-                },
-                analyzePage = batchAnalyze,
-                decodePageBitmapForTranslation = batchDecode,
-                preflightInpaintGate = { bitmap, fileName ->
-                    MemoryGovernance.preflightInpaintGate({ engineLane.recognitionEngine }, bitmap, fileName)
-                },
-                inpaintPage = batchInpaint,
-                retryInpaintDownscaled = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
-                    onnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
-                },
-                persistCleanedBitmap = batchPersistCleaned,
-                updatePageFromCurrentSnapshotFn = { batchStore, pageKey, description, update ->
-                    pageStoreWriter.updatePageFromCurrentSnapshot(batchStore, pageKey, description, null, update)
-                },
-                onBatchClosedFn = { null },
-            )
-
             // ---- Pipeline: real class with its runtime graph injected ------
             val devicePagePermitGate = DevicePagePermitGate()
             val pipeline = TranslationPipeline.createForTesting(
@@ -683,22 +436,11 @@ internal class TranslationCoexistenceHarness private constructor(
                     "cleanedPublication" to cleanedPublicationMock,
                     "singlePageHttpRenderPhase" to httpRenderPhase,
                     "singlePageOnnxPhase" to onnxPhase,
-                    "batchChapterTranslator" to batchChapterTranslator,
                     // Listener and store-resolution hooks.
                     "onPageStuck" to (null as ((chapterId: Long?, pageKey: String) -> Unit)?),
                     "activeStoreResolver" to storeResolverHook,
-                    "onBatchClosed" to (null as (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)?),
                 ),
             )
-            // Set the tracker factory separately so the nullable return type is exact.
-            val trackerRegistry = TranslationBatchTrackerRegistry()
-            val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-            setField(
-                pipeline,
-                "batchTrackerFactory",
-            ) { chapterId: Long, chapterStore: ChapterTranslationStore, orderedPageKeys: List<String> ->
-                trackerRegistry.createTracker(chapterId, chapterStore, orderedPageKeys, trackerScope)
-            }
             // Optional HTTP+render result timer override; null uses the
             // production timeout.
             if (httpRenderTimeoutMs != null) {
@@ -745,14 +487,10 @@ internal class TranslationCoexistenceHarness private constructor(
                 streamRegistry,
                 TranslationQueueStore(context),
                 pipeline,
+                batchCoordinator = mockk(relaxed = true),
             )
 
-            // ---- Manager surface and reader teardown wiring -----------------
-            // The harness taps the manual path
-            // through scheduler.translatePage because TranslationManager's
-            // `readerTeardown` is a computed property, not a field for
-            // reflection injection. The coordinator delegates to this same
-            // scheduler entry.
+            // Route reader taps through the production scheduler.
             val activeStores = ActiveChapterStoreRegistry()
             val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             val manager = TranslationManager.createForTesting(
@@ -781,15 +519,11 @@ internal class TranslationCoexistenceHarness private constructor(
                 manager = manager,
                 fakeRecognition = fakeRecognition,
                 fakeTransport = fakeTransport,
-                batchInpaintPageKeys = batchInpaintPageKeys,
-                trackerRegistry = trackerRegistry,
                 streamRegistry = streamRegistry,
                 activeStores = activeStores,
-                trackerScope = trackerScope,
                 managerScope = managerScope,
                 cleanedPublicationMock = cleanedPublicationMock,
                 engineLane = engineLane,
-                nativeStageDone = nativeStageDone,
                 transportStarted = transportStarted,
                 transportShared = transportShared,
                 transportInstances = transportInstances,
@@ -880,16 +614,6 @@ internal class TranslationCoexistenceHarness private constructor(
             return TranslationPreferences(store)
         }
 
-        /**
-         * The durable artifact-store recipe for the
-         * batch pipeline. Production establishes chapter artifact authority the
-         * first time a store with an artifact parent persists; tests build the
-         * same ARTIFACTS authority directly (the BatchDispatchResumeWiringTest
-         * recipe over in-memory document IO) so the batch preflight's
-         * checkpoint transactions are observable in durable sidecars. Pages
-         * start as fresh PENDING records; the real shell pre-registers the
-         * ordered page set into the manifest at trigger time.
-         */
         fun artifactAuthorityStore(
             pageKeys: List<String>,
             preRegisterInStore: Boolean = true,
@@ -920,84 +644,10 @@ internal class TranslationCoexistenceHarness private constructor(
             )
         }
 
-        /**
-         * The STANDARD_PIPELINE lane recipe — the real
-         * shell (ChapterTranslator → TranslationPipeline → BatchChapterTranslator
-         * → ChapterProfileBatchCoordinator with the injected standard seam)
-         * driven with the harness's STANDARD engine seeds. The
-         * standard translator IS the engine the shell resolves through the
-         * normal EngineLane construction path (`textTranslatorFn =
-         * { engineLane.textTranslator }` = [FakeTransportTranslator]); no
-         * production change. The fake transport drops the legacy per-page
-         * native-stage wait — see [create]'s `transportWaitsForNativeStage`.
-         * The store is a durable ARTIFACTS-authority store ([artifactAuthorityStore])
-         * because the batch preflight refuses chapters without artifact
-         * authority.
-         */
-        fun createStandard(
-            pageKeys: List<String>,
-            storeOverride: ChapterTranslationStore? = null,
-            zeroDetectionMaskBoxes: List<InpaintMaskBox>? = null,
-        ): TranslationCoexistenceHarness = create(
-            pageKeys = pageKeys,
-            storeOverride = storeOverride ?: artifactAuthorityStore(pageKeys),
-            transportWaitsForNativeStage = false,
-            batchZeroDetectionMaskBoxes = zeroDetectionMaskBoxes,
-        )
-
         private fun seed(key: String, value: Any): InMemoryPreferenceStore.InMemoryPreference<Any> =
             InMemoryPreferenceStore.InMemoryPreference(key, value, value)
 
-        /**
-         * Models "cleaned image durable" through the REAL guarded store write —
-         * the production persistCleanedBitmap commit without Bitmap.compress.
-         *
-         * The precondition is read fresh at patch time instead of using the
-         * worker's captured
-         * [expected]. Production captures it before a ~100ms JPEG encode, so
-         * the concurrent standard-lane translation commit lands inside that
-         * window and the identity map is re-read downstream; the fake has zero
-         * I/O latency, which would turn that benign production window into a
-         * deterministic stale-precondition rejection and poison every
-         * choreography.
-         */
-        private suspend fun publishCleanedThroughStore(
-            batchStore: ChapterTranslationStore,
-            page: PageTranslation,
-            pageKey: String,
-            inpaintingModeName: String,
-            expected: ChapterTranslationStore.PatchPrecondition?,
-            nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
-        ): ChapterTranslationStore.PageSnapshot? {
-            page.cleanedImageName = "$pageKey.cleaned.jpg"
-            page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-            page.inpaintingModeUsed = inpaintingModeName
-            page.inpaintStatus = StageStatus.READY
-            page.errorMessage = null
-            // updatePageGuarded (the guarded write every batch stage writer uses)
-            // — patchPage's manifest-fingerprint clause rejects memory-only
-            // stores where the snapshot fingerprint is page-derived.
-            val precondition = batchStore.snapshot(pageKey).toPrecondition()
-            val result = batchStore.updatePageGuarded(pageKey, precondition, "publish cleaned image") { current ->
-                (current ?: page).apply {
-                    cleanedImageName = page.cleanedImageName
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    inpaintingModeUsed = inpaintingModeName
-                    inpaintStatus = StageStatus.READY
-                    errorMessage = null
-                }
-            }
-            // Per-page lane ordering point: the transport (paid call) waits for
-            // this, so the cleaned publication is strictly durable before the
-            // translation commit for the same page — the two same-page writers
-            // never overlap, which instant fakes would otherwise make a coin
-            // flip (see FakeTransportTranslator doc).
-            nativeStageDone[pageKey]?.complete(Unit)
-            return when (result) {
-                is ChapterTranslationStore.PatchResult.Accepted -> result.snapshot
-                is ChapterTranslationStore.PatchResult.Rejected -> null
-            }
-        }
+
     }
 
     // ----------------------------------------------------------------------
@@ -1024,7 +674,6 @@ internal class TranslationCoexistenceHarness private constructor(
         every { id } returns SOURCE_ID
     }
 
-    private var batchJobStub: Job? = null
     private val teardownJobsLock = Any()
     private val activeTeardownJobs = ConcurrentHashMap.newKeySet<Job>()
 
@@ -1104,72 +753,6 @@ internal class TranslationCoexistenceHarness private constructor(
             watcherScope.cancel()
         }
         return terminal
-    }
-
-    /** A launched batch run: the real translation entry + its reconciliation. */
-    class BatchRun(
-        val translation: Translation,
-        val job: Job,
-        val reconciliation: CompletableDeferred<ReconciliationResult?>,
-    )
-
-    /**
-     * Drives the REAL ChapterTranslator.translateChapterInternal (injected active
-     * translationJob per ChapterTranslatorTerminalExitsTest.kt:174-182) so the
-     * full batch shell runs: pre-registration, tracker, translateBatch,
-     * reconciliation, tracker finish.
-     *
-     * [sourcePageCount]/[sourceCountKnown] carry the
-     * trigger's admission-probe cross-check on the batch's [Translation]
-     * (sourceCountKnown=true with a null count = the offline-unknown total).
-     * Optional source-count metadata is injected reflectively because it is not
-     * part of the production API. When absent, totals remain unknown.
-     */
-    fun launchBatch(
-        pageKeys: List<String>? = null,
-        sourcePageCount: Int? = null,
-        sourceCountKnown: Boolean = false,
-    ): BatchRun {
-        // Per-page lane-serialization entries (see FakeTransportTranslator doc)
-        // must exist BEFORE the batch's lanes run. On an empty-start store the
-        // keys are not observable yet, so tests pass them explicitly.
-        (pageKeys ?: store.state.value.keys.toList()).forEach { pageKey ->
-            transportStarted.computeIfAbsent(pageKey) { CompletableDeferred() }
-            nativeStageDone.computeIfAbsent(pageKey) { CompletableDeferred() }
-        }
-        val translation = Translation(source, manga, chapterFor(CHAPTER_ID))
-        if (sourceCountKnown || sourcePageCount != null) {
-            try {
-                setField(translation, "probedSourcePageCount", sourcePageCount)
-                setField(translation, "sourceCountKnown", sourceCountKnown)
-            } catch (_: NoSuchFieldException) {
-                // Source-count metadata is optional; without it, the batch
-                // runs with an unknown source total.
-            }
-        }
-        val reconciliation = CompletableDeferred<ReconciliationResult?>()
-        val activeJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { awaitCancellation() }
-        batchJobStub = activeJob
-        setField(translator, "translationJob", activeJob)
-        // Start the real batch coroutine on the caller before returning. The
-        // harness's first observation is an event from inside the batch; an
-        // ordinary IO launch can leave that observation queued behind other
-        // fixture collectors long enough to make a healthy run look absent.
-        val job = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch(
-            start = CoroutineStart.UNDISPATCHED,
-        ) {
-            try {
-                reconciliation.complete(translator.translateChapterInternal(translation))
-            } catch (t: Throwable) {
-                if (t is kotlinx.coroutines.CancellationException) {
-                    reconciliation.cancel()
-                } else {
-                    reconciliation.completeExceptionally(t)
-                }
-            }
-        }
-        trackJobForTeardown(job)
-        return BatchRun(translation, job, reconciliation)
     }
 
     /** Register test-owned work that can still touch this harness after an assertion exits. */
@@ -1285,11 +868,6 @@ internal class TranslationCoexistenceHarness private constructor(
         failure?.let { throw it }
     }
 
-    /**
-     * Batch jobs run in their own SupervisorJob; explicitly tracked test-owned
-     * work and scheduler manual, auto-page, and coordinator jobs are also drained
-     * before global MockK shims or fixture resources are released.
-     */
     private fun cancelAndJoinRunningJobs() {
         // Completion callbacks remove jobs from the live key set. Serialize the
         // copy with those removals so size-based toSet() cannot race its iterator.
@@ -1310,12 +888,6 @@ internal class TranslationCoexistenceHarness private constructor(
         }
     }
 
-    /**
-     * Manual-path cleaned-image publication shim (note §1.2.3): the pipeline's
-     * cleanedPublication field is replaced by a mockk whose persistOnnxCleanedImage
-     * performs the production cleaned-image commit through the real store
-     * (publishCleanedThroughStore) without Bitmap.compress.
-     */
     private fun installManualPublishShim() {
         coEvery {
             cleanedPublicationMock.enrollCleanedPersistence(any(), any(), any(), any(), any(), any(), any(), any(), any())
@@ -1340,7 +912,6 @@ internal class TranslationCoexistenceHarness private constructor(
             val accepted = result is ChapterTranslationStore.PatchResult.Accepted
             // Disk fake owns no lazy borrower.
             arg<CleanedOwner>(6).registerReceipt(CompletableDeferred(accepted))
-            nativeStageDone[pageKey]?.complete(Unit)
             accepted
         }
 
@@ -1389,7 +960,6 @@ internal class TranslationCoexistenceHarness private constructor(
         // use a manifest-free precondition; generation, pageVersion and lease
         // token fences stay intact.
         val legacyStorePrecondition = published.snapshot.toPrecondition().copy(dependencyFingerprint = null)
-        nativeStageDone[pageKey]?.complete(Unit)
         return result.copy(commitPrecondition = legacyStorePrecondition)
     }
 
@@ -1400,91 +970,22 @@ internal class TranslationCoexistenceHarness private constructor(
         runCatching { unstubChapterPages() }
         runCatching { scheduler.close() }
         runCatching { pipeline.close() }
-        runCatching { batchJobStub?.cancel() }
         runCatching { engineDrainScope.cancel() }
-        runCatching { trackerScope.cancel() }
         runCatching { managerScope.cancel() }
         runCatching { BitmapPool.releaseAll() }
     }
 
-    /**
-     * Failure context for assertions that expect a completely translated
-     * chapter. Keep the durable manifest failures and run counters alongside
-     * the live store projection so a cross-test failure identifies its page
-     * and typed pipeline reason without relying on logcat output.
-     */
+    /** Compact state context for reader-path failure assertions. */
     fun failureDiagnostics(pageKeys: List<String>): String {
-        val artifact = store.artifactEngine
-        val manifest = artifact?.readManifest()
-        val pageSnapshots = pageKeys.associateWith { pageKey ->
-            val page = store.state.value[pageKey]
-            page?.let {
-                "ocr=${it.ocrStatus}(${it.ocrError}), " +
-                    "translation=${it.translationStatus}(${it.translationError}), " +
-                    "inpaint=${it.inpaintStatus}(${it.inpaintError}), " +
-                    "render=${it.renderStatus}(${it.renderError})"
+        val pages = pageKeys.associateWith { pageKey ->
+            store.state.value[pageKey]?.let { page ->
+                "ocr=${page.ocrStatus}(${page.ocrError}), " +
+                    "translation=${page.translationStatus}(${page.translationError}), " +
+                    "inpaint=${page.inpaintStatus}(${page.inpaintError}), " +
+                    "render=${page.renderStatus}(${page.renderError})"
             } ?: "missing"
         }
-        val artifactPages = pageKeys.associateWith { pageKey ->
-            val page = manifest?.pages?.get(pageKey)
-            page?.let {
-                "ocr=${it.ocr?.status}:${it.ocr?.skipReason}, " +
-                    "translation=${it.translation?.status}:${it.translation?.skipReason}, " +
-                    "inpaint=${it.inpaint?.status}:${it.inpaint?.skipReason}, " +
-                    "layout=${it.layout?.status}:${it.layout?.skipReason}"
-            } ?: "missing"
-        }
-        val guardedWriteState = runBlocking {
-            val states = LinkedHashMap<String, String>()
-            for (pageKey in pageKeys) {
-                val snapshot = store.snapshot(pageKey)
-                states[pageKey] = "generation=${snapshot.generation}, pageVersion=${snapshot.pageVersion}, " +
-                    "leaseToken=${snapshot.leaseToken}, candidateGenerationId=${snapshot.candidateGenerationId}, " +
-                    "dependencyFingerprint=${snapshot.dependencyFingerprint}, " +
-                    "artifactPageVersion=${snapshot.artifactPageVersion}"
-            }
-            states
-        }
-        val chapterKey = store.artifactChapterKey()
-        val durableFailures = manifest?.durableFailures.orEmpty()
-            .filterKeys { failureKey -> pageKeys.any { failureKey.startsWith("$it:") } }
-            .mapValues { (_, failure) ->
-                "stage=${failure.stage}, status=${failure.status}, category=${failure.category}, " +
-                    "retryCount=${failure.retryCount}, reason=${failure.lastFailureMessage}"
-            }
-        val runSummary = manifest?.activeRun?.let { pointer ->
-            when (val read = artifact?.progress?.readRunRecord(pointer)) {
-                is ChapterProgressRecords.RunRecordRead.Usable ->
-                    "state=${read.record.state}, phaseCounters=${read.record.phaseCounters}"
-
-                null -> "unavailable"
-                else -> read.toString()
-            }
-        } ?: "none"
-        val liveTracker = trackerRegistry.getLive(CHAPTER_ID)?.snapshot?.value?.let {
-            "state=${it.state}, pageStates=${it.pages.map { page ->
-                "${page.pageKey}:${page.stage}:${page.errorMessage}"
-            }}, pauseReason=${it.pauseReason}, nonDurableFailureReason=${it.nonDurableFailureReason}"
-        } ?: "not live"
-        val terminal = trackerRegistry.terminal.value[CHAPTER_ID]?.let {
-            "state=${it.state}, pages=${it.pages.map { page ->
-                "${page.pageKey}:${page.stage}:${page.errorMessage}"
-            }}, perStage=${it.perStage}, groupedFailures=${it.groupedFailures}, " +
-                "pauseReason=${it.pauseReason}, abortedReason=${it.abortedReason}, " +
-                "nonDurableFailureReason=${it.nonDurableFailureReason}"
-        } ?: "not published"
-        val batchWriteGateRejection = store.lastBatchWriteGateRejectionDiagnostic ?: "none"
-        val guardedWriteRejection = store.lastGuardedWriteRejectionDiagnostic ?: "none"
-
-        return "chapterId=$CHAPTER_ID, chapterKey=$chapterKey, " +
-            "rejectingComponent=BatchLaneWorkers.standardTranslateOutcome -> " +
-            "BatchWriteGate.guardedBatchUpdate -> ChapterTranslationStore.updatePageGuarded, " +
-            "batchWriteGateRejection=$batchWriteGateRejection, " +
-            "guardedWriteRejection=$guardedWriteRejection, " +
-            "guardedWriteState=$guardedWriteState, " +
-            "pageSnapshots=$pageSnapshots, artifactPages=$artifactPages, " +
-            "durableFailures=$durableFailures, run=$runSummary, liveTracker={$liveTracker}, " +
-            "tracker={$terminal}"
+        return "chapterId=$CHAPTER_ID, pages=$pages"
     }
 
     /**

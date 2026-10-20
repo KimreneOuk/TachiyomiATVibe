@@ -6,7 +6,6 @@ import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.pipeline.batch.formatWriteDiagnostic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority

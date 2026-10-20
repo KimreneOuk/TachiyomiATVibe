@@ -139,7 +139,7 @@ internal class ChapterTranslator(
         translationPreferences,
         streamRegistry,
     ),
-    private val batchCoordinator: BatchTranslationCoordinator? = null,
+    private val batchCoordinator: BatchTranslationCoordinator,
 ) {
 
     companion object {
@@ -783,29 +783,16 @@ internal class ChapterTranslator(
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {
-                    val coordinator = batchCoordinator
-                    if (coordinator == null) {
-                        batchReconciliation = pipeline.translateBatch(
-                            translation.manga,
-                            translation.chapter,
-                            translation.source,
-                            store,
-                            orderedStreams,
-                            tracker,
-                            naturalPageIndexes,
-                        )
-                    } else {
-                        batchReconciliation = executeQueuedBatchWithCoordinator(
-                            coordinator,
-                            pipeline,
-                            provider,
-                            translation,
-                            orderedStreams,
-                            batchOrderedPageKeys,
-                            store,
-                            tracker,
-                        )
-                    }
+                    batchReconciliation = executeQueuedBatchWithCoordinator(
+                        batchCoordinator,
+                        pipeline,
+                        provider,
+                        translation,
+                        orderedStreams,
+                        batchOrderedPageKeys,
+                        store,
+                        tracker,
+                    )
                 }
             } finally {
                 try {
