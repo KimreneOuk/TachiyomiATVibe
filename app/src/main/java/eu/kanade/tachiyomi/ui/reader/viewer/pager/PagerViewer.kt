@@ -305,6 +305,9 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         }
     }
 
+    override val currentReaderPage: ReaderPage?
+        get() = currentPage as? ReaderPage
+
     /**
      * Moves to the next page.
      */

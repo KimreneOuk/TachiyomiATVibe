@@ -13,6 +13,8 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.TranslateButtonMode
+import eu.kanade.tachiyomi.ui.reader.shouldGhostTranslateButton
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
@@ -22,6 +24,7 @@ import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.toPageDisplayProjection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -162,14 +165,45 @@ class WebtoonPageHolder(
      */
     private fun isPageBeingTranslated(): Boolean = page?.translation?.isStageRunning == true
 
+    /**
+     * TachiyomiAT: a committed display result is on screen for this page;
+     * running a refresh over it must NOT dim the clipping (spec: never dim a
+     * committed translated image during refresh).
+     */
+    private fun isShowingCommittedTranslatedImage(): Boolean {
+        val boundPage = page ?: return false
+        val translation = boundPage.translation ?: return false
+        val display = translation.toPageDisplayProjection()
+        return display.displayReady && boundPage.showTranslatedImage
+    }
+
     /** Syncs the kept translate/cancel button and active-work dim scrim. */
     private fun syncTranslateButtonState() {
         val isBeingTranslated = isPageBeingTranslated()
-        frame.setTranslationDimmed(isBeingTranslated)
+        frame.setTranslationDimmed(isBeingTranslated && !isShowingCommittedTranslatedImage())
+        frame.setTranslationGhost(
+            shouldGhostTranslateButton(
+                mode = if (viewer.translationPrefs.translateButtonWithControls) {
+                    TranslateButtonMode.WITH_CONTROLS
+                } else {
+                    TranslateButtonMode.ADAPTIVE
+                },
+                menuVisible = viewer.translationPrefs.menuVisible,
+                translating = isBeingTranslated,
+            ),
+        )
         if (isBeingTranslated) {
+            // TachiyomiAT: the cancel affordance must stay visible mid-work,
+            // regardless of mode or the controls state (WITH_CONTROLS would
+            // otherwise leave the swapped icon hidden).
+            frame.showTranslateButton(true)
             frame.setTranslating(true)
         } else {
-            frame.showTranslateButton(translationEnabled)
+            // TachiyomiAT: WITH_CONTROLS mode hides the idle button while the
+            // reader controls are hidden; ADAPTIVE (default) ghosts it instead.
+            frame.showTranslateButton(
+                translationEnabled && !(viewer.translationPrefs.translateButtonWithControls && !viewer.translationPrefs.menuVisible),
+            )
             frame.setTranslating(false)
         }
     }

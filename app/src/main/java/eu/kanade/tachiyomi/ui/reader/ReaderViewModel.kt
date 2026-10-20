@@ -179,7 +179,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 translationPreferences.translationEnabled().changes(),
                 translationPreferences.autoTranslate().changes(),
                 translationPreferences.translateFromLanguage().changes(),
-            ) { enabled, auto, from -> Triple(enabled, auto, from) },
+                translationPreferences.translateButtonWithControls().changes(),
+            ) { enabled, auto, from, buttonWithControls -> Quad(enabled, auto, from, buttonWithControls) },
             combine(
                 translationPreferences.translationRecentLanguagesFrom().changes(),
                 translationPreferences.translateToLanguage().changes(),
@@ -231,9 +232,10 @@ class ReaderViewModel @JvmOverloads constructor(
         val recentAiModels = TranslationPreferences.decodeRecentModels(aiSubPrefs.recentRaw).toImmutableList()
 
         TranslationSettingsState(
-            enabled = q1.first,
-            autoTranslate = q1.second,
-            translateFromLanguage = q1.third,
+            enabled = q1.a,
+            autoTranslate = q1.b,
+            translateFromLanguage = q1.c,
+            translateButtonWithControls = q1.d,
             translateToLanguage = q2.b,
             translationRecentLanguagesFrom = recentLangsFrom,
             translationRecentLanguagesTo = recentLangsTo,
@@ -877,6 +879,10 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setAutoTranslate(auto: Boolean) =
         translationController.setAutoTranslate(auto)
 
+    /** TachiyomiAT: translate button presentation (adaptive ghost vs. with-controls). */
+    fun setTranslateButtonWithControls(withControls: Boolean) =
+        translationController.setTranslateButtonWithControls(withControls)
+
     fun setTranslateFromLanguage(language: String) =
         translationController.setTranslateFromLanguage(language)
 
@@ -940,6 +946,16 @@ class ReaderViewModel @JvmOverloads constructor(
 
     fun observePageView(page: ReaderPage): Flow<eu.kanade.translation.model.PageView>? =
         translationController.observePageView(page)
+
+    /**
+     * TachiyomiAT: transient work signal for the floating translation status
+     * pill (§8): live pipeline stage joined with the session outcome. Returns
+     * null when prerequisites are missing, mirroring [observePageView].
+     */
+    internal fun observePageWork(page: ReaderPage): Flow<ReaderTranslationObservationController.PageWork>? =
+        translationController.observePageWork(page)
+
+    internal fun translationPageKey(page: ReaderPage): String = translationController.resolvePageKey(page)
     internal fun resolvePageKey(page: ReaderPage): String {
         return resolveReaderPageTranslationKey(page)
     }

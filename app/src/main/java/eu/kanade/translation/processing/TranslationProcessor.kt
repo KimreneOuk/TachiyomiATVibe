@@ -40,6 +40,20 @@ import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * TachiyomiAT: reader-pipeline stage vocabulary for live feedback. These are
+ * the real boundaries [processSinglePage] traverses — no stage is invented
+ * that does not exist in this processor. Deliberately NOT a persistence
+ * concern: signals are transient, wired reader-side only.
+ */
+enum class TranslationStageSignal {
+    PREPARING,
+    READING,
+    TRANSLATING,
+    CLEANING,
+    FINISHING,
+}
+
 /** Executes one page's decode, OCR, translation, and inpaint operations. */
 internal class TranslationProcessor(
     private val context: Context,
@@ -357,11 +371,15 @@ internal class TranslationProcessor(
         chapterId: Long? = null,
         chapterName: String = "",
         priority: DevicePermitPriority = DevicePermitPriority.BACKGROUND,
+        stageReporter: ((TranslationStageSignal) -> Unit)? = null,
     ): ProcessResult {
         var sourceBitmap: Bitmap? = null
         var page: PageTranslation? = null
         var activeStage = "DECODE"
         return try {
+            // TachiyomiAT: publish the transient Preparing boundary before any
+            // work starts so feedback can distinguish "queued" from "running".
+            stageReporter?.invoke(TranslationStageSignal.PREPARING)
             withTimeout(TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS) {
                 val decoded = decodeImage(pageKey, streamFn) { recognitionEngine }
                     ?: return@withTimeout ProcessResult.Failure(
@@ -373,6 +391,11 @@ internal class TranslationProcessor(
                     )
                 sourceBitmap = decoded.bitmap
                 activeStage = "OCR"
+                // TachiyomiAT: decodeImage performs BOTH text detection and OCR
+                // in recognitionEngine.analyze for the reader pipeline, so the
+                // combined signal after decode is Reading-text. It must NEVER
+                // claim a render/cleaning state that has not started yet.
+                stageReporter?.invoke(TranslationStageSignal.READING)
                 page = analyze(pageKey, decoded.bitmap, recognitionEngine, chapterId, chapterName, priority).apply {
                     originalImgWidth = decoded.originalWidth.toFloat()
                     originalImgHeight = decoded.originalHeight.toFloat()
@@ -386,6 +409,7 @@ internal class TranslationProcessor(
                 }
                 if (page!!.isTextlessTerminal) return@withTimeout ProcessResult.Success(page!!)
                 activeStage = "TRANSLATION"
+                stageReporter?.invoke(TranslationStageSignal.TRANSLATING)
                 try {
                     translatePage(pageKey, page!!, translator)
                 } catch (cancelled: CancellationException) {
@@ -397,12 +421,17 @@ internal class TranslationProcessor(
                 }
                 if (inpaintingEnabled) {
                     activeStage = "INPAINT"
+                    stageReporter?.invoke(TranslationStageSignal.CLEANING)
                     inpaint(pageKey, decoded.bitmap, page!!, recognitionEngine, companionDir, chapterId, chapterName, priority)
                 } else {
                     activeStage = "INPAINT"
                     page!!.inpaintStatus = StageStatus.READY
                     page!!.originalImageFallback = true
                 }
+                // TachiyomiAT: the candidate is assembled; remaining work is
+                // persistence of the final record by the caller. Signal this so
+                // the status pill can distinguish last-mile latency.
+                stageReporter?.invoke(TranslationStageSignal.FINISHING)
                 ProcessResult.Success(page!!)
             }
         } catch (cancelled: CancellationException) {

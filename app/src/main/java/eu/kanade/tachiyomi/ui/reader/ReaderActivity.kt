@@ -42,7 +42,9 @@ import androidx.core.transition.doOnEnd
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.elevation.SurfaceColors
 import com.google.android.material.transition.platform.MaterialContainerTransform
@@ -68,6 +70,7 @@ import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.reader.buildTranslationPillUi
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
@@ -79,7 +82,9 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderTranslationStatusPill
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
 import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.openInBrowser
@@ -88,6 +93,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.coordinator.TranslationSessionState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -150,6 +156,14 @@ class ReaderActivity : BaseActivity() {
 
     private var loadingIndicator: ReaderProgressIndicator? = null
 
+    // TachiyomiAT: floating translation status pill — ONE global indicator for
+    // the ACTIVE page, docked bottom-center of the reader container. Page
+    // holders never own/position it, so long vertical (non-continuous webtoon)
+    // pages can never anchor it to an image's bottom edge, and it can never
+    // scale with zoom.
+    private var translationStatusPill: ReaderTranslationStatusPill? = null
+    private var translationStatusPillJob: Job? = null
+
     var isScrollingThroughPages = false
         private set
 
@@ -196,6 +210,7 @@ class ReaderActivity : BaseActivity() {
 
         config = ReaderConfig()
         initializeMenu()
+        ensureTranslationStatusPill()
 
         // Finish when incognito mode is disabled
         preferences.incognitoMode().changes()
@@ -618,6 +633,7 @@ class ReaderActivity : BaseActivity() {
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
                         onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
                         onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
+                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },
@@ -883,6 +899,55 @@ class ReaderActivity : BaseActivity() {
      */
     fun onPageSelected(page: ReaderPage) {
         viewModel.onPageSelected(page)
+        setTranslationStatusPillPage(page)
+    }
+
+    /**
+     * TachiyomiAT: re-points the floating status pill to the newly active
+     * page and (re)subscribes its work-signal collector. One collector exists
+     * at a time for the one active page; flipping pages cancels the previous
+     * collector, so an offscreen page can never render into the pill, and no
+     * per-frame view churn happens for non-active pages.
+     */
+    private fun setTranslationStatusPillPage(page: ReaderPage?) {
+        val pill = translationStatusPill ?: return
+        val freshPage = page ?: let {
+            pill.setActivePageKey(null)
+            translationStatusPillJob?.cancel()
+            translationStatusPillJob = null
+            return
+        }
+        val pageKey = viewModel.translationPageKey(freshPage)
+        pill.setActivePageKey(pageKey)
+        translationStatusPillJob?.cancel()
+        val workFlow = viewModel.observePageWork(freshPage)
+        translationStatusPillJob = lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (workFlow == null) return@repeatOnLifecycle
+                workFlow.collect { work ->
+                    pill.render(
+                        pageKey,
+                        buildTranslationPillUi(work.stage, work.outcome, freshPage.translation),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun ensureTranslationStatusPill() {
+        if (translationStatusPill != null) return
+        translationStatusPill = ReaderTranslationStatusPill(this).also { pill ->
+            binding.readerContainer.addView(
+                pill,
+                android.widget.FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                    bottomMargin = 24.dpToPx
+                },
+            )
+        }
     }
 
     /**

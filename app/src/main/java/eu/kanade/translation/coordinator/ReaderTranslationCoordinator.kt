@@ -17,6 +17,7 @@ import eu.kanade.translation.persistence.PageWriteOrigin
 import eu.kanade.translation.processing.adaptive.DevicePermitPriority
 import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessor
+import eu.kanade.translation.processing.TranslationStageSignal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -121,6 +122,16 @@ internal class ReaderTranslationCoordinator(
 
     private val _pendingCount = MutableStateFlow(0)
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
+
+    /**
+     * TachiyomiAT: in-memory, per-attempt pipeline stage signals for live
+     * reader feedback (status pill). Pure state machine extracted so the stale
+     * token fence is unit-testable without a coordinator. Keyed by FULL page
+     * key ("chapterKey:pageKey") so concurrent chapters can never
+     * cross-contaminate each other's indicators.
+     */
+    private val stageBoard = TranslationStageSignalBoard()
+    val pageStageSignalFlow = stageBoard.flow
 
     private var workerJob: Job? = null
 
@@ -441,10 +452,21 @@ internal class ReaderTranslationCoordinator(
                 diagnosticDetail = acquired.reason,
             )
         }
+        // TachiyomiAT: transient stage signals for the reader status pill.
+        // The full key includes the chapter key, so concurrent chapters can
+        // never bleed into each other's indicators; the attempt token fences a
+        // superseded attempt's reporter callbacks from overwriting a newer
+        // attempt's stage (spec §8 stale-callback rule).
+        val fullStageKey = "${request.chapterKey}:${request.pageKey}"
+        val stageAttempt = stageBoard.nextAttemptToken()
         try {
             // Fence against writes that happen while decode/native/remote work is running.
             // Refreshing this at commit time would let an older candidate overwrite them.
             val expected = store.snapshot(request.pageKey).toPrecondition().copy(leaseToken = lease.token)
+            stageBoard.publish(fullStageKey, TranslationStageSignal.PREPARING, stageAttempt)
+            val stageReporter = { stage: TranslationStageSignal ->
+                stageBoard.publish(fullStageKey, stage, stageAttempt)
+            }
             val result = processor.processSinglePage(
                 pageKey = request.pageKey,
                 streamFn = stream,
@@ -458,6 +480,7 @@ internal class ReaderTranslationCoordinator(
                 chapterId = request.session.chapter.id,
                 chapterName = request.session.chapter.name,
                 priority = if (request.isManual) DevicePermitPriority.FOREGROUND else DevicePermitPriority.BACKGROUND,
+                stageReporter = stageReporter,
             )
             val candidate = when (result) {
                 is TranslationProcessor.ProcessResult.Success -> result.page
@@ -488,6 +511,10 @@ internal class ReaderTranslationCoordinator(
             withContext(NonCancellable) {
                 store.releasePageStageLease(request.pageKey, origin)
             }
+            // TachiyomiAT: drop this attempt's stage signal so the pill does not
+            // outlive the attempt. Removal only happens when the stored token
+            // is still this attempt's — a retried attempt owns the entry then.
+            stageBoard.clear("${request.chapterKey}:${request.pageKey}", stageAttempt)
         }
     }
 
@@ -807,5 +834,41 @@ internal class ReaderTranslationCoordinator(
 
     private companion object {
         const val OUTCOME_RETENTION = 32
+    }
+}
+
+/**
+ * TachiyomiAT: in-memory, per-attempt pipeline stage signals for live reader
+ * feedback (the status pill). Atomic primitives — never persisted, never part
+ * of the durable translation store. Carriers carry the attempt token so a
+ * stale reporter callback arriving after a retry started can never overwrite
+ * the newer attempt's stage (spec §8 stale-callback rule).
+ */
+internal data class PageStageSignal(
+    val stage: TranslationStageSignal,
+    val attemptToken: Long,
+)
+
+internal class TranslationStageSignalBoard {
+    private val signals = MutableStateFlow<Map<String, PageStageSignal>>(emptyMap())
+    val flow: StateFlow<Map<String, PageStageSignal>> = signals.asStateFlow()
+
+    private val attemptCounter = AtomicLong()
+
+    fun nextAttemptToken(): Long = attemptCounter.incrementAndGet()
+
+    fun publish(fullKey: String, stage: TranslationStageSignal, attemptToken: Long) {
+        val current = signals.value[fullKey]
+        // Stale fence: a callback from an old attempt must never overwrite the
+        // newer attempt's stage.
+        if (current != null && current.attemptToken > attemptToken) return
+        signals.value = signals.value + (fullKey to PageStageSignal(stage, attemptToken))
+    }
+
+    fun clear(fullKey: String, attemptToken: Long) {
+        val current = signals.value[fullKey] ?: return
+        if (current.attemptToken == attemptToken) {
+            signals.value = signals.value - fullKey
+        }
     }
 }

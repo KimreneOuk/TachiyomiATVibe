@@ -73,6 +73,7 @@ fun TranslationSettingsSheet(
     onStopAllTranslation: () -> Unit,
     onTranslationEnabledChange: (Boolean) -> Unit,
     onAutoTranslateChange: (Boolean) -> Unit,
+    onTranslateButtonWithControlsChange: (Boolean) -> Unit,
     onTranslateFromLanguageChange: (String) -> Unit,
     onTranslateToLanguageChange: (String) -> Unit,
     onOcrModelChange: (OcrModel) -> Unit,
@@ -106,8 +107,10 @@ fun TranslationSettingsSheet(
             TogglesSection(
                 enabled = state.enabled,
                 autoTranslate = state.autoTranslate,
+                translateButtonWithControls = state.translateButtonWithControls,
                 onTranslationEnabledChange = onTranslationEnabledChange,
                 onAutoTranslateChange = onAutoTranslateChange,
+                onTranslateButtonWithControlsChange = onTranslateButtonWithControlsChange,
             )
             QueueSection(
                 queue = queue,
@@ -387,8 +390,10 @@ private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedP
 private fun ColumnScope.TogglesSection(
     enabled: Boolean,
     autoTranslate: Boolean,
+    translateButtonWithControls: Boolean,
     onTranslationEnabledChange: (Boolean) -> Unit,
     onAutoTranslateChange: (Boolean) -> Unit,
+    onTranslateButtonWithControlsChange: (Boolean) -> Unit,
 ) {
     SwitchPreferenceWidget(
         title = stringResource(ATMR.strings.pref_translation_enabled),
@@ -405,6 +410,22 @@ private fun ColumnScope.TogglesSection(
             onCheckedChanged = onAutoTranslateChange,
         )
     }
+
+    // TachiyomiAT: translate button presentation. One lightweight toggle maps
+    // the two spec modes — unchecked = adaptive ghost (default), checked = show
+    // the idle button only while reader controls are visible.
+    SwitchPreferenceWidget(
+        title = stringResource(ATMR.strings.pref_reader_translate_button_mode),
+        subtitle = stringResource(
+            if (translateButtonWithControls) {
+                ATMR.strings.pref_reader_translate_button_mode_summary_with_controls
+            } else {
+                ATMR.strings.pref_reader_translate_button_mode_summary_default
+            },
+        ),
+        checked = translateButtonWithControls,
+        onCheckedChanged = onTranslateButtonWithControlsChange,
+    )
 }
 
 @Composable

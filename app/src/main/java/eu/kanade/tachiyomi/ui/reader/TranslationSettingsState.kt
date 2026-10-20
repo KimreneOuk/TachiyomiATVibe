@@ -18,6 +18,7 @@ data class TranslationSettingsState(
     val enabled: Boolean = false,
     val autoTranslate: Boolean = false,
     val translateFromLanguage: String = "",
+    val translateButtonWithControls: Boolean = false,
     val translateToLanguage: String = "",
     val translationRecentLanguagesFrom: ImmutableList<String> = persistentListOf(),
     val translationRecentLanguagesTo: ImmutableList<String> = persistentListOf(),

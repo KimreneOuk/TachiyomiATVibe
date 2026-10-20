@@ -44,6 +44,8 @@ import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessingTimeouts
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
+import eu.kanade.translation.processing.TranslationStageSignal
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.coordinator.ReaderPageWork
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.coordinator.ReaderSubmission
@@ -56,6 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -118,6 +121,7 @@ internal class ReaderTranslationObservationController(private val controller: Re
     private fun recomputeTranslationState() = owner.recomputeTranslationState()
     private fun getCurrentChapter() = owner.getCurrentChapter()
     private fun resolvePageKey(page: ReaderPage) = owner.resolvePageKey(page)
+    internal fun resolvePageKeyFor(page: ReaderPage): String = resolvePageKey(page)
     private fun recordArrivalWait(pageIndex: Int, pageKey: String) = controller.recordArrivalWait(pageIndex, pageKey)
     private suspend fun updateTranslationWorkingSet(chapter: ReaderChapter, currentIndex: Int, dispatchRefresh: Boolean) =
         controller.updateTranslationWorkingSet(chapter, currentIndex, dispatchRefresh)
@@ -404,6 +408,35 @@ internal class ReaderTranslationObservationController(private val controller: Re
                 // image/status changes directly. This collector only keeps the
                 // global translation state and ReaderPage snapshots current.
             }
+        }
+    }
+
+    /**
+     * TachiyomiAT: transient per-page work signal for the floating status pill.
+     * Combines the coordinator's in-memory stage map (live pipeline boundary,
+     * emitted while the attempt runs) with the session outcome map (queued /
+     * terminal). Unlike [observePageView] this deliberately does NOT touch the
+     * translation store — no durable-artifact migration, no streams; a simple
+     * two-StateFlow join that cannot trigger image work.
+     */
+    internal data class PageWork(
+        val stage: TranslationStageSignal?,
+        val outcome: SinglePageOutcome?,
+    )
+
+    internal fun observePageWork(page: ReaderPage): Flow<PageWork>? {
+        val manager = translationManager
+        val chapterId = page.chapter.chapter.id ?: return null
+        val pageKey = resolvePageKey(page)
+        val coordinator = manager.readerCoordinator
+        val stageFlow = coordinator.pageStageSignalFlow
+            .map { signals -> signals["${chapterId}:${pageKey}"]?.stage }
+            .distinctUntilChanged()
+        val outcomeFlow = coordinator.outcomesForChapter(chapterId)
+            .map { outcomes -> outcomes[pageKey] }
+            .distinctUntilChanged()
+        return combine(stageFlow, outcomeFlow) { stage, outcome ->
+            PageWork(stage = stage, outcome = outcome)
         }
     }
 

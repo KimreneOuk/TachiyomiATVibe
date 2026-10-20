@@ -13,19 +13,24 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
+import eu.kanade.tachiyomi.ui.reader.TranslateButtonMode
+import eu.kanade.tachiyomi.ui.reader.shouldGhostTranslateButton
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.toPageDisplayProjection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -63,6 +68,16 @@ class PagerPageHolder(
     // only on the next setImage() pass.
     private var translationEnabled =
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
+
+    // TachiyomiAT: adaptive button presentation. Readers collect control-bar
+    // visibility and the button-presentation pref into these two fields; the
+    // card translation button ghosts (dims) while controls are hidden
+    // (adaptive default) or hides entirely in the WITH_CONTROLS mode.
+    private var menuVisible =
+        viewer.activity.viewModel.state.value.menuVisible
+
+    private var translateButtonWithControls =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translateButtonWithControls().get()
 
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.
@@ -173,6 +188,23 @@ class PagerPageHolder(
         viewer.activity.viewModel.observePageView(page)
             ?.onEach { refreshTranslation() }
             ?.launchIn(holderScope)
+        // TachiyomiAT: adaptive reflect for the translate button. Reader
+        // control-bar visibility ghosts the idle button; ghosting is skipped
+        // while this page is mid-translation (the button is the cancel
+        // affordance then and must stay clearly visible).
+        viewer.activity.viewModel.state
+            .map { it.menuVisible }
+            .distinctUntilChanged()
+            .onEach { menuVisible = it; if (!isPageBeingTranslated()) syncTranslateButtonState() }
+            .launchIn(holderScope)
+        holderScope.launch {
+            Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+                .translateButtonWithControls().changes()
+                .collect { withControls ->
+                    translateButtonWithControls = withControls
+                    if (!isPageBeingTranslated()) syncTranslateButtonState()
+                }
+        }
     }
 
     /**
@@ -184,14 +216,38 @@ class PagerPageHolder(
      */
     private fun isPageBeingTranslated(): Boolean = page.translation?.isStageRunning == true
 
+    /**
+     * TachiyomiAT: a committed display result is on the pill-visible screen for
+     * this page; running a refresh over it must NOT dim the page (spec: never
+     * dim a committed translated image during refresh).
+     */
+    private fun isShowingCommittedTranslatedImage(): Boolean {
+        val translation = page.translation ?: return false
+        val display = translation.toPageDisplayProjection()
+        return display.displayReady && page.showTranslatedImage
+    }
+
     /** Syncs the kept translate/cancel button and active-work dim scrim. */
     private fun syncTranslateButtonState() {
         val isBeingTranslated = isPageBeingTranslated()
-        setTranslationDimmed(isBeingTranslated)
+        setTranslationDimmed(isBeingTranslated && !isShowingCommittedTranslatedImage())
+        setTranslationGhost(
+            shouldGhostTranslateButton(
+                mode = if (translateButtonWithControls) TranslateButtonMode.WITH_CONTROLS else TranslateButtonMode.ADAPTIVE,
+                menuVisible = menuVisible,
+                translating = isBeingTranslated,
+            ),
+        )
         if (isBeingTranslated) {
+            // TachiyomiAT: the cancel affordance must stay visible mid-work,
+            // regardless of mode or the controls state (WITH_CONTROLS would
+            // otherwise leave the swapped icon hidden).
+            showTranslateButton(true)
             setTranslating(true)
         } else {
-            showTranslateButton(translationEnabled)
+            // TachiyomiAT: WITH_CONTROLS mode hides the idle button while the
+            // reader controls are hidden; ADAPTIVE (default) ghosts it instead.
+            showTranslateButton(translationEnabled && !(translateButtonWithControls && !menuVisible))
             setTranslating(false)
         }
     }

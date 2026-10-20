@@ -44,4 +44,12 @@ interface Viewer {
     fun handleGenericMotionEvent(event: MotionEvent): Boolean
 
     fun refreshTranslationPages(pages: Set<ReaderPage>) {}
+
+    /**
+     * TachiyomiAT: the reader page currently underfoot (null on chapter
+     * transitions / before layout). Used to gate per-holder feedback (status
+     * pill, ghost button) to the ACTIVE page only, so prefetched and recycled
+     * pages can never render status for the page the user is not reading.
+     */
+    val currentReaderPage: ReaderPage? get() = null
 }

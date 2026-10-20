@@ -333,14 +333,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
             val p = (5 * resources.displayMetrics.density).toInt()
             setPadding(p, p, p, p)
 
-            // Circular ripple background with 40% transparent black
+            // Circular ripple background with 20% transparent black. The idle
+            // ghost look is completed by the view-level alpha in
+            // [setTranslationGhost]; the background itself stays subtle so the
+            // full-alpha (controls visible) presentation doesn't tower over
+            // the page content.
             val mask = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setColor(android.graphics.Color.WHITE)
             }
             val content = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(0x66000000.toInt())
+                setColor(0x33000000.toInt())
             }
             val rippleColor = android.content.res.ColorStateList.valueOf(0x33FFFFFF.toInt())
             background = android.graphics.drawable.RippleDrawable(rippleColor, content, mask)
@@ -386,8 +390,43 @@ open class ReaderPageImageView @JvmOverloads constructor(
             lastButtonApplied = false
             // Pin against the current image rect now that it's visible.
             relayoutTranslateButton()
+            // TachiyomiAT: a newly created button has no stored alpha; apply the
+            // presentation the holder has already decided (ghosted or not).
+            (translateButtonGhosted ?: false).let(::applyGhostAlpha)
         } else {
             translateButton?.visibility = View.GONE
+            translateButtonTouchDelegate?.let {
+                translateButtonTouchDelegate = null
+                touchDelegate = null
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT: adaptive presentation for the translate button (spec).
+     * Ghost = idle silhouette: the whole button drops to 40% alpha and the
+     * capsule background is already 20% black, so the idle state reads as a
+     * subtle affordance rather than chrome popping over the artwork. Non-ghost
+     * restores 100%. Deduped: identical requests never restart an animation,
+     * and the look fades over a short, non-looping transition (no pulsing).
+     * Reduced-motion (zero animator scale) applies the change instantly.
+     */
+    fun setTranslationGhost(ghosted: Boolean) {
+        if (translateButtonGhosted == ghosted) return
+        translateButtonGhosted = ghosted
+        if (translateButton == null && !ghosted) return
+        ensureTranslateButton()
+        applyGhostAlpha(ghosted)
+    }
+
+    private fun applyGhostAlpha(ghosted: Boolean) {
+        val btn = translateButton ?: return
+        val target = if (ghosted) GHOST_ALPHA else FULL_ALPHA
+        btn.animate().cancel()
+        if (context.animatorDurationScale > 0f) {
+            btn.animate().alpha(target).setDuration(BUTTON_FADE_MS).setStartDelay(0L).start()
+        } else {
+            btn.alpha = target
         }
     }
 
@@ -517,7 +556,46 @@ open class ReaderPageImageView @JvmOverloads constructor(
         lp.setMargins(targetLeft, targetTop, 0, 0)
         translateButton?.layoutParams = lp
         lastButtonApplied = true
+        // TachiyomiAT: the 48dp hit anchor follows the button's position; keep
+        // the touch delegate aligned with the last known target so taps around
+        // the visual circle still register.
+        updateTranslateButtonTouchDelegate(lp, targetLeft, targetTop)
         return true
+    }
+
+    /**
+     * TachiyomiAT: the button is visually 32dp, but the spec requires a >=48dp
+     * touch target. A [android.view.TouchDelegate] routes touches in a 48dp
+     * box anchored at the button's top-left (clamped inside this holder) to
+     * the button. Cheap: it is a field swap after position changes, never a
+     * layout, and it never re-allocates state per frame.
+     */
+    private fun updateTranslateButtonTouchDelegate(
+        lp: FrameLayout.LayoutParams,
+        targetLeft: Int,
+        targetTop: Int,
+    ) {
+        val btn = translateButton ?: return
+        if (btn.visibility != View.VISIBLE) {
+            if (translateButtonTouchDelegate != null) {
+                translateButtonTouchDelegate = null
+                touchDelegate = null
+            }
+            return
+        }
+        val density = resources.displayMetrics.density
+        val hitSize = (TOUCH_TARGET_DP * density).toInt()
+        translateButtonHitBounds.set(targetLeft, targetTop, targetLeft + hitSize, targetTop + hitSize)
+        translateButtonHitBounds.intersect(0, 0, width.coerceAtLeast(1), height.coerceAtLeast(1))
+        val delegate = if (translateButtonHitBounds.isEmpty) {
+            null
+        } else {
+            android.view.TouchDelegate(translateButtonHitBounds, btn)
+        }
+        if (delegate != translateButtonTouchDelegate) {
+            translateButtonTouchDelegate = delegate
+            touchDelegate = delegate
+        }
     }
 
     // TachiyomiAT: last margins applied to the translate button, used by
@@ -525,6 +603,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var lastButtonLeft: Int = Int.MIN_VALUE
     private var lastButtonTop: Int = Int.MIN_VALUE
     private var lastButtonApplied: Boolean = false
+
+    // TachiyomiAT: 48dp minimum touch target for the 32dp visual button.
+    private var translateButtonTouchDelegate: android.view.TouchDelegate? = null
+    private val translateButtonHitBounds = android.graphics.Rect()
+
+    // TachiyomiAT: ghost-state tracking for [setTranslationGhost]; null until
+    // the button exists, so showTranslateButton() can re-apply the stored
+    // presentation on first creation.
+    private var translateButtonGhosted: Boolean? = null
 
     /**
      * TachiyomiAT: restores the intended child-view z-order after
@@ -581,15 +668,22 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
+    // TachiyomiAT: whether the dim scrim is currently told to be visible;
+    // dedupes repeated identical requests so stage flurries never restart
+    // animations (spec: identical emissions are ignored).
+    private var translationDimApplied: Boolean = false
+
     /** Dims the page only while its durable translation stages are running. */
     fun setTranslationDimmed(dimmed: Boolean) {
+        if (dimmed == translationDimApplied) return
+        translationDimApplied = dimmed
         translationDimScrim?.animate()?.cancel()
         if (dimmed) {
             ensureDimScrim()
             translationDimScrim?.isVisible = true
-            translationDimScrim?.animate()?.alpha(0.28f)?.setDuration(250)?.start()
+            translationDimScrim?.animate()?.alpha(DIM_SCRIM_ALPHA)?.setDuration(DIM_FADE_MS)?.setStartDelay(0L)?.start()
         } else {
-            translationDimScrim?.animate()?.alpha(0f)?.setDuration(250)?.withEndAction {
+            translationDimScrim?.animate()?.alpha(0f)?.setDuration(DIM_FADE_MS)?.withEndAction {
                 translationDimScrim?.isVisible = false
             }?.start()
         }
@@ -599,6 +693,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         translationDimScrim?.animate()?.cancel()
         translationDimScrim?.alpha = 0f
         translationDimScrim?.isVisible = false
+        translationDimApplied = false
     }
 
     open fun onPageSelected(forward: Boolean) {
@@ -714,11 +809,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
         translationOverlay?.isVisible = false
         translationOverlay?.clear()
         clearTranslationDimScrim()
+        clearTranslateButtonFeedback()
         pageView?.let(::removeAndRecyclePageView)
         previousPageView?.let(::removeAndRecyclePageView)
         pageView = null
         previousPageView = null
         crossfadePending = false
+    }
+
+    /**
+     * TachiyomiAT: a recycled holder must not carry the previous page's
+     * ghost/dim feedback into its next bind. Touch routing is re-established
+     * by [relayoutTranslateButton] the next time the button is shown.
+     */
+    private fun clearTranslateButtonFeedback() {
+        translateButton?.animate()?.cancel()
+        if (translateButtonTouchDelegate != null) {
+            translateButtonTouchDelegate = null
+            touchDelegate = null
+        }
+        translateButtonGhosted = null
     }
 
     /**
@@ -1023,3 +1133,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
 private const val MAX_ZOOM_SCALE = 5F
 
 private const val TRANSLATION_CROSSFADE_DURATION_MS = 180L
+
+// TachiyomiAT: adaptive translate button + dimming presentation constants.
+// Ghost = 40% whole-view alpha over a 20%-black capsule (spec: idle silhouette,
+// never invisible); scrim = 15% black (spec: subtle, no more than 28%).
+private const val GHOST_ALPHA = 0.40f
+private const val FULL_ALPHA = 1.00f
+private const val DIM_SCRIM_ALPHA = 0.15f
+private const val BUTTON_FADE_MS = 150L
+private const val DIM_FADE_MS = 180L
+private const val TOUCH_TARGET_DP = 48

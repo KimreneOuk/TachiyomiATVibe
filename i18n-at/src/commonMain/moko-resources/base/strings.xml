@@ -139,6 +139,23 @@
     <string name="pref_auto_translate_summary">Translates the current page and pre-processes upcoming pages automatically</string>
     <string name="pref_auto_translate_prefetch">Prefetch pages ahead</string>
 
+    <!-- TachiyomiAT: floating translation status pill (active-page stage). -->
+    <string name="reader_translation_pill_queued">Queued</string>
+    <string name="reader_translation_pill_preparing">Preparing…</string>
+    <string name="reader_translation_pill_reading">Reading text…</string>
+    <string name="reader_translation_pill_translating">Translating…</string>
+    <string name="reader_translation_pill_cleaning">Cleaning…</string>
+    <string name="reader_translation_pill_finishing">Finishing…</string>
+    <string name="reader_translation_pill_ready">Ready</string>
+    <string name="reader_translation_pill_textless">No text found</string>
+    <string name="reader_translation_pill_cancelled">Cancelled</string>
+    <string name="reader_translation_pill_failed">Failed</string>
+
+    <!-- TachiyomiAT: translate button presentation (adaptive is the default mode). -->
+    <string name="pref_reader_translate_button_mode">Show translate button only with controls</string>
+    <string name="pref_reader_translate_button_mode_summary_default">Default: dim the translate button while reading; fully reveal it when controls are shown</string>
+    <string name="pref_reader_translate_button_mode_summary_with_controls">The translate button is hidden while reading and appears only with reader controls</string>
+
     <!-- TachiyomiAT: pre-translation confirmation popup (manga screen batch action) -->
     <string name="translation_confirm_title">Translate this chapter?</string>
     <string name="translation_confirm_summary">Current settings</string>

@@ -23,7 +23,9 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -320,6 +322,9 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         }
     }
 
+    override val currentReaderPage: ReaderPage?
+        get() = currentPage as? ReaderPage
+
     fun onScrolled(pos: Int? = null) {
         val position = pos ?: layoutManager.findLastEndVisibleItemPosition()
         val item = adapter.items.getOrNull(position)
@@ -474,6 +479,20 @@ class WebtoonTranslationPrefs(
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
         private set
 
+    // TachiyomiAT: adaptive translate-button reflection. menuVisible is reader
+    // session state (ghost when controls hide); the pref is the presentation
+    // mode (ghost idle vs. show only with controls). Both feed
+    // WebtoonPageHolder.syncTranslateButtonState() through refreshVisibleHolders.
+    @Volatile
+    var menuVisible: Boolean =
+        viewer.activity.viewModel.state.value.menuVisible
+        private set
+
+    @Volatile
+    var translateButtonWithControls: Boolean =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translateButtonWithControls().get()
+        private set
+
     init {
         val readerPrefs = Injekt.get<ReaderPreferences>()
         val translationPrefs = Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
@@ -488,6 +507,22 @@ class WebtoonTranslationPrefs(
         translationPrefs.translationEnabled().changes()
             .onEach {
                 translationEnabled = it
+                refreshVisibleHolders()
+            }
+            .launchIn(scope)
+
+        translationPrefs.translateButtonWithControls().changes()
+            .onEach {
+                translateButtonWithControls = it
+                refreshVisibleHolders()
+            }
+            .launchIn(scope)
+
+        viewer.activity.viewModel.state
+            .map { it.menuVisible }
+            .distinctUntilChanged()
+            .onEach {
+                menuVisible = it
                 refreshVisibleHolders()
             }
             .launchIn(scope)

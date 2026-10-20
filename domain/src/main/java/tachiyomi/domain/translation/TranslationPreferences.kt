@@ -106,6 +106,18 @@ class TranslationPreferences(
      */
     fun autoTranslate() = preferenceStore.getBoolean("auto_translate", false)
 
+    /**
+     * TachiyomiAT: translate button presentation on reader pages.
+     *
+     * One lightweight boolean encodes the two spec modes:
+     * - false (default) = ADAPTIVE: the button ghosts (dims) while reader
+     *   controls are hidden, and becomes fully visible when controls show.
+     * - true = WITH_CONTROLS: the button is hidden while reading and appears
+     *   only together with reader controls. The cancel affordance during an
+     *   active translation stays visible in both modes.
+     */
+    fun translateButtonWithControls() = preferenceStore.getBoolean("reader_translate_button_with_controls", false)
+
     fun translateFromLanguage() = preferenceStore.getString("translate_language_from", "CHINESE")
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)

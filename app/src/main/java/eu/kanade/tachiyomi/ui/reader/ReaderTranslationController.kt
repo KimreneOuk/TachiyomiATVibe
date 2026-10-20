@@ -161,7 +161,6 @@ internal class ReaderTranslationController(
     internal fun getCurrentChapter(): ReaderChapter? = owner.getCurrentChapter()
     internal fun getMangaReadingMode(resolveDefault: Boolean = true): Int =
         owner.getMangaReadingMode(resolveDefault)
-    internal fun resolvePageKey(page: ReaderPage): String = owner.resolvePageKey(page)
 
     internal suspend fun updateTranslationWorkingSet(
         chapter: ReaderChapter,
@@ -566,6 +565,11 @@ internal class ReaderTranslationController(
         translationPreferences.autoTranslate().set(auto)
     }
 
+    /** TachiyomiAT: idle translate button ghost vs. show-only-with-controls. */
+    internal fun setTranslateButtonWithControls(withControls: Boolean) {
+        translationPreferences.translateButtonWithControls().set(withControls)
+    }
+
     internal fun setTranslateFromLanguage(language: String) {
         translationPreferences.translateFromLanguage().set(language)
         val recent = TranslationPreferences.decodeRecentLanguages(translationPreferences.translationRecentLanguagesFrom().get())
@@ -722,4 +726,7 @@ internal class ReaderTranslationController(
     internal fun observeTranslationState() = observation.observeTranslationState()
     internal suspend fun observeLiveTranslationStore() = observation.observeLiveTranslationStore()
     internal fun observePageView(page: ReaderPage): Flow<eu.kanade.translation.model.PageView>? = observation.observePageView(page)
+    internal fun observePageWork(page: ReaderPage): Flow<ReaderTranslationObservationController.PageWork>? =
+        observation.observePageWork(page)
+    internal fun resolvePageKey(page: ReaderPage): String = observation.resolvePageKeyFor(page)
 }
