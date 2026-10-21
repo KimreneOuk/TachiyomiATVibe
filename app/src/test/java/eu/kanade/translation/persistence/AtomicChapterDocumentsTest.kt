@@ -14,6 +14,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceSink
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -239,6 +240,36 @@ class AtomicChapterDocumentsTest {
             traceLines.none { it.contains("artifact-page-secret") || it.contains("artifact-payload") },
         )
         checks shouldBe List(checks.size) { true }
+    }
+
+    @Test
+    fun `verified publish survives one flaked backup write via bounded retries`() {
+        val io = FakeChapterDocumentIo()
+        val docs = documents(io)
+        docs.publishVerifiedJson("m.json", Doc("one"))
+            .shouldBeInstanceOf<AtomicChapterDocuments.VerifiedPublishReceipt.Complete>()
+        io.writeNamesToFailOnce += "m.json.bak"
+        docs.publishVerifiedJson("m.json", Doc("two"))
+            .shouldBeInstanceOf<AtomicChapterDocuments.VerifiedPublishReceipt.Complete>()
+        docs.readValidated<Doc>("m.json") shouldBe Doc("two")
+        io.files["m.json.bak"]?.contentEquals(io.files["m.json"]) shouldBe true
+        io.listedDirectories shouldBe emptyList()
+        io.writeAttempts.count { it.name == "m.json.bak.tmp" } shouldBe 3
+    }
+
+    @Test
+    fun `verified publish reports typed incomplete after persistent backup failures`() {
+        val io = FakeChapterDocumentIo()
+        val docs = documents(io)
+        docs.publishVerifiedJson("m.json", Doc("one"))
+            .shouldBeInstanceOf<AtomicChapterDocuments.VerifiedPublishReceipt.Complete>()
+        io.writeNamesToFail += "m.json.bak"
+        val receipt = docs.publishVerifiedJson("m.json", Doc("two"))
+        receipt shouldBe AtomicChapterDocuments.VerifiedPublishReceipt.BackupNotVerified(
+            io.files["m.json"]!!.size,
+            "same-state backup copy failed write/readback: name=m.json",
+        )
+        docs.readValidated<Doc>("m.json") shouldBe Doc("two")
     }
 
     private class TestTraceClock(private var nowNanos: Long = 0L) : TranslationTraceClock {

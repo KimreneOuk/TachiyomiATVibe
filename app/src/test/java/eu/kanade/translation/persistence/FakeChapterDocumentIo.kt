@@ -35,6 +35,9 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     /** Write-name fragments that should fail while the rest of the document remains writable. */
     val writeNamesToFail = mutableSetOf<String>()
 
+    /** Write-name fragments whose next matching write must fail once. */
+    val writeNamesToFailOnce = mutableSetOf<String>()
+
     /** Exact `from` names whose rename must fail. */
     val renamesToFail = mutableSetOf<String>()
 
@@ -64,6 +67,12 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     val syncedWrites = mutableListOf<String>()
 
     override fun write(name: String, bytes: ByteArray, syncToDisk: Boolean): Boolean {
+        val oneShotFragment = writeNamesToFailOnce.firstOrNull { fragment -> name.contains(fragment) }
+        if (oneShotFragment != null) {
+            writeNamesToFailOnce.remove(oneShotFragment)
+            writeAttempts += WriteAttempt(name, bytes.size, false)
+            return false
+        }
         val succeeded = !failWrites && writeNamesToFail.none { fragment -> name.contains(fragment) }
         writeAttempts += WriteAttempt(name, bytes.size, succeeded)
         if (!succeeded) return false

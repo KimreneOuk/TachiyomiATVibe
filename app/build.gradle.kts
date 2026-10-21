@@ -564,6 +564,44 @@ configurations.all {
     }
 }
 
+// Model binaries are not tracked in Git; every APK packages them from
+// app/src/main/assets/models. Provision them automatically so a fresh clone
+// or worktree never ships an APK that silently misses translation models.
+val fetchModels by tasks.registering {
+    group = "build setup"
+    description = "Provisions pinned model assets via scripts/fetch_models.py (-Pmodels.skip to opt out)."
+    onlyIf { !providers.gradleProperty("models.skip").isPresent }
+    doLast {
+        val script = rootProject.file("scripts/fetch_models.py")
+        val interpreters = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+            listOf(listOf("py", "-3"), listOf("python"), listOf("python3"))
+        } else {
+            listOf(listOf("python3"), listOf("python"))
+        }
+        val python = interpreters.firstOrNull { interpreter ->
+            runCatching {
+                exec {
+                    commandLine(interpreter + "--version")
+                    isIgnoreExitValue = true
+                }
+            }.isSuccess
+        } ?: throw GradleException(
+            "Model provisioning needs Python 3. Install it, run scripts/fetch_models.py manually, " +
+                "or pass -Pmodels.skip=true to build without translation models.",
+        )
+        exec {
+            commandLine(python + script.absolutePath)
+            workingDir(rootDir)
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("Assets")) {
+        dependsOn(fetchModels)
+    }
+}
+
 androidComponents {
     beforeVariants { variantBuilder ->
         // Disables standardBenchmark

@@ -173,10 +173,9 @@ class UniFileChapterDocumentIo(
             }
         }
         val last = segments.last()
-        return current.findFile(last)
-            ?: current.createFile(last)?.also { created ->
-                fileIndex.getOrPut(currentPath) { java.util.concurrent.ConcurrentHashMap() }[last] = created
-            }
+        val target = current.findFile(last) ?: current.createFile(last) ?: return null
+        fileIndex.getOrPut(currentPath) { java.util.concurrent.ConcurrentHashMap() }[last] = target
+        return target
     }
 
     override fun exists(name: String): Boolean = resolve(name)?.exists() == true
@@ -255,20 +254,12 @@ class UniFileChapterDocumentIo(
         }
         val renamed = runCatching { source.renameTo(segments.last()) }.getOrDefault(false)
         if (!renamed) return false
-        // Surgical index update — SAF documents rebind in place (the renamed
-        // UniFile's URI is updated), so no directory re-listing is needed.
-        // Implementations that do NOT rebind (raw/test doubles still point at
-        // the old path) are detected by the existence probe and fall back to a
-        // re-list instead of caching a stale entry.
+        // Existence does not establish that a moved handle serves the destination.
+        // Evict only that name so its next access resolves a fresh handle.
         val fromDir = from.substringBeforeLast('/', "")
         val toDir = to.substringBeforeLast('/', "")
-        if (source.exists()) {
-            fileIndex[fromDir]?.put(from.substringAfterLast('/'), absent)
-            fileIndex[toDir]?.put(to.substringAfterLast('/'), source)
-        } else {
-            invalidateIndex(fromDir)
-            invalidateIndex(toDir)
-        }
+        fileIndex[fromDir]?.put(from.substringAfterLast('/'), absent)
+        fileIndex[toDir]?.remove(to.substringAfterLast('/'))
         return true
     }
 
@@ -373,14 +364,8 @@ class AtomicChapterDocuments(
     }
 
     /**
-     * [publish] plus a verified same-state backup copy. The publish sequence
-     * (temp, readback validate, rotation, promote) is IDENTICAL; after a
-     * successful promote the validated bytes are written to the backup name
-     * and read back — [VerifiedPublishReceipt.Complete] only when that copy
-     * verifies. A backup-copy failure never rolls the primary back and never
-     * deletes anything; it surfaces as
-     * [VerifiedPublishReceipt.BackupNotVerified].
-     * Same per-document lock, and no nesting: this never calls [publish].
+     * Publishes primary then a staged, verified same-state backup under one per-name lock.
+     * Backup failures retain the advanced primary and return a typed incomplete receipt.
      */
     fun publishVerified(
         name: String,
@@ -392,20 +377,67 @@ class AtomicChapterDocuments(
             return VerifiedPublishReceipt.NotPublished
         }
         val backupName = backupNameFor(name)
-        val backupCopied = runCatching {
-            io.write(backupName, bytes, syncToDisk = syncToDisk) &&
-                io.read(backupName)?.contentEquals(bytes) == true
-        }.getOrDefault(false)
+        val backupCopied = copyAndVerifyBackupLocked(backupName, bytes, syncToDisk)
         if (!backupCopied) {
-            recordPhysicalWrite(success = false, bytes = bytes.size)
             return VerifiedPublishReceipt.BackupNotVerified(
                 bytes.size,
                 "same-state backup copy failed write/readback: name=$name",
             )
         }
-        recordPhysicalWrite(success = true, bytes = bytes.size)
         VerifiedPublishReceipt.Complete(bytes.size)
     }
+
+    /**
+     * SAF overwrite streams may retain trailing bytes, so backup copies use fresh staging.
+     * An interrupted rotation may leave the backup missing; the durable primary still reads normally.
+     */
+    private fun copyAndVerifyBackupLocked(
+        backupName: String,
+        bytes: ByteArray,
+        syncToDisk: Boolean,
+    ): Boolean {
+        for (attempt in 1..BACKUP_COPY_VERIFY_ATTEMPTS) {
+            if (tryBackupCopy(backupName, bytes, syncToDisk, attempt)) return true
+        }
+        return false
+    }
+
+    private fun tryBackupCopy(
+        backupName: String,
+        bytes: ByteArray,
+        syncToDisk: Boolean,
+        attempt: Int,
+    ): Boolean = runCatching {
+        val retainedName = backupNameFor(backupName)
+        if (!io.exists(backupName) && io.exists(retainedName) && !io.renameOwned(retainedName, backupName)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter backup recovery failed: name=$backupName retained=$retainedName attempt=$attempt"
+            }
+            return false
+        }
+        val wrote = publishLocked(backupName, bytes, syncToDisk) { it.contentEquals(bytes) }
+        val readback = if (wrote) io.read(backupName) else null
+        val matched = wrote && readback?.contentEquals(bytes) == true
+        if (!matched) {
+            val prefixMatches = readback != null && readback.size >= bytes.size &&
+                bytes.indices.all { readback[it] == bytes[it] }
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter backup copy probe: " +
+                    "name=${backupName.substringAfterLast('/')} attempt=$attempt " +
+                    "write=$wrote expected=${bytes.size} " +
+                    "read=${readback?.size ?: -1} prefixMatches=$prefixMatches " +
+                    "exists=${io.exists(backupName)} io=${io::class.simpleName}"
+            }
+        }
+        if (matched && io.exists(retainedName) && !io.delete(retainedName)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter backup rotation cleanup failed: name=$retainedName"
+            }
+        }
+        matched
+    }.onFailure { failure ->
+        logcat(LogPriority.WARN, failure) { "TachiyomiAT chapter backup copy failed: name=$backupName attempt=$attempt" }
+    }.getOrDefault(false)
 
     private fun publishLocked(
         name: String,
@@ -415,6 +447,12 @@ class AtomicChapterDocuments(
     ): Boolean {
         val tempName = tempNameFor(name)
         val backupName = backupNameFor(name)
+        if (io.exists(tempName) && io.read(tempName)?.contentEquals(bytes) != true && !io.delete(tempName)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter document publish failed: stage=tmp-cleanup name=$name"
+            }
+            return false
+        }
         val writeSucceeded = try {
             io.write(tempName, bytes, syncToDisk = syncToDisk)
         } catch (failure: Throwable) {
@@ -446,9 +484,9 @@ class AtomicChapterDocuments(
             return false
         }
         if (!io.renameOwned(tempName, name)) {
-            if (io.exists(backupName)) io.renameOwned(backupName, name)
+            val restored = io.exists(backupName) && io.renameOwned(backupName, name)
             logcat(LogPriority.WARN) {
-                "TachiyomiAT chapter document publish failed: stage=promote-rename name=$name"
+                "TachiyomiAT chapter document publish failed: stage=promote-rename name=$name restored=$restored"
             }
             return false
         }
@@ -601,5 +639,8 @@ class AtomicChapterDocuments(
         internal fun lockFor(name: String): Any = publicationLocks.computeIfAbsent(name) { Any() }
 
         private const val MAX_COLLISION_SUFFIX = 16
+
+        /** Total write/verify round-trips allowed for one backup copy. */
+        private const val BACKUP_COPY_VERIFY_ATTEMPTS = 3
     }
 }

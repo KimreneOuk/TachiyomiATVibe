@@ -440,6 +440,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
      */
     private fun computeImageRect(): RectF? {
         val pv = pageView ?: return null
+        // TachiyomiAT: long strip items are wrap-content fit-width, so the image
+        // fills the holder edge-to-edge and its top-left IS the holder top-left.
+        // The SSIV's internal scale/translate can still carry pre-layout
+        // geometry from the first full-screen measure (rect.bottom spills past
+        // the settled holder height), which mis-anchors the button until an
+        // interaction re-pins it — resolve to the holder rect instead.
+        if (isWebtoon) {
+            return RectF(0f, 0f, width.toFloat(), height.toFloat())
+        }
         return when (pv) {
             is SubsamplingScaleImageView -> {
                 if (!pv.isReady) return null

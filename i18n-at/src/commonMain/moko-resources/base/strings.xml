@@ -109,6 +109,13 @@
     <string name="reader_batch_switch_wait">Batch translation is still winding down; reader translation will wait</string>
     <string name="reader_batch_switch_reader_active">Reader translation is already active</string>
 
+    <!-- TachiyomiAT: confirmed retranslation of an already-processed page from the reader -->
+    <string name="reader_page_retranslate_title">Retranslate this page?</string>
+    <string name="reader_page_retranslate_message">The existing translation and its processing data will be deleted. This page will then be processed again using your current translation settings. This cannot be undone.</string>
+    <string name="reader_page_retranslate_action">Retranslate</string>
+    <string name="reader_page_retranslate_confirm">Retranslate</string>
+    <string name="reader_page_retranslate_reset_failed">Could not clear the previous translation data; retranslation was not started</string>
+
     <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
     <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>
     <string name="reader_translation_queue_idle">No pages in the translation queue</string>
@@ -266,4 +273,49 @@
     <string name="translation_status_resuming">Resuming…</string>
     <string name="translation_sheet_advanced_toggle">Advanced details</string>
     <string name="translation_sheet_failures_notice">%1$d pages need attention</string>
+
+    <!-- Reader UX modernization prototype: floating navigation chrome -->
+    <string name="reader_quick_actions">More actions</string>
+    <string name="reader_dock_page_of_pages">%1$d / %2$d</string>
+    <string name="reader_chapter_nav_previous">Previous chapter</string>
+    <string name="reader_chapter_nav_next">Next chapter</string>
+
+    <!-- Reader settings sheet sections -->
+    <string name="reader_settings_title">Reader settings</string>
+    <string name="reader_section_appearance">Appearance</string>
+    <string name="reader_section_image_display">Image display</string>
+    <string name="reader_section_display_adjustment">Display adjustment</string>
+    <string name="reader_section_navigation_gestures">Navigation &amp; gestures</string>
+    <string name="reader_section_floating_controls">Floating controls</string>
+
+    <!-- Translation settings sheet groups -->
+    <string name="translation_section_quick_controls">Quick controls</string>
+    <string name="translation_section_ocr">OCR configuration</string>
+    <string name="translation_section_inpainting">Inpainting</string>
+    <string name="translation_section_activity">Translation activity</string>
+    <string name="translation_section_data_management">Translation data management</string>
+    <string name="translation_data_management_summary">Reset cached artifacts for this chapter. Your reader position and library are never touched.</string>
+
+    <!-- Destructive data management rows (moved from the compare handle dialog) -->
+    <string name="reader_data_reset_confirm_title">Reset translation data?</string>
+    <string name="reader_data_reset_confirm_message">%1$s will be regenerated the next time this chapter is translated. This cannot be undone.</string>
+    <string name="reader_data_reset_keep_edits">Reset translation output (keep edits)</string>
+    <string name="reader_data_reset_clear_edits">Reset translation output (clear edits)</string>
+    <string name="reader_data_reset_inpaint">Reset inpainting results</string>
+    <string name="reader_data_reset_ocr">Reset OCR artifacts</string>
+    <string name="reader_data_reset_everything">Reset everything</string>
+    <string name="reader_data_delete_chapter">Delete chapter translation</string>
+    <string name="reader_data_delete_chapter_summary">Removes the translated chapter completely</string>
+    <string name="action_reset">Reset</string>
+
+    <!-- Translator floater preferences -->
+    <string name="pref_floater_show">Show translator floater</string>
+    <string name="pref_floater_show_summary">Floating compare handle on the reader edge</string>
+    <string name="pref_floater_idle_fade">Fade floater while inactive</string>
+    <string name="pref_floater_idle_fade_summary">Dims and tucks toward the edge after a few idle seconds</string>
+    <string name="pref_floater_reset_position">Reset floater position</string>
+    <string name="pref_floater_reset_position_summary">Docks the floater back to the left edge, vertically centered</string>
+
+    <!-- Auto-translate quick toggle on the floater menu -->
+    <string name="reader_floater_auto_translate">Auto-translate</string>
 </resources>

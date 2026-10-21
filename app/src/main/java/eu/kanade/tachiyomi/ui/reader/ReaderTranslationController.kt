@@ -553,6 +553,7 @@ internal class ReaderTranslationController(
     internal fun resetOcrData() = actions.resetOcrData()
     internal fun resetEverything() = actions.resetEverything()
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) = actions.translateSinglePage(page, force)
+    internal fun confirmPageRetranslation(page: ReaderPage) = actions.confirmPageRetranslation(page)
     internal fun confirmBatchReaderSwitch(request: ReaderViewModel.Dialog.BatchReaderSwitch) = actions.confirmBatchReaderSwitch(request)
     internal fun cancelSinglePageTranslation(page: ReaderPage) = actions.cancelSinglePageTranslation(page)
     internal fun stopAllTranslation() = actions.stopAllTranslation()

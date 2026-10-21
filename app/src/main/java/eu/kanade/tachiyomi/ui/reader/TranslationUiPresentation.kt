@@ -145,3 +145,22 @@ fun shouldGhostTranslateButton(
     menuVisible: Boolean,
     translating: Boolean,
 ): Boolean = mode == TranslateButtonMode.ADAPTIVE && !menuVisible && !translating
+
+/** What a manual translate tap on a page should do given its actual persisted/runtime state. */
+enum class TranslatePageAction {
+    /** Never translated, failed, cancelled, or only partially processed: normal translate path. */
+    TRANSLATE,
+
+    /** A stage is actively running: no new job (the queue owns dedup/cancellation). */
+    IGNORE,
+
+    /** Fully processed (translated or textless): key artifacts must be cleared before re-running. */
+    RETRANSLATE,
+}
+
+fun resolveTranslatePageAction(view: PageTranslationView?): TranslatePageAction = when (view?.lifecycle) {
+    null -> TranslatePageAction.TRANSLATE
+    is PageLifecycle.Running -> TranslatePageAction.IGNORE
+    PageLifecycle.Done, PageLifecycle.Textless -> TranslatePageAction.RETRANSLATE
+    else -> TranslatePageAction.TRANSLATE
+}

@@ -1,15 +1,17 @@
 package eu.kanade.presentation.reader.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,99 +23,113 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CompareArrows
-import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.automirrored.outlined.CompareArrows
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Translate
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
-import tachiyomi.i18n.MR
+import kotlinx.coroutines.launch
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
+import kotlin.math.roundToInt
 
-// TachiyomiAT: idle auto-hide delay. After this many ms with the menu collapsed
-// and no interaction, the handle dims to 0.4f and slides -20.dp off the left
-// edge. Any tap resets it.
+// Idle auto-hide: after this many ms with the menu collapsed and no
+// interaction, the floater dims and tucks toward its docked edge.
 private const val IDLE_DELAY_MS = 2500L
+private const val IDLE_ALPHA = 0.38f
+
+// Shared by every position animation so an interrupted snap restarts with the
+// same easing instead of fighting another spec.
+private val DockSnapSpring = spring<Float>(stiffness = 380f)
 
 /**
- * TachiyomiAT: a side-mounted handle that lets the user quickly compare the
- * original and translated image for the CURRENT page only, open the full
- * translation settings sheet, or delete the current chapter's translation.
+ * Draggable translator floater (chat-head style) for quick original/translated
+ * comparison on the CURRENT page.
  *
- * Layout: a small circular handle docked to the left edge, vertically centered.
- * Tapping it expands a short vertical menu (Show original / Show translated /
- * Translation settings / Delete translation); selecting a row collapses it
- * again and, for the two toggle rows, flips [showingTranslated] for the current
- * page via [onSelectOriginal] / [onSelectTranslated]. The delete row calls
- * [onDeleteTranslation] (tinted with the theme's error color).
- *
- * Visibility: the handle is present whenever [visible] is true. When the user
- * has not interacted with it for ~2.5s and the menu is collapsed, it dims to
- * 0.4f alpha and slides halfway off the left edge (-20.dp) to stay
- * non-intrusive during idle reading; any tap on the screen or handle resets it
- * to full opacity and flush position. An expanded menu is always full-opacity.
- *
- * The Original/Translated rows are disabled (greyed) when [hasTranslation] is
- * false (a page with no translation yet); the Delete row is hidden entirely
- * when [hasTranslation] is false (nothing to delete). Only Translation settings
- * stays always tappable. The whole handle is hidden when translation is
- * disabled entirely.
- *
- * Active-state highlighting reflects [showingTranslated]: whichever side is
- * currently shown is tinted with the primary color.
- *
- * @param visible           whether to show the handle at all (translation enabled).
- * @param hasTranslation    whether the current page has a translated image to compare/delete.
- * @param showingTranslated whether the current page is currently showing its translation.
- * @param onSelectOriginal  flip the current page to its original image.
- * @param onSelectTranslated flip the current page to its translated image.
- * @param onOpenSettings    open the reader translation settings sheet.
- * @param onDeleteTranslation delete the current chapter's translation (destructive).
+ * The two [Animatable] fractions are the single source of truth: drag deltas
+ * are applied with ordered [Animatable.snapTo] calls and release snaps with
+ * [DockSnapSpring], so motion is continuous across grab/release and menu
+ * open/close. The menu is a positioned sibling of the handle, offset and
+ * clamped independently to stay inside the container, so expanding it never
+ * moves the handle. Release snaps to the nearest left/right edge; the docked
+ * side and normalized vertical position are persisted by the caller ONLY at
+ * drag end.
  */
 @Composable
 fun TranslationCompareHandle(
     visible: Boolean,
     hasTranslation: Boolean,
     showingTranslated: Boolean,
+    autoTranslate: Boolean,
     onSelectOriginal: () -> Unit,
     onSelectTranslated: () -> Unit,
+    onToggleAutoTranslate: () -> Unit,
     onOpenSettings: () -> Unit,
-    onResetTranslationData: (Boolean) -> Unit,
-    onResetInpaintData: () -> Unit,
-    onResetOcrData: () -> Unit,
-    onResetEverything: () -> Unit,
-    onDeleteChapterTranslation: () -> Unit,
+    idleFadeEnabled: Boolean,
+    dockEnd: Boolean,
+    onDockChange: (Boolean) -> Unit,
+    verticalFraction: Float,
+    onPositionChange: (Float) -> Unit,
+    bottomReservePx: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
     if (!visible) return
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    var containerWidthPx by remember { mutableIntStateOf(0) }
+    var containerHeightPx by remember { mutableIntStateOf(0) }
+    var menuSizePx by remember { mutableStateOf(IntSize.Zero) }
     var expanded by remember { mutableStateOf(false) }
-    var showDeleteDialog by remember { mutableStateOf(false) }
-    // TachiyomiAT: idle auto-hide. After ~2.5s of no interaction with the menu
-    // collapsed, dim + slide the handle off-edge so it stays non-intrusive
-    // during idle reading. Any tap resets it.
+    var dragging by remember { mutableStateOf(false) }
     var isIdle by remember { mutableStateOf(false) }
-    // Restart the idle timer whenever the menu closes or the handle is tapped.
-    // While expanded we never go idle (the menu is always full-opacity).
-    LaunchedEffect(expanded) {
-        if (!expanded) {
+
+    val handleSizePx = with(density) { 40.dp.toPx() }
+    val menuSpacingPx = with(density) { 6.dp.toPx() }
+    val tuckPx = with(density) { 8.dp.toPx() }
+
+    // Normalized position, animated. x: 0 = start edge, 1 = end edge;
+    // y: 0..1 top-to-bottom. Read only inside offset lambdas, so drag
+    // frames invalidate layout without recomposing the reader.
+    val xFraction = remember { Animatable(if (dockEnd) 1f else 0f) }
+    val yFraction = remember { Animatable(verticalFraction.coerceIn(0f, 1f)) }
+
+    // Follow preference changes (settings resets, dock-side flips) while idle.
+    LaunchedEffect(dockEnd, verticalFraction, containerWidthPx) {
+        if (dragging) return@LaunchedEffect
+        launch { xFraction.animateTo(if (dockEnd) 1f else 0f, DockSnapSpring) }
+        launch { yFraction.animateTo(verticalFraction.coerceIn(0f, 1f), DockSnapSpring) }
+    }
+
+    // Idle timer: armed whenever the menu is collapsed and no drag is active.
+    LaunchedEffect(expanded, dragging, idleFadeEnabled) {
+        if (!expanded && !dragging && idleFadeEnabled) {
             delay(IDLE_DELAY_MS)
             isIdle = true
         } else {
@@ -121,150 +137,146 @@ fun TranslationCompareHandle(
         }
     }
 
-    // Cap the width so the expanded menu stays on screen on small devices /
-    // landscape; vertical centring is applied by the caller's Box alignment.
-    Box(
-        modifier = modifier.widthIn(max = 180.dp),
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // The expanded menu appears ABOVE the handle (expanded downward from
-            // the centred handle would push it off the bottom edge on phones).
-            AnimatedVisibility(
-                visible = expanded,
-                enter = fadeIn(tween(120)) + expandVertically(tween(120)),
-                exit = fadeOut(tween(80)) + shrinkVertically(tween(80)),
-            ) {
-                MenuColumn(
-                    hasTranslation = hasTranslation,
-                    showingTranslated = showingTranslated,
-                    onSelectOriginal = {
-                        onSelectOriginal()
-                        expanded = false
-                        isIdle = false
-                    },
-                    onSelectTranslated = {
-                        onSelectTranslated()
-                        expanded = false
-                        isIdle = false
-                    },
-                    onOpenSettings = {
-                        onOpenSettings()
-                        expanded = false
-                        isIdle = false
-                    },
-                    onDeleteTranslation = {
-                        showDeleteDialog = true
-                        expanded = false
-                        isIdle = false
-                    },
-                )
-            }
+    val handleAlpha by animateFloatAsState(
+        targetValue = if (isIdle && !expanded) IDLE_ALPHA else 1f,
+        animationSpec = tween(200),
+        label = "floater-alpha",
+    )
 
+    Box(
+        modifier = modifier.onSizeChanged {
+            containerWidthPx = it.width
+            containerHeightPx = it.height
+        },
+    ) {
+        val insetPx = with(density) { 8.dp.toPx() }
+        val usableWidth = (containerWidthPx - 2 * insetPx - handleSizePx).coerceAtLeast(1f)
+        val usableHeight = (containerHeightPx - handleSizePx).coerceAtLeast(1f)
+
+        // Anchored at the handle's top-left; sized only by the handle so menu
+        // layout can never shift it.
+        Box(
+            modifier = Modifier
+                .offset {
+                    val tuck = if (isIdle && !expanded) {
+                        if (xFraction.value > 0.5f) tuckPx else -tuckPx
+                    } else {
+                        0f
+                    }
+                    IntOffset(
+                        (insetPx + xFraction.value * usableWidth + tuck).roundToInt(),
+                        (yFraction.value * usableHeight)
+                            .coerceAtMost((usableHeight - bottomReservePx).coerceAtLeast(0f))
+                            .roundToInt(),
+                    )
+                }
+                .alpha(handleAlpha),
+        ) {
             HandleButton(
                 expanded = expanded,
-                isIdle = isIdle && !expanded,
                 onClick = {
                     expanded = !expanded
                     isIdle = false
                 },
+                modifier = Modifier
+                    .pointerInput(usableWidth, usableHeight) {
+                        // Gesture-local truth for end-of-gesture decisions; the
+                        // animatables catch up via ordered snapTo launches.
+                        var lastX = xFraction.value
+                        var lastY = yFraction.value
+                        detectDragGestures(
+                            onDragStart = {
+                                dragging = true
+                                isIdle = false
+                                lastX = xFraction.value
+                                lastY = yFraction.value
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                lastX = (lastX + dragAmount.x / usableWidth).coerceIn(0f, 1f)
+                                lastY = (lastY + dragAmount.y / usableHeight).coerceIn(0f, 1f)
+                                val x = lastX
+                                val y = lastY
+                                scope.launch {
+                                    xFraction.snapTo(x)
+                                    yFraction.snapTo(y)
+                                }
+                            },
+                            onDragEnd = {
+                                dragging = false
+                                val endSide = lastX > 0.5f
+                                if (endSide != dockEnd) onDockChange(endSide)
+                                if (lastY !in verticalFraction - 0.001f..verticalFraction + 0.001f) {
+                                    onPositionChange(lastY)
+                                }
+                                scope.launch {
+                                    xFraction.animateTo(if (endSide) 1f else 0f, DockSnapSpring)
+                                }
+                            },
+                            onDragCancel = {
+                                dragging = false
+                                scope.launch {
+                                    xFraction.animateTo(if (dockEnd) 1f else 0f, DockSnapSpring)
+                                }
+                            },
+                        )
+                    },
+            )
+
+            FloaterMenu(
+                hasTranslation = hasTranslation,
+                showingTranslated = showingTranslated,
+                autoTranslate = autoTranslate,
+                onSelectOriginal = {
+                    onSelectOriginal()
+                    expanded = false
+                },
+                onSelectTranslated = {
+                    onSelectTranslated()
+                    expanded = false
+                },
+                onToggleAutoTranslate = onToggleAutoTranslate,
+                onOpenSettings = {
+                    onOpenSettings()
+                    expanded = false
+                },
+                onSizeChangedPx = { menuSizePx = it },
+                visible = expanded,
+                dockEnd = dockEnd,
+                modifier = Modifier.offset {
+                    val menuWidth = menuSizePx.width.toFloat()
+                    val menuHeight = menuSizePx.height.toFloat()
+                    if (menuWidth < 1f || menuHeight < 1f) return@offset IntOffset.Zero
+                    // Center on the handle, then clamp so the whole menu stays
+                    // inside the container and clear of the bottom reserve.
+                    val anchorTop = (yFraction.value * usableHeight)
+                        .coerceAtMost((usableHeight - bottomReservePx).coerceAtLeast(0f))
+                    val dyMin = -anchorTop
+                    val dyMax = (containerHeightPx - bottomReservePx - menuHeight - anchorTop)
+                        .coerceAtLeast(dyMin)
+                    val dy = ((handleSizePx - menuHeight) / 2f).coerceIn(dyMin, dyMax)
+                    val anchorLeft = insetPx + xFraction.value * usableWidth
+                    val dx = if (dockEnd) {
+                        (-(menuWidth + menuSpacingPx)).coerceAtLeast(-anchorLeft)
+                    } else {
+                        (handleSizePx + menuSpacingPx)
+                            .coerceAtMost(containerWidthPx - menuWidth - anchorLeft)
+                    }
+                    IntOffset(dx.roundToInt(), dy.roundToInt())
+                },
             )
         }
-
-        // Tap anywhere on the handle area resets idle; the LaunchedEffect below
-        // handles the timeout. No click-away scrim: the menu auto-collapses on
-        // row select (the chosen "collapse on select" behaviour), and a
-        // full-screen scrim would defeat the "non-intrusive when idle" goal.
-        // Tapping the handle again also collapses it.
-    }
-
-    if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text(text = "Delete Translation") },
-            text = { Text(text = "What part of the translation do you want to reset?") },
-            confirmButton = {
-                Column(horizontalAlignment = Alignment.End) {
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            onResetTranslationData(true)
-                        },
-                    ) {
-                        Text(text = "Translation Only (Keep Edits)")
-                    }
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            onResetTranslationData(false)
-                        },
-                    ) {
-                        Text(text = "Translation Only (Clear Edits)")
-                    }
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            onResetInpaintData()
-                        },
-                    ) {
-                        Text(text = "Inpaint & Rendering")
-                    }
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            onResetOcrData()
-                        },
-                    ) {
-                        Text(text = "OCR & Everything")
-                    }
-                    TextButton(
-                        onClick = {
-                            showDeleteDialog = false
-                            onDeleteChapterTranslation()
-                        },
-                    ) {
-                        Text(text = "Entire Chapter")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) {
-                    Text(text = stringResource(MR.strings.action_cancel))
-                }
-            },
-        )
     }
 }
 
 @Composable
 private fun HandleButton(
     expanded: Boolean,
-    isIdle: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(180),
-        label = "compare-handle-rotation",
-    )
-    // TachiyomiAT: idle auto-hide — dim to 0.4f and slide -20.dp off the left
-    // edge when idle and the menu is collapsed. Recovered on any tap.
-    val handleAlpha by animateFloatAsState(
-        targetValue = if (isIdle) 0.4f else 1f,
-        animationSpec = tween(180),
-        label = "compare-handle-alpha",
-    )
-    val handleOffsetX by animateDpAsState(
-        targetValue = if (isIdle) (-20).dp else 0.dp,
-        animationSpec = tween(180),
-        label = "compare-handle-offset-x",
-    )
     Box(
-        modifier = Modifier
-            .offset(x = handleOffsetX)
-            .alpha(handleAlpha)
+        modifier = modifier
             .size(40.dp)
             .background(
                 color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
@@ -278,84 +290,117 @@ private fun HandleButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Outlined.CompareArrows,
+            imageVector = Icons.AutoMirrored.Outlined.CompareArrows,
             contentDescription = stringResource(ATMR.strings.reader_compare_handle),
             tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.alpha(if (expanded) 0.6f else 1f),
         )
     }
 }
 
 @Composable
-private fun MenuColumn(
+private fun FloaterMenu(
     hasTranslation: Boolean,
     showingTranslated: Boolean,
+    autoTranslate: Boolean,
     onSelectOriginal: () -> Unit,
     onSelectTranslated: () -> Unit,
+    onToggleAutoTranslate: () -> Unit,
     onOpenSettings: () -> Unit,
-    onDeleteTranslation: () -> Unit,
+    onSizeChangedPx: (IntSize) -> Unit,
+    visible: Boolean,
+    dockEnd: Boolean,
+    modifier: Modifier = Modifier,
 ) {
-    val activeColor = MaterialTheme.colorScheme.primary
-    val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val errorColor = MaterialTheme.colorScheme.error
-    val disabledAlpha = if (hasTranslation) 1f else 0.38f
-
-    Column(
-        modifier = Modifier
-            .background(
-                color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
-                shape = RoundedCornerShape(20.dp),
-            )
-            .padding(vertical = 4.dp),
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(120)) +
+            expandHorizontally(tween(150), expandFrom = if (dockEnd) Alignment.End else Alignment.Start),
+        exit = fadeOut(tween(90)) +
+            shrinkHorizontally(tween(120), shrinkTowards = if (dockEnd) Alignment.End else Alignment.Start),
+        modifier = modifier,
     ) {
-        MenuRow(
-            icon = Icons.Outlined.Image,
-            label = stringResource(ATMR.strings.reader_compare_show_original),
-            tint = if (hasTranslation && !showingTranslated) activeColor else inactiveColor,
-            enabled = hasTranslation,
-            onClick = onSelectOriginal,
-        )
-        MenuRow(
-            icon = Icons.Outlined.Translate,
-            label = stringResource(ATMR.strings.reader_compare_show_translated),
-            tint = if (hasTranslation && showingTranslated) activeColor else inactiveColor,
-            enabled = hasTranslation,
-            onClick = onSelectTranslated,
-        )
-        MenuRow(
-            icon = Icons.Outlined.Settings,
-            label = stringResource(ATMR.strings.reader_compare_open_settings),
-            tint = inactiveColor,
-            enabled = true,
-            onClick = onOpenSettings,
-        )
-        // TachiyomiAT: delete is a destructive action — tint with the theme's
-        // error color and only show it when there is a translation to delete.
-        if (hasTranslation) {
-            MenuRow(
-                icon = Icons.Outlined.Delete,
-                label = stringResource(ATMR.strings.reader_compare_delete_translation),
-                tint = errorColor,
-                enabled = true,
-                onClick = onDeleteTranslation,
-            )
+        val activeColor = MaterialTheme.colorScheme.primary
+        val inactiveColor = MaterialTheme.colorScheme.onSurfaceVariant
+        val disabledAlpha = if (hasTranslation) 1f else 0.38f
+
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
+            modifier = Modifier
+                .widthIn(max = 200.dp)
+                .onSizeChanged { onSizeChangedPx(IntSize(it.width, it.height)) },
+        ) {
+            Column(
+                modifier = Modifier.padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                FloaterMenuRow(
+                    icon = Icons.Outlined.Image,
+                    label = stringResource(ATMR.strings.reader_compare_show_original),
+                    tint = if (hasTranslation && !showingTranslated) activeColor else inactiveColor,
+                    enabled = hasTranslation,
+                    rowAlpha = disabledAlpha,
+                    onClick = onSelectOriginal,
+                )
+                FloaterMenuRow(
+                    icon = Icons.Outlined.Translate,
+                    label = stringResource(ATMR.strings.reader_compare_show_translated),
+                    tint = if (hasTranslation && showingTranslated) activeColor else inactiveColor,
+                    enabled = hasTranslation,
+                    rowAlpha = disabledAlpha,
+                    onClick = onSelectTranslated,
+                )
+                Row(
+                    modifier = Modifier
+                        .clickable(onClick = onToggleAutoTranslate)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.AutoAwesome,
+                        contentDescription = null,
+                        tint = if (autoTranslate) activeColor else inactiveColor,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        text = stringResource(ATMR.strings.reader_floater_auto_translate),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = autoTranslate,
+                        onCheckedChange = { onToggleAutoTranslate() },
+                    )
+                }
+                FloaterMenuRow(
+                    icon = Icons.Outlined.Settings,
+                    label = stringResource(ATMR.strings.reader_compare_open_settings),
+                    tint = inactiveColor,
+                    enabled = true,
+                    rowAlpha = 1f,
+                    onClick = onOpenSettings,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun MenuRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun FloaterMenuRow(
+    icon: ImageVector,
     label: String,
     tint: Color,
     enabled: Boolean,
+    rowAlpha: Float,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
-            .alpha(if (enabled) 1f else 0.38f),
+            .padding(horizontal = 12.dp, vertical = 14.dp)
+            .alpha(if (enabled) rowAlpha else 0.38f),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {

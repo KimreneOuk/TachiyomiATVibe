@@ -69,6 +69,7 @@ internal class EngineLane(
         val paddleOcrProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU,
         val paddleOcrBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1,
         val paddleOcrComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
+        val visionGpu: Boolean = false,
         val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
         val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
     )
@@ -363,6 +364,7 @@ internal class EngineLane(
             currentPaddleOcrProvider = testState.paddleOcrProvider
             currentPaddleOcrBatch = testState.paddleOcrBatch
             currentPaddleOcrComputeDevice = testState.paddleOcrComputeDevice
+            currentVisionGpu = testState.visionGpu
         } else {
             // fromPref/build THROW on invalid config (intended on the translate path). But this
             // object is constructed eagerly as a field initializer in TranslationManager, so an
@@ -382,6 +384,10 @@ internal class EngineLane(
                 currentPaddleOcrProvider = translationPreferences.paddleOcrExecutionProvider().get()
                 currentPaddleOcrBatch = translationPreferences.paddleOcrRecognitionBatch().get()
                 currentPaddleOcrComputeDevice = translationPreferences.paddleOcrComputeDevice().get()
+                // Shadow the preference the engine itself reads at init
+                // (RoiPageRecognitionEngine:translationVisionGpuAcceleration) so the
+                // first rebuild gate compares equal and does not teardown+rebuild what was just built.
+                currentVisionGpu = translationPreferences.translationVisionGpuAcceleration().get()
                 recognitionEngine = createRecognitionEngine(
                     fromLang,
                     ocrModel,

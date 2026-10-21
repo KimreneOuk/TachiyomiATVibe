@@ -277,6 +277,49 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
         resetOcrData()
     }
 
+    /**
+     * Confirmed retranslation: wipe every derived artifact for this one page and
+     * re-enter the existing manual pipeline. resetOcrData (circle: per-page job
+     * cancel → durable status cache → store entry delete (which also drops the
+     * committed display pointer and leases) → cleaned/rendered companion-image
+     * retirement) is the store's complete page-level invalidation, so nothing
+     * beyond the receipt check is needed here.
+     */
+    internal fun confirmPageRetranslation(page: ReaderPage) {
+        val manga = manga ?: return
+        val chapter = page.chapter.chapter
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val pageKey = resolvePageKey(page)
+
+        viewModelScope.launchIO {
+            val receipt = translationManager.resetOcrData(chapter.toDomainChapter()!!, manga, source, pageKey)
+            if (!receipt.completed) {
+                logcat(LogPriority.WARN) {
+                    "confirmPageRetranslation: reset incomplete for $pageKey (${receipt.failures.size} failures); retranslation not started"
+                }
+                withUIContext {
+                    Injekt.get<Application>().toast(ATMR.strings.reader_page_retranslate_reset_failed)
+                }
+                recomputeTranslationState()
+                return@launchIO
+            }
+            // Mirror resetOcrData()'s explicit teardown so holders drop the old
+            // translated image the moment the store is clean, not on the next
+            // live-store emission.
+            page.translatedStream = null
+            page.translation = null
+            page.showTranslatedImage = false
+            page.translationToggled = false
+            eventChannel.trySend(ReaderViewModel.Event.RefreshTranslationPages(setOf(page)))
+            mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+            // Store is now empty for this page: the ordinary manual path runs
+            // detection/OCR onward and publishes fresh artifacts. force bypasses
+            // the failed-stage resolution (there are no failures to consume).
+            translateSinglePage(page, force = true)
+            recomputeTranslationState()
+        }
+    }
+
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
         val tapTimeNs = System.nanoTime()
         when (

@@ -861,8 +861,28 @@ class ReaderViewModel @JvmOverloads constructor(
     fun resetEverything() =
         translationController.resetEverything()
 
-    fun translateSinglePage(page: ReaderPage, force: Boolean? = null) =
+    fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
+        // Manual UI taps pass force == null; programmatic re-dispatch (which
+        // already holds a confirmation) flows straight through.
+        if (force == null) {
+            when (resolveTranslatePageAction(page.translation)) {
+                TranslatePageAction.TRANSLATE -> Unit
+                TranslatePageAction.IGNORE -> return
+                TranslatePageAction.RETRANSLATE -> {
+                    mutableState.update { it.copy(dialog = Dialog.PageRetranslate(page)) }
+                    return
+                }
+            }
+        }
         translationController.translateSinglePage(page, force)
+    }
+
+    fun confirmPageRetranslation(page: ReaderPage) =
+        translationController.confirmPageRetranslation(page)
+
+    fun cancelPageRetranslation() {
+        mutableState.update { if (it.dialog is Dialog.PageRetranslate) it.copy(dialog = null) else it }
+    }
 
     fun cancelSinglePageTranslation(page: ReaderPage) =
         translationController.cancelSinglePageTranslation(page)
@@ -968,6 +988,7 @@ class ReaderViewModel @JvmOverloads constructor(
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage) : Dialog
         data class BatchReaderSwitch(val page: ReaderPage, val force: Boolean? = null) : Dialog
+        data class PageRetranslate(val page: ReaderPage) : Dialog
     }
 
     sealed interface Event {

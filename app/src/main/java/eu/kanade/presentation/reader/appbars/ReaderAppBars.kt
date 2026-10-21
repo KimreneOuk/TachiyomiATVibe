@@ -2,42 +2,45 @@ package eu.kanade.presentation.reader.appbars
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Bookmark
-import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.components.AppBar
-import eu.kanade.presentation.components.AppBarActions
-import eu.kanade.presentation.reader.components.ChapterNavigator
+import eu.kanade.presentation.reader.components.ReaderQuickActionsMenu
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import kotlinx.collections.immutable.persistentListOf
-import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.components.material.padding
-import tachiyomi.presentation.core.i18n.stringResource
 
 private val animationSpec = tween<IntOffset>(200)
+private val fadeSpec = tween<Float>(200)
 
+/**
+ * Reader overlay chrome for the UX modernization prototype: a compact floating
+ * header up top and a floating navigation dock (with quick actions menu and
+ * batch status line) at the bottom. Both hide together during immersive
+ * reading via [visible], exactly like the previous app bars.
+ */
 @Composable
 fun ReaderAppBars(
     visible: Boolean,
@@ -68,19 +71,24 @@ fun ReaderAppBars(
     onClickOrientation: () -> Unit,
     cropEnabled: Boolean,
     onClickCropBorder: () -> Unit,
+    fullscreenEnabled: Boolean,
+    onClickToggleFullscreen: () -> Unit,
     onClickSettings: () -> Unit,
+    onClickTranslationSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationBatchProgress: TranslationProgressSnapshot? = null,
     isBatchSession: Boolean = false,
     onClickTranslate: () -> Unit = {},
-    // TachiyomiAT: forwarded to BottomReaderBar to disable the translate icon
-    // while work is running.
-    translateEnabled: Boolean = true,
 ) {
     val isRtl = viewer is R2LPagerViewer
-    val backgroundColor = MaterialTheme.colorScheme
-        .surfaceColorAtElevation(3.dp)
-        .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+    var quickActionsExpanded by remember { mutableStateOf(false) }
+
+    // The quick menu lives and dies with the reader chrome: hiding the controls
+    // (page tap) or opening a sheet always collapses it, so it can never linger
+    // over the artwork.
+    LaunchedEffect(visible) {
+        if (!visible) quickActionsExpanded = false
+    }
 
     val modifierWithInsetsPadding = if (fullscreen) {
         Modifier.systemBarsPadding()
@@ -98,68 +106,23 @@ fun ReaderAppBars(
                 enter = slideInVertically(
                     initialOffsetY = { -it },
                     animationSpec = animationSpec,
-                ),
+                ) + fadeIn(animationSpec = fadeSpec),
                 exit = slideOutVertically(
                     targetOffsetY = { -it },
                     animationSpec = animationSpec,
-                ),
+                ) + fadeOut(animationSpec = fadeSpec),
             ) {
-                AppBar(
-                    modifier = modifierWithInsetsPadding
-                        .clickable(onClick = onClickTopAppBar),
-                    backgroundColor = backgroundColor,
-                    title = mangaTitle,
-                    subtitle = chapterTitle,
+                ReaderTopHeader(
+                    modifier = modifierWithInsetsPadding.padding(horizontal = 8.dp, vertical = 4.dp),
+                    mangaTitle = mangaTitle,
+                    chapterTitle = chapterTitle,
                     navigateUp = navigateUp,
-                    actions = {
-                        AppBarActions(
-                            actions = persistentListOf<AppBar.AppBarAction>().builder()
-                                .apply {
-                                    add(
-                                        AppBar.Action(
-                                            title = stringResource(
-                                                if (bookmarked) {
-                                                    MR.strings.action_remove_bookmark
-                                                } else {
-                                                    MR.strings.action_bookmark
-                                                },
-                                            ),
-                                            icon = if (bookmarked) {
-                                                Icons.Outlined.Bookmark
-                                            } else {
-                                                Icons.Outlined.BookmarkBorder
-                                            },
-                                            onClick = onToggleBookmarked,
-                                        ),
-                                    )
-                                    onOpenInWebView?.let {
-                                        add(
-                                            AppBar.OverflowAction(
-                                                title = stringResource(MR.strings.action_open_in_web_view),
-                                                onClick = it,
-                                            ),
-                                        )
-                                    }
-                                    onOpenInBrowser?.let {
-                                        add(
-                                            AppBar.OverflowAction(
-                                                title = stringResource(MR.strings.action_open_in_browser),
-                                                onClick = it,
-                                            ),
-                                        )
-                                    }
-                                    onShare?.let {
-                                        add(
-                                            AppBar.OverflowAction(
-                                                title = stringResource(MR.strings.action_share),
-                                                onClick = it,
-                                            ),
-                                        )
-                                    }
-                                }
-                                .build(),
-                        )
-                    },
+                    onClickTopAppBar = onClickTopAppBar,
+                    bookmarked = bookmarked,
+                    onToggleBookmarked = onToggleBookmarked,
+                    onOpenInWebView = onOpenInWebView,
+                    onOpenInBrowser = onOpenInBrowser,
+                    onShare = onShare,
                 )
             }
 
@@ -170,17 +133,50 @@ fun ReaderAppBars(
                 enter = slideInVertically(
                     initialOffsetY = { it },
                     animationSpec = animationSpec,
-                ),
+                ) + fadeIn(animationSpec = fadeSpec),
                 exit = slideOutVertically(
                     targetOffsetY = { it },
                     animationSpec = animationSpec,
-                ),
+                ) + fadeOut(animationSpec = fadeSpec),
             ) {
                 Column(
-                    modifier = modifierWithInsetsPadding,
-                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                    modifier = modifierWithInsetsPadding.padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.End,
                 ) {
-                    ChapterNavigator(
+                    ReaderQuickActionsMenu(
+                        visible = quickActionsExpanded,
+                        readingMode = readingMode,
+                        onClickReadingMode = {
+                            quickActionsExpanded = false
+                            onClickReadingMode()
+                        },
+                        orientation = orientation,
+                        onClickOrientation = {
+                            quickActionsExpanded = false
+                            onClickOrientation()
+                        },
+                        cropEnabled = cropEnabled,
+                        onClickCropBorder = onClickCropBorder,
+                        fullscreen = fullscreenEnabled,
+                        onClickFullscreen = onClickToggleFullscreen,
+                        onClickSettings = {
+                            quickActionsExpanded = false
+                            onClickSettings()
+                        },
+                        onClickTranslationSettings = {
+                            quickActionsExpanded = false
+                            onClickTranslationSettings()
+                        },
+                    )
+
+                    if (isBatchSession) {
+                        translationBatchProgress?.let { snapshot ->
+                            ReaderTranslationStatusLine(snapshot = snapshot)
+                        }
+                    }
+
+                    ReaderNavigationDock(
                         isRtl = isRtl,
                         onNextChapter = onNextChapter,
                         enabledNext = enabledNext,
@@ -189,21 +185,12 @@ fun ReaderAppBars(
                         currentPage = currentPage,
                         totalPages = totalPages,
                         onPageIndexChange = onPageIndexChange,
-                    )
-                    BottomReaderBar(
-                        backgroundColor = backgroundColor,
-                        readingMode = readingMode,
-                        onClickReadingMode = onClickReadingMode,
-                        orientation = orientation,
-                        onClickOrientation = onClickOrientation,
-                        cropEnabled = cropEnabled,
-                        onClickCropBorder = onClickCropBorder,
-                        onClickSettings = onClickSettings,
                         translationState = translationState,
                         translationBatchProgress = translationBatchProgress,
                         isBatchSession = isBatchSession,
                         onClickTranslate = onClickTranslate,
-                        translateEnabled = translateEnabled,
+                        quickActionsExpanded = quickActionsExpanded,
+                        onToggleQuickActions = { quickActionsExpanded = !quickActionsExpanded },
                     )
                 }
             }

@@ -136,4 +136,48 @@ class TranslationUiPresentationTest {
         shouldGhostTranslateButton(TranslateButtonMode.ADAPTIVE, menuVisible = false, translating = true) shouldBe false
         shouldGhostTranslateButton(TranslateButtonMode.WITH_CONTROLS, menuVisible = false, translating = false) shouldBe false
     }
+
+    @Test
+    fun `manual tap on a never-translated page starts normally`() {
+        resolveTranslatePageAction(null) shouldBe TranslatePageAction.TRANSLATE
+        resolveTranslatePageAction(PageTranslation()) shouldBe TranslatePageAction.TRANSLATE
+    }
+
+    @Test
+    fun `manual tap on a fully processed page asks for retranslation`() {
+        val done = PageTranslation(
+            blocks = mutableListOf(translatedBlock()),
+            cleanedImageName = "p0_cleaned.webp",
+            inpaintStatus = StageStatus.READY,
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            translationStatus = StageStatus.READY,
+            ocrStatus = StageStatus.READY,
+        )
+        val textless = PageTranslation().apply {
+            ocrStatus = StageStatus.READY
+            translationStatus = StageStatus.SKIPPED
+            inpaintStatus = StageStatus.SKIPPED
+        }
+        resolveTranslatePageAction(done) shouldBe TranslatePageAction.RETRANSLATE
+        resolveTranslatePageAction(textless) shouldBe TranslatePageAction.RETRANSLATE
+    }
+
+    @Test
+    fun `manual tap while a stage runs is ignored`() {
+        val running = PageTranslation().apply { ocrStatus = StageStatus.RUNNING }
+        resolveTranslatePageAction(running) shouldBe TranslatePageAction.IGNORE
+        val translating = PageTranslation().apply { translationStatus = StageStatus.RUNNING }
+        resolveTranslatePageAction(translating) shouldBe TranslatePageAction.IGNORE
+    }
+
+    @Test
+    fun `manual tap on failed cancelled or partial pages keeps the start path`() {
+        val failed = PageTranslation().apply {
+            ocrStatus = StageStatus.READY
+            translationStatus = StageStatus.FAILED
+        }
+        val cancelled = PageTranslation().apply { ocrStatus = StageStatus.CANCELLED }
+        resolveTranslatePageAction(failed) shouldBe TranslatePageAction.TRANSLATE
+        resolveTranslatePageAction(cancelled) shouldBe TranslatePageAction.TRANSLATE
+    }
 }

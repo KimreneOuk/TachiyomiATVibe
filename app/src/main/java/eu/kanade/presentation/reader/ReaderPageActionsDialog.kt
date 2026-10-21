@@ -32,6 +32,7 @@ fun ReaderPageActionsDialog(
     onShare: (Boolean) -> Unit,
     onSave: () -> Unit,
     onTranslatePage: () -> Unit = {},
+    pageTranslated: Boolean = false,
 ) {
     var showSetCoverDialog by remember { mutableStateOf(false) }
 
@@ -80,7 +81,10 @@ fun ReaderPageActionsDialog(
         ) {
             ActionButton(
                 modifier = Modifier.weight(1f),
-                title = stringResource(tachiyomi.i18n.at.ATMR.strings.reader_translate),
+                title = stringResource(
+                    if (pageTranslated) tachiyomi.i18n.at.ATMR.strings.reader_page_retranslate_action
+                    else tachiyomi.i18n.at.ATMR.strings.reader_translate,
+                ),
                 icon = Icons.Outlined.Save, // fallback icon
                 onClick = {
                     onTranslatePage()

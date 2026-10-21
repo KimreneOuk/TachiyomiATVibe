@@ -81,6 +81,19 @@ class ReaderPreferences(
 
     // endregion
 
+    // region Floating translator (reader UX prototype)
+
+    fun translationFloaterEnabled() = preferenceStore.getBoolean("pref_translation_floater_enabled", true)
+
+    fun translationFloaterIdleFade() = preferenceStore.getBoolean("pref_translation_floater_idle_fade", true)
+
+    // false = docked to the start edge, true = docked to the end edge.
+    fun translationFloaterDockEnd() = preferenceStore.getBoolean("pref_translation_floater_dock_end", false)
+
+    fun translationFloaterVerticalFraction() = preferenceStore.getFloat("pref_translation_floater_y", 0.5f)
+
+    // endregion
+
     // region Split two page spread
 
     fun dualPageSplitPaged() = preferenceStore.getBoolean("pref_dual_page_split", false)

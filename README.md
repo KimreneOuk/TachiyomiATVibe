@@ -44,19 +44,18 @@ The ONNX and LiteRT model assets are fetched and converted before the app is bui
 
 ## Building from source
 
-You need Python 3, JDK 17, and the Android SDK. Android Studio can install the SDK components required by the project. The model fetch step downloads and verifies upstream models and locally converts derived models before Gradle packages the app. See [MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model sources, conversion notes, and license details.
+You need Python 3, JDK 17, and the Android SDK. Android Studio can install the SDK components required by the project. The build provisions models automatically: before packaging, Gradle runs [the model fetcher](scripts/fetch_models.py), which downloads and verifies the pinned models into `app/src/main/assets/models/`. Pass `-Pmodels.skip=true` to Gradle if you provision models yourself. See [MODEL_SOURCES.md](docs/MODEL_SOURCES.md) for model sources, conversion notes, and license details.
 
 ```sh
 git clone https://github.com/KimreneOuk/TachiyomiATVibe.git
 cd TachiyomiATVibe
 python3 -m pip install -r scripts/converters/requirements.txt
-python3 scripts/fetch_models.py
 ./gradlew :app:assembleStandardDebug
 ```
 
-On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, `py -3 scripts/fetch_models.py`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
+On Windows PowerShell, run `py -3 -m pip install -r scripts/converters/requirements.txt`, then `.\gradlew.bat :app:assembleStandardDebug`. The Standard debug APKs are written under `app/build/outputs/apk/standard/debug/`.
 
-The default model fetch includes the optimized PaddleOCR LiteRT recognizer buckets (160/320/480/640/1600), line detector and dictionary, plus AOT and Manga LaMa FP16. These binaries are downloaded with pinned sizes and SHA-256 hashes; no TensorFlow conversion is needed for them. To fetch only these three families into an already provisioned checkout, run `python3 scripts/fetch_models.py --group paddle aot lama` (or `py -3` on Windows). **Fresh builds require the full default fetch above.** The group command alone does not produce a complete runnable APK: OCR initialization also requires the baseline page detector, MangaOCR encoder/decoders, and vocabulary; full provisioning supplies these and the remaining vision models.
+The model provisioning includes the optimized PaddleOCR LiteRT recognizer buckets (160/320/480/640/1600), line detector and dictionary, plus AOT and Manga LaMa FP16. These binaries are downloaded with pinned sizes and SHA-256 hashes; no TensorFlow conversion is needed for them. To fetch only these three families into an already provisioned checkout, run `python3 scripts/fetch_models.py --group paddle aot lama` (or `py -3` on Windows). The group command alone does not produce a complete runnable APK: OCR initialization also requires the baseline page detector, MangaOCR encoder/decoders, and vocabulary; full provisioning supplies these and the remaining vision models.
 
 PaddleOCR has a saved GPU/CPU (4 threads) device choice in Translation settings and a temporary Default/GPU/CPU override in the reader. The override clears on reader exit and does not change the saved choice.
 

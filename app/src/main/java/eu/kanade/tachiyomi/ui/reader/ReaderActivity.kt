@@ -25,15 +25,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
 import androidx.core.graphics.ColorUtils
@@ -61,7 +64,7 @@ import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.TranslationCompareHandle
-import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
+import eu.kanade.presentation.reader.settings.ReaderSettingsSheet
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -131,6 +134,11 @@ class ReaderActivity : BaseActivity() {
         // swallowed so the SubsamplingScaleImageView's built-in double-tap-to-zoom
         // can't also fire alongside the menu toggle.
         private const val DOUBLE_TAP_SUPPRESS_MS = 280L
+
+        // Reader UX prototype: keep the floating translation status pill clear
+        // of the bottom navigation dock while the chrome is visible.
+        private const val PILL_MARGIN_DP = 24
+        private const val PILL_MARGIN_ABOVE_DOCK_DP = 108
     }
 
     private val readerPreferences = Injekt.get<ReaderPreferences>()
@@ -502,6 +510,21 @@ class ReaderActivity : BaseActivity() {
             val translationQueue by viewModel.translationQueueState.collectAsState()
             val translationSettingsState by viewModel.translationSettingsState.collectAsState()
             val compareState by viewModel.compareState.collectAsState()
+            val autoTranslate by viewModel.translationPreferences.autoTranslate().collectAsState()
+
+            // TachiyomiAT (reader UX prototype): translator floater presentation
+            // prefs — the floater reads position from these on rebind and the
+            // settings sheet can reset them.
+            val floaterEnabled by readerPreferences.translationFloaterEnabled().collectAsState()
+            val floaterIdleFade by readerPreferences.translationFloaterIdleFade().collectAsState()
+            val floaterDockEnd by readerPreferences.translationFloaterDockEnd().collectAsState()
+            val floaterVerticalFraction by readerPreferences.translationFloaterVerticalFraction().collectAsState()
+            val floaterDensity = LocalDensity.current
+            // Reader UX prototype: reserve the dock zone while chrome is shown
+            // so the floater never overlaps the navigation dock.
+            val floaterBottomReserve by remember {
+                derivedStateOf { with(floaterDensity) { if (state.menuVisible) 104.dp.toPx() else 0f } }
+            }
 
             ReaderContentOverlay(
                 brightness = state.brightnessOverlayValue,
@@ -509,32 +532,33 @@ class ReaderActivity : BaseActivity() {
                 colorBlendMode = colorOverlayBlendMode,
             )
 
-            // TachiyomiAT: per-page original/translated compare handle. A small
-            // side-mounted control (left edge, vertically centred) that lets the
-            // user flip ONLY the current page between its original and translated
-            // image for quick comparison, plus open the full translation settings.
-            // Always visible (independent of the reader chrome) so it's reachable
-            // during distraction-free reading; hidden entirely when translation is
-            // disabled. Original/Translated rows auto-disable on pages with no
-            // translation yet. Wrapped in a full-size Box so it overlays the page
-            // area without consuming layout space from the app bars.
+            // TachiyomiAT: per-page original/translated compare floater.
+            // Draggable chat-head style control that docks to the nearest
+            // screen edge; hidden entirely when translation or the floater
+            // itself is disabled. Wrapped in a full-size Box so it overlays
+            // the page area without consuming layout space.
             Box(
                 modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.CenterStart,
+                contentAlignment = Alignment.TopStart,
             ) {
                 TranslationCompareHandle(
-                    visible = compareState.translationEnabled,
+                    visible = compareState.translationEnabled && floaterEnabled,
                     hasTranslation = compareState.hasTranslation,
                     showingTranslated = compareState.showingTranslated,
+                    autoTranslate = autoTranslate,
                     onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
+                    onToggleAutoTranslate = { viewModel.setAutoTranslate(!autoTranslate) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
-                    onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
-                    onResetInpaintData = { viewModel.resetInpaintData() },
-                    onResetOcrData = { viewModel.resetOcrData() },
-                    onResetEverything = { viewModel.resetEverything() },
-                    onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
-                    modifier = Modifier.padding(start = 8.dp),
+                    idleFadeEnabled = floaterIdleFade,
+                    dockEnd = floaterDockEnd,
+                    onDockChange = { readerPreferences.translationFloaterDockEnd().set(it) },
+                    verticalFraction = floaterVerticalFraction,
+                    onPositionChange = { readerPreferences.translationFloaterVerticalFraction().set(it) },
+                    bottomReservePx = floaterBottomReserve,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding(),
                 )
             }
 
@@ -578,21 +602,16 @@ class ReaderActivity : BaseActivity() {
                     menuToggleToast?.cancel()
                     menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
                 },
+                fullscreenEnabled = isFullscreen,
+                onClickToggleFullscreen = {
+                    readerPreferences.fullscreen().set(!isFullscreen)
+                },
                 onClickSettings = viewModel::openSettingsDialog,
+                onClickTranslationSettings = viewModel::openTranslationSettingsDialog,
                 translationState = translationState,
                 translationBatchProgress = translationBatchProgress,
                 isBatchSession = isBatchSession,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
-                // TachiyomiAT: the translate control is ALWAYS tappable, even while
-                // translation is running. While busy it shows a spinner, but tapping it
-                // opens the settings sheet — which is the ONLY place the user can stop
-                // an in-flight auto-translation run or change engine/language config. The
-                // previous behaviour disabled the icon while TRANSLATING, so the user was
-                // trapped on the spinner with no escape until the whole chapter finished.
-                // Repeated taps are harmless: openTranslationSettingsDialog() just sets the
-                // dialog state; the actual translation work is gated by the singleton
-                // translator permit and the activePageJobs dedup in TranslationManager.
-                translateEnabled = true,
             )
 
             if (flashOnPageChange) {
@@ -619,11 +638,13 @@ class ReaderActivity : BaseActivity() {
                     )
                 }
                 is ReaderViewModel.Dialog.Settings -> {
-                    ReaderSettingsDialog(
+                    ReaderSettingsSheet(
                         onDismissRequest = onDismissRequest,
                         onShowMenus = { setMenuVisibility(true) },
                         onHideMenus = { setMenuVisibility(false) },
                         screenModel = settingsScreenModel,
+                        translateButtonWithControls = translationSettingsState.translateButtonWithControls,
+                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
                     )
                 }
                 is ReaderViewModel.Dialog.TranslationSettings -> {
@@ -633,7 +654,6 @@ class ReaderActivity : BaseActivity() {
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
                         onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
                         onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
-                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },
@@ -648,6 +668,11 @@ class ReaderActivity : BaseActivity() {
                         onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
                         onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
                         onFetchAiModels = { viewModel.fetchAiModels() },
+                        onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
+                        onResetInpaintData = { viewModel.resetInpaintData() },
+                        onResetOcrData = { viewModel.resetOcrData() },
+                        onResetEverything = { viewModel.resetEverything() },
+                        onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
                         queue = translationQueue,
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,
@@ -678,14 +703,15 @@ class ReaderActivity : BaseActivity() {
                     )
                 }
                 is ReaderViewModel.Dialog.PageActions -> {
+                    val dialogPage = (state.dialog as? ReaderViewModel.Dialog.PageActions)?.page
                     ReaderPageActionsDialog(
                         onDismissRequest = onDismissRequest,
                         onSetAsCover = viewModel::setAsCover,
                         onShare = viewModel::shareImage,
                         onSave = viewModel::saveImage,
+                        pageTranslated = resolveTranslatePageAction(dialogPage?.translation) == TranslatePageAction.RETRANSLATE,
                         onTranslatePage = {
-                            val page = (state.dialog as? ReaderViewModel.Dialog.PageActions)?.page
-                            if (page != null) viewModel.translateSinglePage(page)
+                            if (dialogPage != null) viewModel.translateSinglePage(dialogPage)
                         },
                     )
                 }
@@ -703,6 +729,27 @@ class ReaderActivity : BaseActivity() {
                         dismissButton = {
                             TextButton(onClick = viewModel::dismissBatchReaderSwitch) {
                                 Text(stringResource(ATMR.strings.reader_batch_switch_cancel))
+                            }
+                        },
+                    )
+                }
+                is ReaderViewModel.Dialog.PageRetranslate -> {
+                    val request = state.dialog as ReaderViewModel.Dialog.PageRetranslate
+                    AlertDialog(
+                        onDismissRequest = viewModel::cancelPageRetranslation,
+                        title = { Text(stringResource(ATMR.strings.reader_page_retranslate_title)) },
+                        text = { Text(stringResource(ATMR.strings.reader_page_retranslate_message)) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                viewModel.cancelPageRetranslation()
+                                viewModel.confirmPageRetranslation(request.page)
+                            }) {
+                                Text(stringResource(ATMR.strings.reader_page_retranslate_confirm))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = viewModel::cancelPageRetranslation) {
+                                Text(stringResource(MR.strings.action_cancel))
                             }
                         },
                     )
@@ -725,10 +772,21 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
-     * Sets the visibility of the menu according to [visible].
+     * Sets the visibility of the menu according to [visible]. Also lifts the
+     * floating translation status pill above the navigation dock while the
+     * chrome is visible, so the dock never covers active translation feedback.
      */
     private fun setMenuVisibility(visible: Boolean) {
         viewModel.showMenus(visible)
+        translationStatusPill?.let { pill ->
+            val marginDp = if (visible) PILL_MARGIN_ABOVE_DOCK_DP else PILL_MARGIN_DP
+            val margin = marginDp.dpToPx
+            val lp = pill.layoutParams as? android.widget.FrameLayout.LayoutParams
+            if (lp != null && lp.bottomMargin != margin) {
+                lp.bottomMargin = margin
+                pill.layoutParams = lp
+            }
+        }
         if (visible) {
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
