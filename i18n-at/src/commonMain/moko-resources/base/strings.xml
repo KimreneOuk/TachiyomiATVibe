@@ -22,25 +22,6 @@
     <string name="pref_group_setup">Translation Setup</string>
     <string name="pref_translate_from">Translate From</string>
     <string name="pref_ocr_model">OCR model</string>
-    <string name="pref_paddle_ocr_device">PaddleOCR device</string>
-    <string name="pref_paddle_ocr_device_summary">Choose GPU or CPU for PaddleOCR recognition and line detection. Applies to the next OCR request. GPU falls back to CPU if unavailable.</string>
-    <string name="pref_paddle_ocr_device_gpu">GPU</string>
-    <string name="pref_paddle_ocr_device_cpu">CPU (4 threads)</string>
-    <string name="reader_paddle_ocr_device_summary">Temporary override for this reader. Applies to the next OCR request; already translated pages stay cached.</string>
-    <string name="reader_paddle_ocr_device_default">Default: %s</string>
-    <string name="pref_paddle_ocr_provider">PaddleOCR ONNX fallback provider</string>
-    <string name="pref_paddle_ocr_provider_summary">Experimental provider used when LiteRT is unavailable. CPU device selection always uses CPU; failed GPU/NPU attempts fall back to CPU.</string>
-    <string name="pref_paddle_ocr_provider_cpu">CPU</string>
-    <string name="pref_paddle_ocr_provider_gpu">Qualcomm GPU (QNN GPU)</string>
-    <string name="pref_paddle_ocr_provider_htp">Qualcomm HTP/NPU (QNN HTP)</string>
-    <string name="pref_paddle_ocr_batch">PaddleOCR v6 recognition batch</string>
-    <string name="pref_paddle_ocr_batch_summary">B1 is the production default. Dynamic batches the whole page per width bucket (recommended). B2/B4 are fixed experimental sizes; changes apply when a new reader/translation session creates OCR sessions.</string>
-    <string name="pref_paddle_ocr_batch_b1">B1</string>
-    <string name="pref_paddle_ocr_batch_b2">B2 (experimental)</string>
-    <string name="pref_paddle_ocr_batch_b4">B4 (experimental)</string>
-    <string name="pref_paddle_ocr_batch_dynamic">Auto — whole page (dynamic)</string>
-    <string name="pref_vision_gpu_acceleration">Experimental Vision GPU Acceleration</string>
-    <string name="pref_vision_gpu_acceleration_summary">Attempt running Page Detector, Bubble Segmenter, and Panel Detector on GPU with safe CPU fallback. Rebuilds engines immediately when changed. Falls back to CPU if unsupported on this device.</string>
     <string name="pref_translate_to">Translate To</string>
     <string name="pref_group_engine">Translator</string>
     <string name="pref_translator_engine">Translator Engine</string>
@@ -93,11 +74,6 @@
     <string name="pref_inpainting_hardware_override">Inpainting accelerator</string>
     <string name="pref_inpainting_hardware_override_summary">In Balance and Quality, both models use the LiteRT GPU delegate (FP16), with no CPU or NPU fallback. If the GPU is unavailable, neural modes are unavailable unless classical fallback is enabled.</string>
     <string name="pref_inpainting_hardware_gpu_fixed">GPU (LiteRT FP16)</string>
-    <string name="pref_hardware_acceleration">Hardware acceleration</string>
-    <string name="pref_hardware_acceleration_summary">Applies to OCR and page detection models. Auto probes the device once per app start and falls back to CPU if the selected accelerator rejects the workload. Neural inpainting uses the LiteRT GPU delegate.</string>
-    <string name="pref_hardware_accelerator_auto">Auto (probe on startup)</string>
-    <string name="pref_hardware_accelerator_qualcomm_npu">Qualcomm NPU (QNN HTP)</string>
-    <string name="pref_hardware_accelerator_cpu">CPU</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translation_stop_all">Stop all translation</string>
     <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
@@ -115,6 +91,9 @@
     <string name="reader_page_retranslate_action">Retranslate</string>
     <string name="reader_page_retranslate_confirm">Retranslate</string>
     <string name="reader_page_retranslate_reset_failed">Could not clear the previous translation data; retranslation was not started</string>
+
+    <!-- TachiyomiAT: floating affordance that returns a zoomed page to its normal scale -->
+    <string name="reader_zoom_reset">Reset zoom</string>
 
     <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
     <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>
@@ -318,4 +297,19 @@
 
     <!-- Auto-translate quick toggle on the floater menu -->
     <string name="reader_floater_auto_translate">Auto-translate</string>
+
+    <!-- Translation settings two-level navigation -->
+    <string name="translation_section_languages">Languages</string>
+    <string name="translation_section_translator">Translator</string>
+    <string name="translation_section_advanced">Advanced settings</string>
+    <string name="translation_section_advanced_summary">OCR, inpainting, models and processing</string>
+    <string name="translation_engine_active_title">Translation engine</string>
+    <string name="translation_advanced_engine_summary">Providers, models, API keys and prompts</string>
+    <string name="translation_advanced_ocr">Text recognition (OCR)</string>
+    <string name="translation_advanced_ocr_summary">Detection, recognition and language</string>
+    <string name="translation_advanced_inpaint_summary">Image cleaning and quality</string>
+    <string name="translation_advanced_activity_summary">Queue, progress and retry</string>
+    <string name="translation_advanced_data_summary">Manage saved translation data</string>
+    <string name="translation_engine_needs_configuration">Needs setup before it can translate</string>
+    <string name="translation_engine_configure_advanced">Set up credentials and model in Advanced settings</string>
 </resources>

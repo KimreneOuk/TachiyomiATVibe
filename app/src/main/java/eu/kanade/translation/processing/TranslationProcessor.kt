@@ -132,16 +132,12 @@ internal class TranslationProcessor(
 
     suspend fun prepareEngines(from: eu.kanade.translation.model.TextRecognizerLanguage,
         to: eu.kanade.translation.model.TextTranslatorLanguage,
-        useReaderPaddleOverride: Boolean,
-    ) = requireEngineLane().ensureEnginesBuiltFor(from, to, useReaderPaddleOverride = useReaderPaddleOverride)
+    ) = requireEngineLane().ensureEnginesBuiltFor(from, to)
 
     suspend fun warmUp() = requireEngineLane().warmUp()
 
     fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) =
         requireEngineLane().setInpaintingHardwareOverride(override)
-
-    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) =
-        requireEngineLane().setReaderPaddleOcrComputeDeviceOverride(device)
 
     fun closeEngines() = requireEngineLane().closeEngines()
 

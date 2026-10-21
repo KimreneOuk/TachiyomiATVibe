@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.engines.runtime.onnx.QnnVisionContextCache
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -68,12 +69,15 @@ class OnnxPanelDetector {
         } else {
             true
         }
+        val contextPlan = QnnVisionContextCache.plan(modelFile, useAcc, requestedHardwareRoute)
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
             useAccelerator = useAcc,
             requestedHardwareRoute = requestedHardwareRoute,
+            contextCacheFile = contextPlan?.contextFile,
             providerSink = { executionProviderLabel = it },
         )
+        contextPlan?.onSessionCreated(executionProviderLabel)
         logcat(LogPriority.INFO) {
             "PanelDetector session created from ${modelFile.name} " +
                 "provider=$executionProviderLabel inputs=${session?.inputNames} outputs=${session?.outputNames}"

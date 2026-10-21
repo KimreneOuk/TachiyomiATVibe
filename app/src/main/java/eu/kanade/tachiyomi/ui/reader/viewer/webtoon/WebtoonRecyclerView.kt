@@ -52,6 +52,13 @@ class WebtoonRecyclerView @JvmOverloads constructor(
     var tapListener: ((MotionEvent) -> Unit)? = null
     var longTapListener: ((MotionEvent) -> Boolean)? = null
 
+    /**
+     * TachiyomiAT: fired whenever the zoomed-out/in state of the recycler
+     * flips (scale away from 1:1 or any pan offset left over from a zoom).
+     * The viewer forwards this to the reader overlay's reset affordance.
+     */
+    var zoomStateListener: ((Boolean) -> Unit)? = null
+
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         halfWidth = MeasureSpec.getSize(widthSpec) / 2
         halfHeight = MeasureSpec.getSize(heightSpec) / 2
@@ -124,6 +131,7 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         animatorSet.playTogether(translationXAnimator, translationYAnimator, scaleAnimator)
         animatorSet.duration = ANIMATOR_DURATION_TIME.toLong()
         animatorSet.interpolator = DecelerateInterpolator()
+        animatorSet.doOnEnd { notifyZoomState() }
         animatorSet.start()
         animatorSet.doOnEnd {
             isZooming = false
@@ -154,6 +162,7 @@ class WebtoonRecyclerView @JvmOverloads constructor(
 
         animatorSet.duration = 400
         animatorSet.interpolator = DecelerateInterpolator()
+        animatorSet.doOnEnd { notifyZoomState() }
         animatorSet.start()
 
         return true
@@ -166,6 +175,7 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         if (dy != 0) {
             y = getPositionY(y + dy)
         }
+        notifyZoomState()
     }
 
     private fun setScaleRate(rate: Float) {
@@ -197,6 +207,7 @@ class WebtoonRecyclerView @JvmOverloads constructor(
             y = 0f
         }
 
+        notifyZoomState()
         requestLayout()
     }
 
@@ -204,6 +215,25 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         if (detector.isDoubleTapping) {
             detector.isQuickScaling = true
         }
+    }
+
+    /**
+     * TachiyomiAT: returns the recycler to its 1:1 scale and clears any pan
+     * offset, mirroring the double-tap-out snap-back (including the height
+     * restore that a sub-1:1 scale inflated).
+     */
+    fun resetZoomToNormal() {
+        if (isZooming || !isZoomed()) return
+        zoom(currentScale, DEFAULT_RATE, x, 0f, y, 0f)
+        layoutParams.height = originalHeight
+        halfHeight = layoutParams.height / 2
+        requestLayout()
+    }
+
+    private fun isZoomed(): Boolean = scaleX != DEFAULT_RATE || x != 0f || y != 0f
+
+    private fun notifyZoomState() {
+        zoomStateListener?.invoke(isZoomed())
     }
 
     fun onScaleEnd() {

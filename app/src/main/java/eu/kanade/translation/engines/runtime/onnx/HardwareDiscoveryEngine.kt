@@ -4,10 +4,6 @@ import android.os.Build
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.TranslationHardwareAccelerator
-import tachiyomi.domain.translation.TranslationPreferences
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * Hardware Discovery Engine and Session-Scoped Latching Circuit Breaker.
@@ -57,7 +53,7 @@ object HardwareDiscoveryEngine {
         if (isResolved) return activeRoute
         synchronized(this) {
             if (isResolved) return activeRoute
-            activeRoute = discoverRoute()
+            activeRoute = evaluateRoute()
             isResolved = true
             return activeRoute
         }
@@ -127,13 +123,12 @@ object HardwareDiscoveryEngine {
 
     /**
      * Resolves the hardware route for vision models (detector, bubble segmenter, panel detector).
-     * If vision GPU acceleration is enabled:
+     * Always attempts the accelerator:
      * - On Qualcomm: probes QNN GPU (with hybrid CPU fallback enabled). If probe passes, returns QUALCOMM_QNN_GPU.
      * - On non-Qualcomm (MediaTek, Exynos, Tensor): probes NNAPI. If probe passes, returns NNAPI.
      * - Otherwise returns CPU_XNNPACK.
      */
     internal fun resolveVisionGpuRoute(
-        enabled: Boolean,
         isEmulator: Boolean = DeviceCapability.isProbablyEmulator,
         sdkInt: Int = Build.VERSION.SDK_INT,
         supportedAbis: Array<String> = Build.SUPPORTED_ABIS ?: emptyArray(),
@@ -141,7 +136,7 @@ object HardwareDiscoveryEngine {
         probeGpu: () -> Boolean = gpuProbeRunner,
         probeNnapi: () -> Boolean = nnapiProbeRunner,
     ): HardwareRoute {
-        if (!enabled || isEmulator || sdkInt < 29 || supportedAbis.none { it.equals("arm64-v8a", ignoreCase = true) }) {
+        if (isEmulator || sdkInt < 29 || supportedAbis.none { it.equals("arm64-v8a", ignoreCase = true) }) {
             return HardwareRoute.CPU_XNNPACK
         }
         return if (isQualcomm) {
@@ -164,7 +159,7 @@ object HardwareDiscoveryEngine {
             probe()
         } catch (error: Throwable) {
             logcat(LogPriority.WARN, error) {
-                "[hardware_discovery] PaddleOCR explicit $name probe threw; marking route unavailable"
+                "[hardware_discovery] Explicit $name probe threw; marking route unavailable"
             }
             null
         }
@@ -213,41 +208,6 @@ object HardwareDiscoveryEngine {
                 logcat(LogPriority.WARN) { "[hardware_discovery] NNAPI probe failed; fallback latched CPU_XNNPACK" }
                 HardwareRoute.CPU_XNNPACK
             }
-        }
-    }
-
-    private fun discoverRoute(): HardwareRoute {
-        val pref = try {
-            Injekt.get<TranslationPreferences>()
-                .translationHardwareAccelerator()
-                .get()
-        } catch (_: Throwable) {
-            TranslationHardwareAccelerator.AUTO
-        }
-        return when (pref) {
-            TranslationHardwareAccelerator.CPU_XNNPACK -> {
-                logcat(LogPriority.INFO) { "[hardware_discovery] User preference forced CPU_XNNPACK" }
-                HardwareRoute.CPU_XNNPACK
-            }
-            TranslationHardwareAccelerator.QUALCOMM_NPU -> {
-                if (qnnProbeRunner()) {
-                    logcat(LogPriority.INFO) { "[hardware_discovery] User preference forced QUALCOMM_QNN_HTP (probe passed)" }
-                    HardwareRoute.QUALCOMM_QNN_HTP
-                } else {
-                    logcat(LogPriority.WARN) { "[hardware_discovery] Forced QUALCOMM_NPU probe failed; falling back to CPU_XNNPACK" }
-                    HardwareRoute.CPU_XNNPACK
-                }
-            }
-            TranslationHardwareAccelerator.NNAPI -> {
-                if (nnapiProbeRunner()) {
-                    logcat(LogPriority.INFO) { "[hardware_discovery] User preference forced NNAPI (probe passed)" }
-                    HardwareRoute.NNAPI
-                } else {
-                    logcat(LogPriority.WARN) { "[hardware_discovery] Forced NNAPI probe failed; falling back to CPU_XNNPACK" }
-                    HardwareRoute.CPU_XNNPACK
-                }
-            }
-            TranslationHardwareAccelerator.AUTO -> evaluateRoute()
         }
     }
 

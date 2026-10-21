@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.reader.components.ReaderQuickActionsMenu
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
@@ -67,10 +66,6 @@ fun ReaderAppBars(
 
     readingMode: ReadingMode,
     onClickReadingMode: () -> Unit,
-    orientation: ReaderOrientation,
-    onClickOrientation: () -> Unit,
-    cropEnabled: Boolean,
-    onClickCropBorder: () -> Unit,
     fullscreenEnabled: Boolean,
     onClickToggleFullscreen: () -> Unit,
     onClickSettings: () -> Unit,
@@ -151,13 +146,6 @@ fun ReaderAppBars(
                             quickActionsExpanded = false
                             onClickReadingMode()
                         },
-                        orientation = orientation,
-                        onClickOrientation = {
-                            quickActionsExpanded = false
-                            onClickOrientation()
-                        },
-                        cropEnabled = cropEnabled,
-                        onClickCropBorder = onClickCropBorder,
                         fullscreen = fullscreenEnabled,
                         onClickFullscreen = onClickToggleFullscreen,
                         onClickSettings = {

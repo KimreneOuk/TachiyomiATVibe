@@ -3,7 +3,6 @@ package eu.kanade.presentation.reader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -28,21 +27,19 @@ import eu.kanade.translation.model.TranslationRequestPhase
 import kotlinx.collections.immutable.ImmutableList
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
-import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * Technical OCR configuration: model selection and, for Paddle v6, the
- * reader-scoped compute device override.
+ * Technical OCR configuration: model selection. Paddle v6 auto-routes its
+ * compute device (GPU-first with CPU fallback), so there is no override.
  */
 @Composable
 internal fun ColumnScope.OcrSection(
     state: TranslationSettingsState,
     onOcrModelChange: (OcrModel) -> Unit,
-    onPaddleOcrComputeDeviceOverrideChange: (PaddleOcrComputeDevice?) -> Unit,
 ) {
     EngineListRow(
         title = stringResource(ATMR.strings.pref_ocr_model),
@@ -50,42 +47,6 @@ internal fun ColumnScope.OcrSection(
         value = state.ocrModel,
         onValueChange = onOcrModelChange,
     )
-
-    if (state.ocrModel == OcrModel.PADDLEOCR_V6_SMALL) {
-        val gpuLabel = stringResource(ATMR.strings.pref_paddle_ocr_device_gpu)
-        val cpuLabel = stringResource(ATMR.strings.pref_paddle_ocr_device_cpu)
-        val defaultLabel = when (state.paddleOcrDefaultComputeDevice) {
-            PaddleOcrComputeDevice.GPU -> gpuLabel
-            PaddleOcrComputeDevice.CPU -> cpuLabel
-        }
-        TextPreferenceWidget(
-            title = stringResource(ATMR.strings.pref_paddle_ocr_device),
-            subtitle = stringResource(ATMR.strings.reader_paddle_ocr_device_summary),
-        )
-        FlowRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = MaterialTheme.padding.medium),
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
-        ) {
-            FilterChip(
-                selected = state.paddleOcrComputeDeviceOverride == null,
-                onClick = { onPaddleOcrComputeDeviceOverrideChange(null) },
-                label = { Text(stringResource(ATMR.strings.reader_paddle_ocr_device_default, defaultLabel)) },
-            )
-            FilterChip(
-                selected = state.paddleOcrComputeDeviceOverride == PaddleOcrComputeDevice.GPU,
-                onClick = { onPaddleOcrComputeDeviceOverrideChange(PaddleOcrComputeDevice.GPU) },
-                label = { Text(gpuLabel) },
-            )
-            FilterChip(
-                selected = state.paddleOcrComputeDeviceOverride == PaddleOcrComputeDevice.CPU,
-                onClick = { onPaddleOcrComputeDeviceOverrideChange(PaddleOcrComputeDevice.CPU) },
-                label = { Text(cpuLabel) },
-            )
-        }
-    }
 }
 
 /**

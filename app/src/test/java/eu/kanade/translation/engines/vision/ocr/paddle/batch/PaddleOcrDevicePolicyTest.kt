@@ -6,10 +6,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
-import tachiyomi.domain.translation.TranslationPreferences
 
 class PaddleOcrDevicePolicyTest {
 
@@ -123,48 +120,15 @@ class PaddleOcrDevicePolicyTest {
     }
 
     @Test
-    fun `recognition preference maps B1 B2 and B4 through debug activation`() {
-        val expected = mapOf(
-            PaddleOcrRecognitionBatch.B1 to PaddleOcrBatchSize.B1,
-            PaddleOcrRecognitionBatch.B2 to PaddleOcrBatchSize.B2,
-            PaddleOcrRecognitionBatch.B4 to PaddleOcrBatchSize.B4,
-            PaddleOcrRecognitionBatch.DYNAMIC to PaddleOcrBatchSize.B8,
+    fun `pinned B1 entry keeps provider target and never enables dynamic batching`() {
+        val decision = PaddleOcrBatchActivationPolicy.currentPinnedB1(
+            requestedProvider = PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU,
         )
 
-        expected.forEach { (requested, active) ->
-            val store = InMemoryPreferenceStore(
-                sequenceOf(
-                    InMemoryPreferenceStore.InMemoryPreference(
-                        "translation_paddle_ocr_recognition_batch",
-                        requested,
-                        PaddleOcrRecognitionBatch.B1,
-                    ),
-                ),
-            )
-            val decision = PaddleOcrBatchActivationPolicy.currentFromPreferences(
-                preferences = TranslationPreferences(store),
-                requestedProvider = PaddleOcrExecutionProvider.CPU,
-            )
-
-            if (BuildConfig.DEBUG) {
-                assertEquals(active, decision.activeBatchSize)
-                assertEquals(
-                    if (active == PaddleOcrBatchSize.B1) "b1_default" else "debug_provisional_optin",
-                    decision.reason,
-                )
-                assertEquals(
-                    requested == PaddleOcrRecognitionBatch.DYNAMIC,
-                    decision.dynamicPageBatch,
-                )
-            } else {
-                assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
-                if (requested == PaddleOcrRecognitionBatch.B1) {
-                    assertEquals("b1_default", decision.reason)
-                } else {
-                    assertTrue(decision.reason in setOf("staged_flag_off", "combination_not_confirmed"))
-                }
-            }
-        }
+        assertEquals(PaddleOcrBatchSize.B1, decision.activeBatchSize)
+        assertEquals(PaddleOcrProviderTarget.QNN_GPU, decision.providerTarget)
+        assertFalse(decision.dynamicPageBatch)
+        assertFalse(decision.forceCpuB1EmergencyFallback)
     }
 
     @Test

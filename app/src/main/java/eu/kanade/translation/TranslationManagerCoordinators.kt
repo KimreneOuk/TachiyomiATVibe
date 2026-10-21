@@ -65,17 +65,17 @@ internal class TranslationManagerCoordinators(
 
     private val enginePreparationMutex = Mutex()
 
-    private suspend fun prepareEngines(useReaderPaddleOverride: Boolean) = enginePreparationMutex.withLock {
+    private suspend fun prepareEngines() = enginePreparationMutex.withLock {
         val from = TextRecognizerLanguage.fromPref(preferences.translateFromLanguage())
         val to = TextTranslatorLanguage.fromPref(preferences.translateToLanguage())
-        processor.prepareEngines(from, to, useReaderPaddleOverride)
+        processor.prepareEngines(from, to)
     }
 
     val pageOperation = BatchPageOperation(
         processor = processor,
         recognitionEngineProvider = { processor.recognitionEngine },
         translatorProvider = { processor.textTranslator },
-        prepareEngines = { prepareEngines(useReaderPaddleOverride = false) },
+        prepareEngines = { prepareEngines() },
     )
 
     val batchCoordinator = batchCoordinatorOverride ?: BatchTranslationCoordinator(
@@ -104,7 +104,7 @@ internal class TranslationManagerCoordinators(
         beforeOpenSession = beforeOpenReaderSession,
         manualStreamProvider = manualStreamProvider,
         isAutoTranslateEnabled = isAutoTranslateEnabled,
-        prepareEngines = { prepareEngines(useReaderPaddleOverride = true) },
+        prepareEngines = { prepareEngines() },
         scope = scope,
         activeStoresProvider = activeStoresProvider,
         batchCoordinator = batchCoordinator,

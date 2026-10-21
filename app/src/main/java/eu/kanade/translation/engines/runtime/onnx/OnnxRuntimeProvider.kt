@@ -41,16 +41,6 @@ object OnnxRuntimeProvider {
      */
     enum class RegisteredExecutionProvider { QNN_HTP, QNN_GPU, NNAPI, XNNPACK, CPU }
 
-    /** Lowercase wire label used by `providerSink` and per-engine route logging. */
-    val RegisteredExecutionProvider.wireLabel: String
-        get() = when (this) {
-            RegisteredExecutionProvider.QNN_HTP -> "qnn_htp"
-            RegisteredExecutionProvider.QNN_GPU -> "qnn_gpu"
-            RegisteredExecutionProvider.NNAPI -> "nnapi"
-            RegisteredExecutionProvider.XNNPACK -> "xnnpack"
-            RegisteredExecutionProvider.CPU -> "cpu"
-        }
-
     /**
      * Session options together with the execution provider that actually
      * registered on them. [registered] is a registration fact only — it is
@@ -667,6 +657,11 @@ object OnnxRuntimeProvider {
                     runCatching {
                         addQnn(mapOf("backend_type" to "gpu"))
                         addConfigEntry("session.disable_cpu_ep_fallback", "0")
+                        if (contextCacheFile != null) {
+                            contextCacheFile.parentFile?.mkdirs()
+                            addConfigEntry("ep.context_enable", "1")
+                            addConfigEntry("ep.context_file_path", contextCacheFile.absolutePath)
+                        }
                         logcat(LogPriority.INFO) { "Successfully added QNN GPU EP (hybrid fallback enabled)" }
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add QNN GPU EP, falling back to CPU!" }
@@ -752,3 +747,13 @@ object OnnxRuntimeProvider {
     private fun String.isCpuLikeProvider(): Boolean =
         equals("cpu", ignoreCase = true) || equals("uninitialized", ignoreCase = true) || isBlank()
 }
+
+/** Lowercase wire label used by `providerSink` and per-engine route logging. */
+internal val OnnxRuntimeProvider.RegisteredExecutionProvider.wireLabel: String
+    get() = when (this) {
+        OnnxRuntimeProvider.RegisteredExecutionProvider.QNN_HTP -> "qnn_htp"
+        OnnxRuntimeProvider.RegisteredExecutionProvider.QNN_GPU -> "qnn_gpu"
+        OnnxRuntimeProvider.RegisteredExecutionProvider.NNAPI -> "nnapi"
+        OnnxRuntimeProvider.RegisteredExecutionProvider.XNNPACK -> "xnnpack"
+        OnnxRuntimeProvider.RegisteredExecutionProvider.CPU -> "cpu"
+    }

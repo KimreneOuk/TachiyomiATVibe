@@ -547,6 +547,7 @@ class PagerPageHolder(
      */
     override fun onScaleChanged(newScale: Float) {
         super.onScaleChanged(newScale)
+        viewer.onHolderZoomChanged(this)
         viewer.activity.hideMenu()
     }
 

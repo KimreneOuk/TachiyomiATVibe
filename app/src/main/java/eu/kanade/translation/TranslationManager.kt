@@ -304,9 +304,6 @@ class TranslationManager private constructor(
 
     fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) = processor.setInpaintingHardwareOverride(override)
 
-    fun setReaderPaddleOcrComputeDeviceOverride(device: tachiyomi.domain.translation.PaddleOcrComputeDevice?) =
-        processor.setReaderPaddleOcrComputeDeviceOverride(device)
-
     /**
      * Whether a chapter owns batch work under the requested activity policy.
      * PAUSED is included only when the caller is retaining reader-owned artifacts.

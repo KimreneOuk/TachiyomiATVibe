@@ -33,27 +33,13 @@ enum class GeminiThinkingMode { DISABLED, AUTO, LOW }
  */
 enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 
-/** LiteRT device for PaddleOCR recognition and line detection. */
-enum class PaddleOcrComputeDevice { GPU, CPU }
-
 /**
- * Temporary execution-provider experiment for the PaddleOCR v6 detector and
- * recognizer. This is intentionally separate from
- * [TranslationHardwareAccelerator]: changing it must not reroute unrelated
- * page-detection, segmentation, or inpainting sessions.
- *
- * CPU is the safe persisted default. Accelerator choices are attempted
- * strictly and are reported as CPU when their probe, registration, or session
- * creation cannot complete on the current device.
+ * Wire-route names for the PaddleOCR v6 ONNX fallback path (used only when the
+ * LiteRT runtime is unavailable). Auto-routing requests [QUALCOMM_QNN_GPU]
+ * strictly; a failed probe falls back to a labelled CPU session. [QUALCOMM_QNN_HTP]
+ * remains for internal benchmark machinery, not user selection.
  */
 enum class PaddleOcrExecutionProvider { CPU, QUALCOMM_QNN_GPU, QUALCOMM_QNN_HTP }
-
-/**
- * User-requested PaddleOCR v6 recognizer microbatch size. [DYNAMIC] batches the
- * whole page per width bucket under a memory-derived ceiling (the B8 tier with
- * the dynamic flag after activation mapping).
- */
-enum class PaddleOcrRecognitionBatch { B1, B2, B4, DYNAMIC }
 
 /**
  * TachiyomiAT: source reading order for a manga/comic page. Determines how the
@@ -63,18 +49,8 @@ enum class PaddleOcrRecognitionBatch { B1, B2, B4, DYNAMIC }
  * - [AUTO]: derive from the source language (CJK languages -> RTL manga flow,
  *   everything else -> LTR comic flow). The historical default.
  * - [RTL_MANGA]: force right-to-left manga ordering regardless of language.
- * - [LTR_COMIC]: force left-to-right western-comic ordering regardless of
- *   language.
+ * - [LTR_COMIC]: force left-to-right western-comic ordering regardless of language.
  */
-/**
- * TachiyomiAT: Hardware accelerator target for on-device inference (Detectors, OCR, Inpainting).
- * - [AUTO]: Probes and latches the fastest backend (Qualcomm QNN HTP -> NNAPI -> CPU XNNPACK).
- * - [QUALCOMM_NPU]: Forces Qualcomm QNN HTP execution provider.
- * - [NNAPI]: Forces Android NNAPI execution provider.
- * - [CPU_XNNPACK]: Forces multithreaded CPU execution provider with XNNPACK.
- */
-enum class TranslationHardwareAccelerator { AUTO, QUALCOMM_NPU, NNAPI, CPU_XNNPACK }
-
 enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
 
 class TranslationPreferences(
@@ -134,62 +110,6 @@ class TranslationPreferences(
      * quality trade-off.
      */
     fun translationInpaintQualityFallback() = preferenceStore.getBoolean("translation_inpaint_quality_fallback", false)
-
-    /**
-     * Legacy ONNX execution-provider preference.
-     *
-     * Translation ONNX sessions are CPU-only now. This key remains for backward
-     * compatibility with existing installs, but runtime code intentionally
-     * ignores it. Future NPU support should be a separate Qualcomm QNN/QAIRT
-     * backend with converted models, not generic NNAPI.
-     */
-    fun translationOnnxEp() = preferenceStore.getString("translation_onnx_ep", "AUTO")
-
-    fun translationHardwareAccelerator() =
-        preferenceStore.getEnum("translation_hardware_accelerator", TranslationHardwareAccelerator.AUTO)
-
-    /**
-     * Temporary PaddleOCR v6-only provider choice. The preference is read when
-     * a recognition engine creates its detector/recognizer sessions, so a
-     * changed value takes effect for a new reader/translation session.
-     */
-    fun paddleOcrExecutionProvider() = preferenceStore.getEnum(
-        "translation_paddle_ocr_execution_provider",
-        PaddleOcrExecutionProvider.CPU,
-    )
-
-    /** Saved default; the reader may override it for its lifetime without persisting. */
-    fun paddleOcrComputeDevice() = preferenceStore.getEnum(
-        "translation_paddle_ocr_compute_device",
-        PaddleOcrComputeDevice.GPU,
-    )
-
-    /**
-     * PaddleOCR v6 recognizer microbatch size. The recognition engine reads
-     * this once at initialization, so changing it takes effect after the
-     * current reader/translation session is restarted.
-     */
-    fun paddleOcrRecognitionBatch() = preferenceStore.getEnum(
-        "translation_paddle_ocr_recognition_batch",
-        PaddleOcrRecognitionBatch.B1,
-    )
-
-    /**
-     * Temporary toggle to experiment running vision models (text detector,
-     * bubble segmenter, panel detector) on GPU with safe CPU fallback.
-     */
-    fun translationVisionGpuAcceleration() = preferenceStore.getBoolean(
-        "translation_vision_gpu_acceleration",
-        false,
-    )
-
-    /**
-     * Legacy experimental QNN toggle.
-     *
-     * Kept only so old preference files deserialize cleanly. Current translation
-     * ONNX runtime ignores it and always creates CPU sessions.
-     */
-    fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
 
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")

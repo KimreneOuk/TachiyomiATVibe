@@ -258,6 +258,35 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onViewClicked?.invoke()
     }
 
+    /**
+     * TachiyomiAT: true while this page's image sits above its base scale
+     * (SSIV: above the fit-scale [SubsamplingScaleImageView.minScale] the
+     * reader treats as "normal" in landscapeZoom; PhotoView: above its first
+     * zoom level 1). Feeds the reader overlay's zoom-reset affordance.
+     */
+    fun isPageZoomed(): Boolean = when (val view = pageView) {
+        is SubsamplingScaleImageView -> view.isReady && view.scale > view.minScale * ZOOMED_THRESHOLD
+        is PhotoView -> view.scale > ZOOMED_THRESHOLD
+        else -> false
+    }
+
+    /**
+     * TachiyomiAT: animates the image back to \"normal\" scale, centered —
+     * the zoom-reset affordance's action. Covers SSIV and PhotoView; no-op
+     * for plain views (no pinch zoom).
+     */
+    fun animateZoomReset() {
+        when (val view = pageView) {
+            is SubsamplingScaleImageView -> {
+                if (!view.isReady) return
+                val center = view.center ?: return
+                view.animateScaleAndCenter(view.minScale, center)?.start()
+            }
+            is PhotoView -> view.setScale(1f, view.width / 2f, view.height / 2f, true)
+            else -> Unit
+        }
+    }
+
     private var translationDimScrim: View? = null
 
     // TachiyomiAT: per-page translate button at top-left corner
@@ -1140,6 +1169,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
 }
 
 private const val MAX_ZOOM_SCALE = 5F
+
+// TachiyomiAT: percent margin above the base scale considered "zoomed";
+// absorbs float drift from fit-scale math.
+private const val ZOOMED_THRESHOLD = 1.01F
 
 private const val TRANSLATION_CROSSFADE_DURATION_MS = 180L
 

@@ -64,6 +64,7 @@ import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.TranslationCompareHandle
+import eu.kanade.presentation.reader.components.ZoomResetAffordance
 import eu.kanade.presentation.reader.settings.ReaderSettingsSheet
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -97,6 +98,7 @@ import eu.kanade.tachiyomi.util.view.setComposeContent
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.coordinator.TranslationSessionState
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
@@ -174,6 +176,11 @@ class ReaderActivity : BaseActivity() {
 
     var isScrollingThroughPages = false
         private set
+
+    // TachiyomiAT: whether the page underfoot is zoomed past its base scale,
+    // pushed by the active viewer via Viewer.onZoomStateChanged; drives the
+    // top-right zoom-reset affordance.
+    private val pageZoomState = MutableStateFlow(false)
 
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
@@ -489,11 +496,6 @@ class ReaderActivity : BaseActivity() {
                 ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
             }
 
-            val cropBorderPaged by readerPreferences.cropBorders().collectAsState()
-            val cropBorderWebtoon by readerPreferences.cropBordersWebtoon().collectAsState()
-            val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
-            val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
-
             val translationState by viewModel.state.map {
                 it.translationState
             }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
@@ -592,16 +594,6 @@ class ReaderActivity : BaseActivity() {
                     viewModel.getMangaReadingMode(resolveDefault = false),
                 ),
                 onClickReadingMode = viewModel::openReadingModeSelectDialog,
-                orientation = ReaderOrientation.fromPreference(
-                    viewModel.getMangaOrientation(resolveDefault = false),
-                ),
-                onClickOrientation = viewModel::openOrientationModeSelectDialog,
-                cropEnabled = cropEnabled,
-                onClickCropBorder = {
-                    val enabled = viewModel.toggleCropBorders()
-                    menuToggleToast?.cancel()
-                    menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
-                },
                 fullscreenEnabled = isFullscreen,
                 onClickToggleFullscreen = {
                     readerPreferences.fullscreen().set(!isFullscreen)
@@ -612,6 +604,15 @@ class ReaderActivity : BaseActivity() {
                 translationBatchProgress = translationBatchProgress,
                 isBatchSession = isBatchSession,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
+            )
+
+            // TachiyomiAT: appears only while the page underfoot is zoomed;
+            // tapping restores it to normal scale.
+            val isPageZoomed by pageZoomState.collectAsState()
+            ZoomResetAffordance(
+                zoomed = isPageZoomed,
+                menuVisible = state.menuVisible,
+                onClick = ::resetPageZoom,
             )
 
             if (flashOnPageChange) {
@@ -657,7 +658,6 @@ class ReaderActivity : BaseActivity() {
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },
-                        onPaddleOcrComputeDeviceOverrideChange = viewModel::setPaddleOcrComputeDeviceOverride,
                         onTranslationInpaintingModeChange = { viewModel.setTranslationInpaintingMode(it) },
                         onTranslationInpaintingNeuralModelChange = { viewModel.setTranslationInpaintingNeuralModel(it) },
                         onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
@@ -775,8 +775,7 @@ class ReaderActivity : BaseActivity() {
      * Sets the visibility of the menu according to [visible]. Also lifts the
      * floating translation status pill above the navigation dock while the
      * chrome is visible, so the dock never covers active translation feedback.
-     */
-    private fun setMenuVisibility(visible: Boolean) {
+     */    private fun setMenuVisibility(visible: Boolean) {
         viewModel.showMenus(visible)
         translationStatusPill?.let { pill ->
             val marginDp = if (visible) PILL_MARGIN_ABOVE_DOCK_DP else PILL_MARGIN_DP
@@ -820,6 +819,8 @@ class ReaderActivity : BaseActivity() {
             prevViewer.destroy()
             binding.viewerContainer.removeAllViews()
         }
+        pageZoomState.value = false
+        newViewer.onZoomStateChanged = { pageZoomState.value = it }
         viewModel.onViewerLoaded(newViewer)
         updateViewerInset(readerPreferences.fullscreen().get())
         binding.viewerContainer.addView(newViewer.getView())
@@ -832,6 +833,11 @@ class ReaderActivity : BaseActivity() {
         binding.readerContainer.addView(loadingIndicator)
 
         startPostponedEnterTransition()
+    }
+
+    /** TachiyomiAT: zoom-reset affordance tap handler. */
+    private fun resetPageZoom() {
+        viewModel.state.value.viewer?.resetZoom()
     }
 
     private fun openMangaScreen() {

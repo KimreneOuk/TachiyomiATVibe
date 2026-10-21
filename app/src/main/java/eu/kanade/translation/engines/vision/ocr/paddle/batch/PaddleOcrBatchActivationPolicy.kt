@@ -3,28 +3,22 @@ package eu.kanade.translation.engines.vision.ocr.paddle.batch
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTarget
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
-import tachiyomi.domain.translation.TranslationPreferences
 
 /** Build-variant bridge for the staged flag; the actual gate stays pure/testable. */
 object PaddleOcrBatchActivationPolicy {
 
-    fun currentFromPreferences(
-        preferences: TranslationPreferences,
+    /**
+     * Auto-routing entry point: batch size is pinned to the production B1
+     * default (no dynamic whole-page batching); only the resolved hardware
+     * provider feeds the activation decision.
+     */
+    fun currentPinnedB1(
         requestedProvider: PaddleOcrExecutionProvider?,
-    ): PaddleOcrBatchActivation {
-        val preference = preferences.paddleOcrRecognitionBatch().get()
-        return current(
-            requestedBatchSize = when (preference) {
-                PaddleOcrRecognitionBatch.B1 -> PaddleOcrBatchSize.B1
-                PaddleOcrRecognitionBatch.B2 -> PaddleOcrBatchSize.B2
-                PaddleOcrRecognitionBatch.B4 -> PaddleOcrBatchSize.B4
-                PaddleOcrRecognitionBatch.DYNAMIC -> PaddleOcrBatchSize.B8
-            },
-            requestedProvider = requestedProvider?.toBatchProvider(),
-            dynamicPageBatch = preference == PaddleOcrRecognitionBatch.DYNAMIC,
-        )
-    }
+    ): PaddleOcrBatchActivation = current(
+        requestedBatchSize = PaddleOcrBatchSize.B1,
+        requestedProvider = requestedProvider?.toBatchProvider(),
+        dynamicPageBatch = false,
+    )
 
     fun current(
         requestedBatchSize: PaddleOcrBatchSize = PaddleOcrBatchSize.B1,

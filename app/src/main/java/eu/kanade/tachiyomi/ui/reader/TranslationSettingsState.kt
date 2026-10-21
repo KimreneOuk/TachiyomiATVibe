@@ -9,7 +9,6 @@ import kotlinx.collections.immutable.persistentMapOf
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
-import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 
@@ -24,8 +23,6 @@ data class TranslationSettingsState(
     val translationRecentLanguagesTo: ImmutableList<String> = persistentListOf(),
     val ocrModel: OcrModel = OcrModel.MLKIT,
     val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
-    val paddleOcrDefaultComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
-    val paddleOcrComputeDeviceOverride: PaddleOcrComputeDevice? = null,
     val inpaintingMode: String = "",
     val inpaintingNeuralModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,

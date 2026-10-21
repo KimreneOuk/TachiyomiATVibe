@@ -192,6 +192,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 else -> true
             }
             currentPage = page
+            refreshHolderZoomState()
             when (page) {
                 is ReaderPage -> onReaderPageSelected(page, allowPreload, forward)
                 is ChapterTransition -> onTransitionSelected(page)
@@ -396,6 +397,36 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             .filterIsInstance(PagerPageHolder::class.java)
             .filter { it.page in pages }
             .forEach { it.refreshTranslation() }
+    }
+
+    override var onZoomStateChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * TachiyomiAT: only the holder underfoot (its page is [currentPage])
+     * reports zoom state; offscreen holders recycling mid-pinch must not.
+     */
+    fun onHolderZoomChanged(holder: PagerPageHolder) {
+        if (holder.page !== currentPage) return
+        onZoomStateChanged?.invoke(holder.isPageZoomed())
+    }
+
+    /**
+     * TachiyomiAT: re-derives the zoom state for the page underfoot when the
+     * selection changes; a swapped-in page is unzoomed unless it was recycled
+     * while still zoomed.
+     */
+    private fun refreshHolderZoomState() {
+        val holder = pager.children
+            .filterIsInstance(PagerPageHolder::class.java)
+            .firstOrNull { it.page === currentPage }
+        onZoomStateChanged?.invoke(holder?.isPageZoomed() == true)
+    }
+
+    override fun resetZoom() {
+        pager.children
+            .filterIsInstance(PagerPageHolder::class.java)
+            .firstOrNull { it.page === currentPage }
+            ?.animateZoomReset()
     }
 
     /**

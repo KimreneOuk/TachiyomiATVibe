@@ -4,9 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.TranslationPreferences
 
 class PaddleOcrSessionFactoryTest {
 
@@ -32,14 +30,7 @@ class PaddleOcrSessionFactoryTest {
     }
 
     @Test
-    fun `dedicated Paddle preference defaults to CPU`() {
-        TranslationPreferences(InMemoryPreferenceStore())
-            .paddleOcrExecutionProvider()
-            .get() shouldBe PaddleOcrExecutionProvider.CPU
-    }
-
-    @Test
-    fun `CPU is the default resolution and skips probing`() {
+    fun `explicit CPU resolution skips probing`() {
         var htpProbes = 0
         var gpuProbes = 0
         HardwareDiscoveryEngine.resetForTesting(
@@ -104,5 +95,30 @@ class PaddleOcrSessionFactoryTest {
         first.requestedWireLabel shouldBe "qnn_htp"
         first.fallbackReason shouldBe "qnn_htp_probe_failed"
         htpProbes shouldBe 1
+    }
+
+    @Test
+    fun `failed GPU probe falls back to labelled CPU and caches the failure`() {
+        var gpuProbes = 0
+        HardwareDiscoveryEngine.resetForTesting(
+            customGpuProbe = {
+                gpuProbes++
+                false
+            },
+        )
+
+        val first = PaddleOcrSessionFactory.resolve(
+            PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU,
+        )
+        val second = PaddleOcrSessionFactory.resolve(
+            PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU,
+        )
+
+        first shouldBe second
+        first.requestedWireLabel shouldBe "qnn_gpu"
+        first.resolvedRouteLabel shouldBe "cpu"
+        first.fallbackReason shouldBe "qnn_gpu_probe_failed"
+        first.usedProbeFallback shouldBe true
+        gpuProbes shouldBe 1
     }
 }

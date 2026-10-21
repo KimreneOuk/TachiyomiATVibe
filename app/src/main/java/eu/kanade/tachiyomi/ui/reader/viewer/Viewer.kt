@@ -52,4 +52,16 @@ interface Viewer {
      * pages can never render status for the page the user is not reading.
      */
     val currentReaderPage: ReaderPage? get() = null
+
+    /**
+     * TachiyomiAT: consumer of the current page's zoom state, pushed by
+     * viewers that support pinch zoom (true while the page is zoomed past
+     * its base scale). The reader overlay uses it to show a reset
+     * affordance.
+     */
+    var onZoomStateChanged: ((Boolean) -> Unit)?
+        get() = null
+        set(value) {}
+
+    fun resetZoom() {}
 }

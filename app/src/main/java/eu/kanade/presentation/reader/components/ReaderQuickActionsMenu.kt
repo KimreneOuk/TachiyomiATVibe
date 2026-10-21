@@ -18,9 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Fullscreen
-import androidx.compose.material.icons.outlined.Rotate90DegreesCcw
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.Icon
@@ -35,27 +33,21 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * Compact contextual action menu anchored above the navigation dock.
- * Every entry dispatches an existing reader action; toggles render their
- * current state with a trailing check. Dismisses when an item is picked or
- * when the reader controls hide.
+ * Compact contextual action menu anchored above the navigation dock. Scoped
+ * to the four frequent actions; rotation and crop borders live in the reader
+ * settings sheet. Dismisses when an item is picked or controls hide.
  */
 @Composable
 fun ReaderQuickActionsMenu(
     visible: Boolean,
     readingMode: ReadingMode,
     onClickReadingMode: () -> Unit,
-    orientation: ReaderOrientation,
-    onClickOrientation: () -> Unit,
-    cropEnabled: Boolean,
-    onClickCropBorder: () -> Unit,
     fullscreen: Boolean,
     onClickFullscreen: () -> Unit,
     onClickSettings: () -> Unit,
@@ -77,7 +69,7 @@ fun ReaderQuickActionsMenu(
                         .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f),
                     shape = RoundedCornerShape(20.dp),
                 )
-                .padding(vertical = 6.dp),
+                .padding(vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             MenuActionRow(
@@ -94,17 +86,6 @@ fun ReaderQuickActionsMenu(
                 iconPainter = painterResource(readingMode.iconRes),
                 label = stringResource(MR.strings.viewer),
                 onClick = onClickReadingMode,
-            )
-            MenuActionRow(
-                icon = Icons.Outlined.Rotate90DegreesCcw,
-                label = stringResource(MR.strings.rotation_type),
-                onClick = onClickOrientation,
-            )
-            MenuActionRow(
-                icon = Icons.Outlined.Crop,
-                label = stringResource(MR.strings.pref_crop_borders),
-                checked = cropEnabled,
-                onClick = onClickCropBorder,
             )
             MenuActionRow(
                 icon = Icons.Outlined.Fullscreen,

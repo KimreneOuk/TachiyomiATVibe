@@ -28,12 +28,8 @@ import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.GeminiThinkingMode
 import tachiyomi.domain.translation.NeuralInpaintModel
-import tachiyomi.domain.translation.PaddleOcrComputeDevice
-import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
-import tachiyomi.domain.translation.TranslationHardwareAccelerator
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.TranslationReadingOrder
 import tachiyomi.i18n.at.ATMR
@@ -64,34 +60,7 @@ object SettingsTranslationScreen : SearchableSettings {
             ),
             getTranslationLangGroup(translationPreferences),
             getInpaintingModeGroup(translationPreferences),
-            getHardwareAccelerationGroup(translationPreferences),
             getEngineGroup(translationPreferences),
-        )
-    }
-
-    @Composable
-    private fun getHardwareAccelerationGroup(
-        translationPreferences: TranslationPreferences,
-    ): Preference.PreferenceGroup {
-        // NNAPI is deliberately absent: the onnxruntime-android-qnn artifact does
-        // not compile the NNAPI execution provider, so offering it would be a lie.
-        val accelerators = mapOf(
-            TranslationHardwareAccelerator.AUTO to stringResource(ATMR.strings.pref_hardware_accelerator_auto),
-            TranslationHardwareAccelerator.QUALCOMM_NPU to stringResource(
-                ATMR.strings.pref_hardware_accelerator_qualcomm_npu,
-            ),
-            TranslationHardwareAccelerator.CPU_XNNPACK to stringResource(ATMR.strings.pref_hardware_accelerator_cpu),
-        )
-        return Preference.PreferenceGroup(
-            title = stringResource(ATMR.strings.pref_hardware_acceleration),
-            preferenceItems = persistentListOf(
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.translationHardwareAccelerator(),
-                    title = stringResource(ATMR.strings.pref_hardware_acceleration),
-                    subtitle = stringResource(ATMR.strings.pref_hardware_acceleration_summary),
-                    entries = accelerators.toImmutableMap(),
-                ),
-            ),
         )
     }
 
@@ -210,43 +179,6 @@ object SettingsTranslationScreen : SearchableSettings {
                         onValueChange = { ocrPref.set(it) },
                     )
                 },
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.paddleOcrComputeDevice(),
-                    title = stringResource(ATMR.strings.pref_paddle_ocr_device),
-                    subtitle = stringResource(ATMR.strings.pref_paddle_ocr_device_summary),
-                    entries = mapOf(
-                        PaddleOcrComputeDevice.GPU to stringResource(ATMR.strings.pref_paddle_ocr_device_gpu),
-                        PaddleOcrComputeDevice.CPU to stringResource(ATMR.strings.pref_paddle_ocr_device_cpu),
-                    ).toImmutableMap(),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.paddleOcrExecutionProvider(),
-                    title = stringResource(ATMR.strings.pref_paddle_ocr_provider),
-                    subtitle = stringResource(ATMR.strings.pref_paddle_ocr_provider_summary),
-                    entries = mapOf(
-                        PaddleOcrExecutionProvider.CPU to stringResource(ATMR.strings.pref_paddle_ocr_provider_cpu),
-                        PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU to
-                            stringResource(ATMR.strings.pref_paddle_ocr_provider_gpu),
-                        PaddleOcrExecutionProvider.QUALCOMM_QNN_HTP to
-                            stringResource(ATMR.strings.pref_paddle_ocr_provider_htp),
-                    ).toImmutableMap(),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.paddleOcrRecognitionBatch(),
-                    title = stringResource(ATMR.strings.pref_paddle_ocr_batch),
-                    subtitle = stringResource(ATMR.strings.pref_paddle_ocr_batch_summary),
-                    entries = mapOf(
-                        PaddleOcrRecognitionBatch.DYNAMIC to stringResource(ATMR.strings.pref_paddle_ocr_batch_dynamic),
-                        PaddleOcrRecognitionBatch.B1 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b1),
-                        PaddleOcrRecognitionBatch.B2 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b2),
-                        PaddleOcrRecognitionBatch.B4 to stringResource(ATMR.strings.pref_paddle_ocr_batch_b4),
-                    ).toImmutableMap(),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    pref = translationPreferences.translationVisionGpuAcceleration(),
-                    title = stringResource(ATMR.strings.pref_vision_gpu_acceleration),
-                    subtitle = stringResource(ATMR.strings.pref_vision_gpu_acceleration_summary),
-                ),
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(ATMR.strings.pref_translate_to),
                 ) {

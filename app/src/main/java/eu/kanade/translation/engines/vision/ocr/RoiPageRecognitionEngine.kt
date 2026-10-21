@@ -54,9 +54,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
-import tachiyomi.domain.translation.PaddleOcrComputeDevice
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.atomic.AtomicLong
@@ -68,7 +66,6 @@ class RoiPageRecognitionEngine(
     private val inpaintingMode: InpaintingMode = InpaintingMode.QUALITY,
     private val neuralInpaintModel: NeuralInpaintModel = NeuralInpaintModel.DEFAULT,
     private val inpaintingHardwareOverride: InpaintingHardwareOverride = InpaintingHardwareOverride.CPU,
-    private val paddleOcrComputeDevice: PaddleOcrComputeDevice = PaddleOcrComputeDevice.GPU,
 ) : PageRecognitionEngine {
 
     private val modelStore = OnnxModelStore(context)
@@ -235,25 +232,19 @@ class RoiPageRecognitionEngine(
             val startTime = System.nanoTime()
             try {
                 val paths = modelStore.ensureModels()
-                // Resolve the temporary Paddle-only choice once and share the
-                // result between recognizer and line-detector sessions. This
-                // keeps the paired models on the same provider and makes a
-                // probe/CPU fallback visible instead of changing midway.
+                // Auto-routing: the paddle ONNX fallback requests QNN GPU
+                // strictly; the factory probes it end-to-end and falls back to
+                // a labelled CPU session (cached for the process lifetime).
                 val paddleProvider = if (ocrModel == OcrModel.PADDLEOCR_V6_SMALL) {
-                    resolvePaddleOcrProvider()
+                    PaddleOcrSessionFactory.resolve(PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU)
                 } else {
                     // The free-text mask-only detector used by non-Paddle OCR
-                    // keeps its existing automatic/global route. The temporary
-                    // selector is scoped to the v6 recognizer + line detector.
+                    // keeps its existing automatic/global route. The selector
+                    // is scoped to the v6 recognizer + line detector.
                     null
                 }
-                val visionGpuEnabled = try {
-                    Injekt.get<TranslationPreferences>().translationVisionGpuAcceleration().get()
-                } catch (_: Throwable) {
-                    false
-                }
-                val visionRoute = HardwareDiscoveryEngine.resolveVisionGpuRoute(visionGpuEnabled)
-                logcat(LogPriority.INFO) { "ONNX init: starting detector initialization (visionRoute=$visionRoute, gpuEnabled=$visionGpuEnabled)" }
+                val visionRoute = HardwareDiscoveryEngine.resolveVisionGpuRoute()
+                logcat(LogPriority.INFO) { "ONNX init: starting detector initialization (visionRoute=$visionRoute)" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
                 // panel detector is optional context; best-effort
@@ -284,8 +275,7 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also { engine ->
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
-                        val activation = PaddleOcrBatchActivationPolicy.currentFromPreferences(
-                            preferences = Injekt.get<TranslationPreferences>(),
+                        val activation = PaddleOcrBatchActivationPolicy.currentPinnedB1(
                             requestedProvider = paddleProvider?.requested,
                         )
                         paddleBatchGovernor = PaddleOcrRollingP95HysteresisDowngradePolicy(
@@ -307,7 +297,7 @@ class RoiPageRecognitionEngine(
                                 engine.initializeLiteRt(
                                     modelFilesByWidth = liteRtPaths.recognitionModelsByWidth,
                                     dictionaryFile = liteRtPaths.dictionary,
-                                    preferGpu = paddleOcrComputeDevice == PaddleOcrComputeDevice.GPU,
+                                    preferGpu = true,
                                     allowXnnpackFallback = true,
                                     numThreads = 4,
                                     fallbackInitializer = {
@@ -322,7 +312,7 @@ class RoiPageRecognitionEngine(
                                 liteRtDetector = PaddleOcrV6DetEngine().also {
                                     it.initializeLiteRt(
                                         modelFile = liteRtPaths.detectorModel,
-                                        preferGpu = paddleOcrComputeDevice == PaddleOcrComputeDevice.GPU,
+                                        preferGpu = true,
                                         allowXnnpackFallback = true,
                                         numThreads = 4,
                                     )
@@ -331,7 +321,7 @@ class RoiPageRecognitionEngine(
                                 liteRtInitialized = true
                                 logcat(LogPriority.INFO) {
                                     "LiteRT init: PaddleOCR v6 recognizer and detector configured " +
-                                        "(device=$paddleOcrComputeDevice, CPU threads=4, CPU fallback enabled)"
+                                        "(device=gpu, CPU threads=4, CPU fallback enabled)"
                                 }
                             } catch (e: Exception) {
                                 liteRtDetector?.close()
@@ -483,20 +473,6 @@ class RoiPageRecognitionEngine(
                 throw e
             }
         }
-    }
-
-    private fun resolvePaddleOcrProvider(): PaddleOcrProviderResolution {
-        if (paddleOcrComputeDevice == PaddleOcrComputeDevice.CPU) {
-            return PaddleOcrSessionFactory.resolve(PaddleOcrExecutionProvider.CPU)
-        }
-        val requested = try {
-            Injekt.get<TranslationPreferences>()
-                .paddleOcrExecutionProvider()
-                .get()
-        } catch (_: Throwable) {
-            PaddleOcrExecutionProvider.CPU
-        }
-        return PaddleOcrSessionFactory.resolve(requested)
     }
 
     private fun recordPaddleBatchLatencies(

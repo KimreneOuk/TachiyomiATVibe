@@ -1,39 +1,20 @@
 package eu.kanade.translation.engines.vision.ocr
 
 import ai.onnxruntime.OrtException
-import android.content.Context
 import eu.kanade.translation.diagnostics.TelemetryTrace
-import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
-import eu.kanade.translation.engines.translator.TextTranslator
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TextRecognizerLanguage
-import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.processing.EngineLane
-import eu.kanade.translation.processing.execution.NativeRunQuarantine
-import eu.kanade.translation.util.ShortHash
-import io.mockk.mockk
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.PaddleOcrExecutionProvider
-import tachiyomi.domain.translation.PaddleOcrRecognitionBatch
-import tachiyomi.domain.translation.TranslationPreferences
-import tachiyomi.domain.translation.TranslationReadingOrder
 
 /**
- * Verifies ONNX Runtime hardware execution provider session creation auditing and
- * stale engine preference detection.
+ * Verifies ONNX Runtime hardware execution provider session creation auditing.
  */
 class HardwareSessionAuditTest {
 
@@ -217,187 +198,5 @@ class HardwareSessionAuditTest {
         val successEvent = capturedLines.find { it.contains("event=session_create_success") }
         assertNotNull(successEvent)
         assertTrue(successEvent!!.contains("actualProvider=cpu"))
-    }
-
-    @Test
-    fun `engine rebuilds when paddle provider preference changes`() = runBlocking {
-        val preferences = TranslationPreferences(MutableTestPreferenceStore())
-        preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.CPU)
-        preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B1)
-
-        val lane = createTestEngineLane(
-            preferences = preferences,
-            initialProvider = PaddleOcrExecutionProvider.CPU,
-            initialBatch = PaddleOcrRecognitionBatch.B1,
-        )
-
-        // User modifies live preference to QUALCOMM_QNN_GPU
-        preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU)
-
-        lane.ensureEnginesBuiltFor(
-            fromLang = TextRecognizerLanguage.JAPANESE,
-            toLang = TextTranslatorLanguage.ENGLISH,
-        )
-
-        assertTrue(lane.currentPaddleOcrProvider == PaddleOcrExecutionProvider.QUALCOMM_QNN_GPU)
-        val staleEvent = capturedLines.find { it.contains("event=stale_engine_detected") }
-        assertTrue(staleEvent == null, "stale_engine_detected must NOT be emitted because engine is rebuilt")
-    }
-
-    @Test
-    fun `engine rebuilds when paddle batch size preference changes`() = runBlocking {
-        val preferences = TranslationPreferences(MutableTestPreferenceStore())
-        preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.CPU)
-        preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B1)
-
-        val lane = createTestEngineLane(
-            preferences = preferences,
-            initialProvider = PaddleOcrExecutionProvider.CPU,
-            initialBatch = PaddleOcrRecognitionBatch.B1,
-        )
-
-        // User changes batch size from B1 to B4 while provider remains CPU
-        preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B4)
-
-        lane.ensureEnginesBuiltFor(
-            fromLang = TextRecognizerLanguage.JAPANESE,
-            toLang = TextTranslatorLanguage.ENGLISH,
-        )
-
-        assertTrue(lane.currentPaddleOcrBatch == PaddleOcrRecognitionBatch.B4)
-        val staleEvent = capturedLines.find { it.contains("event=stale_engine_detected") }
-        assertTrue(staleEvent == null, "stale_engine_detected must NOT be emitted because engine is rebuilt")
-    }
-
-    @Test
-    fun `stale_engine_detected is not emitted when preferences match active configuration`() = runBlocking {
-        val preferences = TranslationPreferences(MutableTestPreferenceStore())
-        preferences.paddleOcrExecutionProvider().set(PaddleOcrExecutionProvider.CPU)
-        preferences.paddleOcrRecognitionBatch().set(PaddleOcrRecognitionBatch.B1)
-
-        val lane = createTestEngineLane(
-            preferences = preferences,
-            initialProvider = PaddleOcrExecutionProvider.CPU,
-            initialBatch = PaddleOcrRecognitionBatch.B1,
-        )
-
-        lane.ensureEnginesBuiltFor(
-            fromLang = TextRecognizerLanguage.JAPANESE,
-            toLang = TextTranslatorLanguage.ENGLISH,
-        )
-
-        val staleEvent = capturedLines.find { it.contains("event=stale_engine_detected") }
-        assertTrue(staleEvent == null, "stale_engine_detected must NOT be emitted when preferences match")
-    }
-
-    private fun createTestEngineLane(
-        preferences: TranslationPreferences,
-        initialProvider: PaddleOcrExecutionProvider = PaddleOcrExecutionProvider.CPU,
-        initialBatch: PaddleOcrRecognitionBatch = PaddleOcrRecognitionBatch.B1,
-    ): EngineLane {
-        val mockContext = mockk<Context>(relaxed = true)
-        val dummyRecognition = object : PageRecognitionEngine {
-            override suspend fun analyze(bitmap: android.graphics.Bitmap): PageTranslation {
-                throw UnsupportedOperationException("test fake")
-            }
-            override fun close() {}
-        }
-        val dummyTranslator = object : TextTranslator {
-            override val fromLang = TextRecognizerLanguage.JAPANESE
-            override val toLang = TextTranslatorLanguage.ENGLISH
-            override suspend fun translate(pages: MutableMap<String, PageTranslation>) {}
-            override fun close() {}
-        }
-        preferences.translationOcrModel(TextRecognizerLanguage.JAPANESE.name).set(OcrModel.PADDLEOCR_V6_SMALL)
-        preferences.translationReadingOrder().set(TranslationReadingOrder.RTL_MANGA)
-        preferences.translationInpaintingMode().set("FAST")
-
-        val fromLang = TextRecognizerLanguage.JAPANESE
-        val toLang = TextTranslatorLanguage.ENGLISH
-        val ocrModel = OcrModelCatalog.selectedModel(preferences, fromLang)
-        val readingOrder = preferences.translationReadingOrder().get()
-        val inpaintingMode = InpaintingMode.FAST
-        val aiEngine = preferences.translationAiEngine().get()
-        val sig = EngineLane.EngineSignature(
-            category = preferences.translationEngineCategory().get(),
-            standardEngine = preferences.translationStandardEngine().get(),
-            aiEngine = aiEngine,
-            apiKeyHash = ShortHash.hash(preferences.translationAiApiKey(aiEngine).get()),
-            baseUrl = preferences.translationAiBaseUrlLmStudio().get(),
-            modelName = preferences.translationAiModel(aiEngine).get(),
-            temperature = preferences.translationAiTemperature().get(),
-            maxTokens = preferences.translationAiOutputTokens().get(),
-            readingOrder = readingOrder,
-            fromLang = fromLang,
-            toLang = toLang,
-        )
-        val state = EngineLane.TestState(
-            fromLang = fromLang,
-            ocrModel = ocrModel,
-            readingOrder = readingOrder,
-            inpaintingMode = inpaintingMode,
-            translator = dummyTranslator,
-            recognitionEngine = dummyRecognition,
-            translatorSignature = sig,
-            paddleOcrProvider = initialProvider,
-            paddleOcrBatch = initialBatch,
-        )
-        val testScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        return EngineLane.createForTesting(
-            context = mockContext,
-            translationPreferences = preferences,
-            nativeRunQuarantine = NativeRunQuarantine(scope = testScope),
-            inFlightPageKeys = mutableSetOf(),
-            onPageStuck = { null },
-            drainGraceMs = 0L,
-            drainScope = testScope,
-            translatorFactory = { _, _ -> dummyTranslator },
-            state = state,
-        )
-    }
-
-    private class MutableTestPreferenceStore : tachiyomi.core.common.preference.PreferenceStore {
-        private val map = java.util.concurrent.ConcurrentHashMap<String, Any>()
-
-        private inner class MutablePref<T>(
-            private val key: String,
-            private val defaultValue: T,
-        ) : tachiyomi.core.common.preference.Preference<T> {
-            override fun key(): String = key
-
-            @Suppress("UNCHECKED_CAST")
-            override fun get(): T = (map[key] as? T) ?: defaultValue
-            override fun isSet(): Boolean = map.containsKey(key)
-            override fun delete() {
-                map.remove(key)
-            }
-            override fun defaultValue(): T = defaultValue
-            override fun changes(): kotlinx.coroutines.flow.Flow<T> = kotlinx.coroutines.flow.flow { emit(get()) }
-            override fun stateIn(scope: CoroutineScope): kotlinx.coroutines.flow.StateFlow<T> =
-                kotlinx.coroutines.flow.MutableStateFlow(get())
-            override fun set(value: T) {
-                if (value != null) map[key] = value else map.remove(key)
-            }
-        }
-
-        override fun getString(key: String, defaultValue: String): tachiyomi.core.common.preference.Preference<String> =
-            MutablePref(key, defaultValue)
-        override fun getLong(key: String, defaultValue: Long): tachiyomi.core.common.preference.Preference<Long> =
-            MutablePref(key, defaultValue)
-        override fun getInt(key: String, defaultValue: Int): tachiyomi.core.common.preference.Preference<Int> =
-            MutablePref(key, defaultValue)
-        override fun getFloat(key: String, defaultValue: Float): tachiyomi.core.common.preference.Preference<Float> =
-            MutablePref(key, defaultValue)
-        override fun getBoolean(key: String, defaultValue: Boolean): tachiyomi.core.common.preference.Preference<Boolean> =
-            MutablePref(key, defaultValue)
-        override fun getStringSet(key: String, defaultValue: Set<String>): tachiyomi.core.common.preference.Preference<Set<String>> =
-            MutablePref(key, defaultValue)
-        override fun <T> getObject(
-            key: String,
-            defaultValue: T,
-            serializer: (T) -> String,
-            deserializer: (String) -> T,
-        ): tachiyomi.core.common.preference.Preference<T> = MutablePref(key, defaultValue)
-        override fun getAll(): Map<String, *> = map
     }
 }

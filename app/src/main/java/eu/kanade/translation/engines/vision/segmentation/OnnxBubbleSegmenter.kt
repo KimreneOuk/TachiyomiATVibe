@@ -10,6 +10,7 @@ import android.graphics.RectF
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.engines.runtime.onnx.QnnVisionContextCache
 import eu.kanade.translation.model.BubbleMaskRle
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -59,15 +60,28 @@ class OnnxBubbleSegmenter(
             useXnnpack: Boolean,
             providerSink: (String) -> Unit,
             requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute?,
-        ): SegmenterSessionHandle = OrtSessionHandle(
-            OnnxRuntimeProvider.createSessionWithFallback(
-                modelPath,
+        ): SegmenterSessionHandle {
+            val contextPlan = QnnVisionContextCache.plan(
+                modelFile = File(modelPath),
                 useAccelerator = useAccelerator,
-                useXnnpack = useXnnpack,
-                providerSink = providerSink,
                 requestedHardwareRoute = requestedHardwareRoute,
-            ),
-        )
+            )
+            return OrtSessionHandle(
+                OnnxRuntimeProvider.createSessionWithFallback(
+                    modelPath,
+                    useAccelerator = useAccelerator,
+                    useXnnpack = useXnnpack,
+                    contextCacheFile = contextPlan?.contextFile,
+                    // The plan's commit/purge decision needs the wire label the
+                    // provider actually served this session with.
+                    providerSink = { wire ->
+                        contextPlan?.onSessionCreated(wire)
+                        providerSink(wire)
+                    },
+                    requestedHardwareRoute = requestedHardwareRoute,
+                ),
+            )
+        }
     }
 
     /**
