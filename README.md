@@ -77,7 +77,7 @@ Stabilizing these tests and removing the tag is tracked work. The CI build uses 
 
 ## Contributing
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before opening an issue or pull request. Contributors working on translation behavior can also start with the [translation architecture guide](docs/translation-architecture.md).
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before opening an issue or pull request.
 
 ## Credits and lineage
 

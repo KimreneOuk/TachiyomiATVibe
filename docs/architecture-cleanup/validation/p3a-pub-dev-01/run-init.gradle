@@ -1,1 +1,0 @@
-allprojects { tasks.withType(Test).configureEach { t -> jvmArgs('-Dtraycer.validation.runId=43417106-d588-4a0d-81c3-10b932440e82', '-Dtraycer.validation.task=:app:testDevDebugUnitTest', '-Dtraycer.validation.project=b8ad2423729bc5a336947647'); doFirst { println('TRAYCER_TEST_START=' + t.path) } } }

@@ -1,3 +1,0 @@
-# Preserve snapshot checksums across checkouts and operating systems.
-artifacts/** -text
-validation/** -text

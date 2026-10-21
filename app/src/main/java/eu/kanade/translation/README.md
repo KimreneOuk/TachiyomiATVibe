@@ -1,6 +1,6 @@
 # Translation code map
 
-`eu.kanade.translation` owns the reader's manga translation path, its chapter batch path, and the engines and durable records those paths use. This guide is a short route into the code; the fuller flow and concurrency notes are in [`docs/translation-architecture.md`](../../../../../../../docs/translation-architecture.md).
+`eu.kanade.translation` owns the reader's manga translation path, its chapter batch path, and the engines and durable records those paths use. This guide is a short route into package ownership, request flow, state, and concurrency boundaries.
 
 ## Architecture at a glance
 

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-15T16:25:26" hostname="DESKTOP-8VS098Q" time="0.013">
-  <properties/>
-  <testcase name="exclusive lifecycle action cannot enter while timed out invocation is alive()" classname="eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest" time="0.007"/>
-  <testcase name="timeout blocks new admission until underlying exit and discards late result()" classname="eu.kanade.translation.pipeline.execution.NativeRunQuarantineTest" time="0.006"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
