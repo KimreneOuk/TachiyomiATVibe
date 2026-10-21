@@ -42,3 +42,9 @@ Before creating new algorithms, formatters, or pipeline utilities, scan the code
 - **Minimal Comments**: Write code that explains itself; comment only for non-obvious intent, invariants, or trade-offs. Never narrate what the code visibly does.
 - **Three-Line Cap**: Any single comment block (doc or inline) is 3 lines maximum. If it needs more, the code is too complicated — simplify the code instead.
 - **No Unsolicited Documentation**: Do not create markdown docs, READMEs, or design notes unless explicitly asked. Verify instructions in code/comments only.
+
+## 7. Root-Cause Fixes and Quality Gates
+
+- **Fix the Cause**: Never apply a bandaid to make a failure disappear. Trace lint, format, compiler, test, and build failures to their source and correct the underlying defect.
+- **No Hidden Failures**: Do not suppress, exclude, disable, or weaken a check to get a green result unless the coordinator explicitly approves that specific exception. Lint findings must be fixed, not ignored as pre-existing.
+- **Verify the Repair**: Rerun the failed check after fixing it. Do not commit while a required check still reports unresolved findings; if a safe root-cause fix is unclear, report the evidence and stop for direction.

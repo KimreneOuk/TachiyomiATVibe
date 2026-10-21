@@ -1,8 +1,8 @@
 package eu.kanade.translation.persistence
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.persistence.CleanedImageIdentity
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.CleanedImageIdentity
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope

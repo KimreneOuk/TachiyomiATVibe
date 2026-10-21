@@ -2,86 +2,30 @@ package eu.kanade.tachiyomi.ui.reader
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
-import eu.kanade.presentation.more.settings.widget.AiModelListState
-import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
-import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.translation.diagnostics.NativeVisionTelemetry
-import eu.kanade.translation.diagnostics.ReaderEntryTrace
-import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
-import eu.kanade.translation.diagnostics.TranslationTrace
-import eu.kanade.translation.diagnostics.TranslationTraceLeaseKind
-import eu.kanade.translation.diagnostics.TranslationTraceMode
-import eu.kanade.translation.diagnostics.TranslationTraceOutcome
-import eu.kanade.translation.diagnostics.TranslationTracePlan
-import eu.kanade.translation.diagnostics.TranslationTraceSite
-import eu.kanade.translation.engines.translator.TranslatorComputeClass
-import eu.kanade.translation.engines.translator.providers.AiModelFetcher
-import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
-import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.TextRecognizerLanguage
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.model.shouldShowTranslationOverlay
-import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.toPageDisplayProjection
-import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.repairStrandedPageWithAcquiredAutoLease
-import eu.kanade.translation.processing.MemoryPressureClass
-import eu.kanade.translation.processing.MemoryPressurePolicy
-import eu.kanade.translation.processing.execution.TranslationStreamRegistry
-import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.coordinator.ReaderPageWork
+import eu.kanade.translation.coordinator.ReaderSessionIntent
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.coordinator.ReaderSubmission
 import eu.kanade.translation.coordinator.ReaderTrigger
-import eu.kanade.translation.coordinator.ReaderSessionIntent
 import eu.kanade.translation.coordinator.SessionAdmission
 import eu.kanade.translation.coordinator.SessionRejection
-import eu.kanade.translation.TranslationManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
+import eu.kanade.translation.diagnostics.NativeVisionTelemetry
+import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.NeuralInpaintModel
-import tachiyomi.domain.translation.OcrModel
-import tachiyomi.domain.translation.StandardEngine
-import tachiyomi.domain.translation.TranslationEngineCategory
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
-import java.lang.ref.WeakReference
 
 internal class ReaderTranslationActions(private val controller: ReaderTranslationController) {
     private val owner get() = controller.owner
@@ -100,10 +44,14 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
     private val chapterPageIndex get() = owner.chapterPageIndex
     private var batchTranslationState
         get() = owner.batchTranslationState
-        set(value) { owner.batchTranslationState = value }
+        set(value) {
+            owner.batchTranslationState = value
+        }
     private var liveTranslationState
         get() = owner.liveTranslationState
-        set(value) { owner.liveTranslationState = value }
+        set(value) {
+            owner.liveTranslationState = value
+        }
 
     private fun recomputeTranslationState() = owner.recomputeTranslationState()
     private fun getCurrentChapter() = owner.getCurrentChapter()
@@ -629,5 +577,4 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
             }
         }
     }
-
 }

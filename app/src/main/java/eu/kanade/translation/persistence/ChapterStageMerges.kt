@@ -1,17 +1,13 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.persistence.ChapterTranslationStore.PatchPrecondition
-import eu.kanade.translation.persistence.ChapterTranslationStore.PatchResult
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.toDraft
+import eu.kanade.translation.persistence.ChapterTranslationStore.PatchPrecondition
+import eu.kanade.translation.persistence.ChapterTranslationStore.PatchResult
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -348,8 +344,6 @@ internal class ChapterStageMerges(
         }
         return StagePatchResult.Rejected(reason)
     }
-
-
 }
 
 internal fun mergeOcrFields(

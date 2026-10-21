@@ -1,16 +1,8 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.StageFingerprints
-
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
-import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.toPublishedPage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +56,6 @@ class ChapterArtifactEngine(
     )
 
     val candidates: ChapterCandidateTransactions = ChapterCandidateTransactions(documents, layout, this)
-
 
     fun load(): LoadResult {
         val readManifestStage = ReaderEntryTrace.begin("store.readManifest", null)
@@ -336,7 +327,6 @@ class ChapterArtifactEngine(
     fun hasVerifiedCleanedImageIdentity(imageName: String, expectedContentSha256: String): Boolean =
         CleanedImageIdentity.verify(io, layout.chapterKey, imageName, expectedContentSha256)
 
-
     internal fun newGenerationId(pageKey: String, nowEpochMs: Long): String =
         "g-$nowEpochMs-${layout.pageSegment(pageKey).takeLast(24)}"
 
@@ -361,7 +351,6 @@ class ChapterArtifactEngine(
             io.length(fileName) > 0L &&
             documents.readValidated<JsonObject>(fileName) != null
     }
-
 
     /**
      * Bounded retention (lifecycle contract §15): preserves exactly the files

@@ -20,10 +20,10 @@ import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
+import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.i18n.at.ATMR
-import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**

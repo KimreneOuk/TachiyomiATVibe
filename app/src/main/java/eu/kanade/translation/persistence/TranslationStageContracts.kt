@@ -3,8 +3,8 @@ package eu.kanade.translation.persistence
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.TranslationBlockView
 import eu.kanade.translation.model.StageFingerprints
+import eu.kanade.translation.model.TranslationBlockView
 
 /**
  * Lease-layer provenance of a page write. Priority on one page is

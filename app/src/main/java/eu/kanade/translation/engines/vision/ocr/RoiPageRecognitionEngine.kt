@@ -21,7 +21,6 @@ import eu.kanade.translation.engines.runtime.EngineMemoryBudget
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderOverride
-import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderResolution
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrSessionFactory
 import eu.kanade.translation.engines.vision.detection.OnnxPageTextDetector
 import eu.kanade.translation.engines.vision.detection.OnnxPanelDetector

@@ -1,6 +1,5 @@
 package eu.kanade.translation.engines.vision.ocr.paddle.batch
 
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.engines.runtime.onnx.PaddleOcrProviderTarget
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

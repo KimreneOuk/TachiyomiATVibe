@@ -4,27 +4,26 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
-import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.coordinator.TranslationSessionCoordinator
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.coordinator.TranslationSession
-import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.processing.execution.TranslationStreamRegistry
-import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.processing.BatchPageOperation
+import eu.kanade.translation.processing.TranslationProcessor
+import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import tachiyomi.domain.translation.TranslationPreferences
-import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.api.get
 
 /** Owns the shared processor and the reader/batch coordinators used by TranslationManager. */

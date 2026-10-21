@@ -64,8 +64,10 @@ internal object QnnVisionContextCache {
         requestedHardwareRoute: HardwareDiscoveryEngine.HardwareRoute?,
     ): Plan? {
         val effectiveAccelerator = useAccelerator ||
-            (requestedHardwareRoute != null &&
-                requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK)
+            (
+                requestedHardwareRoute != null &&
+                    requestedHardwareRoute != HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
+                )
         if (!effectiveAccelerator) return null
         val route = requestedHardwareRoute ?: if (useAccelerator) {
             HardwareDiscoveryEngine.resolveRoute()

@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.toPublishedPage
@@ -18,7 +17,6 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 

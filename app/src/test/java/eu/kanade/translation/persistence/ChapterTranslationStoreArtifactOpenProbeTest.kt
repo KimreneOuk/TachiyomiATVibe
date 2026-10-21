@@ -4,9 +4,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe

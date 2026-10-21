@@ -1,9 +1,5 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import com.hippo.unifile.FakeUniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.model.PageTranslation
@@ -12,6 +8,9 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.DurableChapterKey
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
+import eu.kanade.translation.persistence.DurableStatus
 import eu.kanade.translation.persistence.TranslationFileProvider
 import io.kotest.matchers.shouldBe
 import io.mockk.every

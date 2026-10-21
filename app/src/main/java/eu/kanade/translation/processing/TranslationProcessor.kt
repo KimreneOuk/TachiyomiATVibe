@@ -5,14 +5,13 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
-import eu.kanade.translation.engines.translator.AdmissionPriority
-import eu.kanade.translation.engines.translator.NativeStallState
 import eu.kanade.translation.engines.translator.NativeStallWatchdog
 import eu.kanade.translation.engines.translator.TextTranslator
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.CleanedPublication
 import eu.kanade.translation.processing.DecodedPage
 import eu.kanade.translation.processing.EngineLane
@@ -22,16 +21,15 @@ import eu.kanade.translation.processing.adaptive.DevicePermitPriority
 import eu.kanade.translation.processing.execution.NativeRunQuarantine
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import eu.kanade.translation.processing.memory.MemoryGovernance
-import eu.kanade.translation.persistence.TranslationFileProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -130,7 +128,8 @@ internal class TranslationProcessor(
         "TranslationProcessor was created without production engine configuration"
     }
 
-    suspend fun prepareEngines(from: eu.kanade.translation.model.TextRecognizerLanguage,
+    suspend fun prepareEngines(
+        from: eu.kanade.translation.model.TextRecognizerLanguage,
         to: eu.kanade.translation.model.TextTranslatorLanguage,
     ) = requireEngineLane().ensureEnginesBuiltFor(from, to)
 
@@ -218,11 +217,11 @@ internal class TranslationProcessor(
     /** Translates text blocks outside the native lane. */
     suspend fun translatePage(pageKey: String, page: PageTranslation, translator: TextTranslator) =
         withContext(Dispatchers.IO) {
-        if (page.blocks.isEmpty() || page.isTextlessTerminal) return@withContext
-        page.translationStatus = StageStatus.RUNNING
-        engineLane?.beginTranslatorUse()
-        try {
-            translator.translatePage(pageKey, page)
+            if (page.blocks.isEmpty() || page.isTextlessTerminal) return@withContext
+            page.translationStatus = StageStatus.RUNNING
+            engineLane?.beginTranslatorUse()
+            try {
+                translator.translatePage(pageKey, page)
                 page.translationStatus = StageStatus.READY
                 page.translationError = null
             } catch (cancelled: CancellationException) {
@@ -230,10 +229,10 @@ internal class TranslationProcessor(
             } catch (t: Throwable) {
                 page.translationStatus = StageStatus.FAILED
                 page.translationError = t.message ?: "Translation failed"
-            throw t
-        } finally {
-            engineLane?.endTranslatorUse()
-        }
+                throw t
+            } finally {
+                engineLane?.endTranslatorUse()
+            }
         }
 
     /** Batch translation shares the same translator but does not add retry policy. */
@@ -379,7 +378,9 @@ internal class TranslationProcessor(
             withTimeout(TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS) {
                 val decoded = decodeImage(pageKey, streamFn) { recognitionEngine }
                     ?: return@withTimeout ProcessResult.Failure(
-                        pageKey, "DECODE", "Failed to decode page image for $pageKey",
+                        pageKey,
+                        "DECODE",
+                        "Failed to decode page image for $pageKey",
                         page = PageTranslation(sourceFileName = pageKey).apply {
                             ocrStatus = StageStatus.FAILED
                             errorMessage = "Failed to decode page image for $pageKey"
@@ -400,7 +401,10 @@ internal class TranslationProcessor(
                 }
                 if (page!!.ocrStatus == StageStatus.FAILED) {
                     return@withTimeout ProcessResult.Failure(
-                        pageKey, "OCR", page!!.ocrError ?: page!!.errorMessage ?: "OCR failed", page = page,
+                        pageKey,
+                        "OCR",
+                        page!!.ocrError ?: page!!.errorMessage ?: "OCR failed",
+                        page = page,
                     )
                 }
                 if (page!!.isTextlessTerminal) return@withTimeout ProcessResult.Success(page!!)
@@ -412,7 +416,11 @@ internal class TranslationProcessor(
                     throw cancelled
                 } catch (t: Throwable) {
                     return@withTimeout ProcessResult.Failure(
-                        pageKey, "TRANSLATION", page!!.translationError ?: "Translation failed", t, page,
+                        pageKey,
+                        "TRANSLATION",
+                        page!!.translationError ?: "Translation failed",
+                        t,
+                        page,
                     )
                 }
                 if (inpaintingEnabled) {

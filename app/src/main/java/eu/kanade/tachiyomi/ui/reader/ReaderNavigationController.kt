@@ -1,31 +1,22 @@
 package eu.kanade.tachiyomi.ui.reader
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.viewModelScope
-import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
 import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
-import eu.kanade.domain.track.interactor.TrackChapter
-import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
-import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.saver.Image
-import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
-import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
@@ -35,15 +26,13 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.diagnostics.TelemetryTrace
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
-import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
@@ -54,16 +43,9 @@ import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
-import tachiyomi.domain.download.service.DownloadPreferences
-import tachiyomi.domain.history.interactor.GetNextChapters
-import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.history.model.HistoryUpdate
-import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
@@ -97,19 +79,29 @@ internal class ReaderNavigationController(private val owner: ReaderViewModel) {
     private val manga get() = owner.manga
     private var chapterId
         get() = owner.chapterId
-        set(value) { owner.chapterId = value }
+        set(value) {
+            owner.chapterId = value
+        }
     private var chapterPageIndex
         get() = owner.chapterPageIndex
-        set(value) { owner.chapterPageIndex = value }
+        set(value) {
+            owner.chapterPageIndex = value
+        }
     private var loader
         get() = owner.loader
-        set(value) { owner.loader = value }
+        set(value) {
+            owner.loader = value
+        }
     private var chapterToDownload
         get() = owner.chapterToDownload
-        set(value) { owner.chapterToDownload = value }
+        set(value) {
+            owner.chapterToDownload = value
+        }
     private var chapterReadStartTime
         get() = owner.chapterReadStartTime
-        set(value) { owner.chapterReadStartTime = value }
+        set(value) {
+            owner.chapterReadStartTime = value
+        }
     private val chapterList get() = owner.chapterList
     private val incognitoMode get() = owner.incognitoMode
     private val downloadAheadAmount get() = owner.downloadAheadAmount
@@ -904,10 +896,6 @@ internal class ReaderNavigationController(private val owner: ReaderViewModel) {
         }
     }
 
-
-
-
-
     /**
      * Starts the service that updates the last chapter read in sync services. This operation
      * will run in a background thread and errors are ignored.
@@ -956,5 +944,4 @@ internal class ReaderNavigationController(private val owner: ReaderViewModel) {
             downloadManager.deletePendingChapters(translationManager.protectedChapterIds())
         }
     }
-
 }

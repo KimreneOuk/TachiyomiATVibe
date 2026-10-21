@@ -6,7 +6,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
@@ -14,10 +13,6 @@ import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.toPublishedPage
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CoroutineDispatcher
@@ -30,6 +25,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 class ChapterTranslationStore internal constructor(
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -155,7 +154,7 @@ class ChapterTranslationStore internal constructor(
     internal val retiredCleanedImages = ConcurrentHashMap<String, MutableSet<String>>()
     internal val pendingArtifactPageRegistrations = LinkedHashSet<String>()
 
-    internal val _display = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
+    internal val publishedDisplay = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
 
     // Lease ownership stays in one table so the store and lease APIs share the
     // same map and synchronization boundary.
@@ -177,7 +176,7 @@ class ChapterTranslationStore internal constructor(
      * live candidate entry. Candidate emissions can replace live entries but
      * never null or mutate a committed bundle.
      */
-    val display: StateFlow<Map<String, PageTranslationView>> = _display.asStateFlow()
+    val display: StateFlow<Map<String, PageTranslationView>> = publishedDisplay.asStateFlow()
 
     val currentGeneration: Long get() = generation
 
@@ -310,7 +309,6 @@ class ChapterTranslationStore internal constructor(
     internal val pageMutations = ChapterPageMutations(this)
     internal val stageMerges = ChapterStageMerges(this)
 
-
     /**
      * Typed result of [rekeyPages]. [Moved] with [Moved.skippedCollisions] > 0 is
      * explicitly partial: the caller must not treat it as a complete handoff.
@@ -349,8 +347,6 @@ class ChapterTranslationStore internal constructor(
     internal fun recordBatchWriteGateRejectionDiagnostic(diagnostic: String) {
         lastBatchWriteGateRejectionDiagnostic = diagnostic
     }
-
-
 
     /** Enables memory-first publication for a registered production chapter. */
     internal fun enableLazyPersistence() {
@@ -513,9 +509,6 @@ class ChapterTranslationStore internal constructor(
     suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
         withContext(GenerationContext(this, generation)) { block() }
 
-
-
-
     suspend fun patchPage(
         pageKey: String,
         expected: PatchPrecondition,
@@ -564,8 +557,14 @@ class ChapterTranslationStore internal constructor(
         description: String,
         patch: (TranslationBlock) -> TranslationBlock,
     ): PatchResult = pageMutations.patchBlock(
-        pageKey, blockIndex, expected, expectedBlockFingerprint,
-        expectedTranslation, expectedUserEditedAt, description, patch,
+        pageKey,
+        blockIndex,
+        expected,
+        expectedBlockFingerprint,
+        expectedTranslation,
+        expectedUserEditedAt,
+        description,
+        patch,
     )
 
     suspend fun mergeOcr(

@@ -1,9 +1,10 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
+import eu.kanade.translation.coordinator.BatchSessionIntent
+import eu.kanade.translation.coordinator.ReaderSessionIntent
+import eu.kanade.translation.coordinator.SessionAdmission
+import eu.kanade.translation.coordinator.TranslationSessionCoordinator
+import eu.kanade.translation.coordinator.TranslationSessionState
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.cancelAndJoin

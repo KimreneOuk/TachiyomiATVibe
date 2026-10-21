@@ -1,11 +1,5 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.context.*
-import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.TranslationProvenancePage
-import eu.kanade.translation.model.OcrBlockContent
-import eu.kanade.translation.model.EnvelopePlanInputPage
-
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe

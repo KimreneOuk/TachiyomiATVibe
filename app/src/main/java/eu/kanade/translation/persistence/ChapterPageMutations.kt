@@ -1,17 +1,16 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.blockFingerprints
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.persistence.ChapterTranslationStore.PageSnapshot
+import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.ChapterTranslationStore.PatchPrecondition
 import eu.kanade.translation.persistence.ChapterTranslationStore.PatchResult
 import eu.kanade.translation.persistence.ChapterTranslationStore.TranslationPublicationReconciliation
@@ -46,83 +45,83 @@ internal class ChapterPageMutations(
     ): PatchResult {
         if (store.isDefunct) return rejected(pageKey, description, "store is defunct")
         return mutex.withLock {
-                    when (val admission = store.publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                        )
-                    }
-                    val current = store.pages[pageKey]?.toDraft()
-                    if (expected.generation != store.generation) {
-                        return@withLock rejected(pageKey, description, "generation expected=${expected.generation} actual=${store.generation}")
-                    }
-                    val currentLiveVersion = current?.pageVersion ?: 0L
-                    if (expected.pageVersion != currentLiveVersion) {
-                        return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
-                    }
+            when (val admission = store.publicationBridge.admitMutation()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
+            val current = store.pages[pageKey]?.toDraft()
+            if (expected.generation != store.generation) {
+                return@withLock rejected(pageKey, description, "generation expected=${expected.generation} actual=${store.generation}")
+            }
+            val currentLiveVersion = current?.pageVersion ?: 0L
+            if (expected.pageVersion != currentLiveVersion) {
+                return@withLock rejected(pageKey, description, "pageVersion expected=${expected.pageVersion} actual=$currentLiveVersion")
+            }
 
-                    val rejection = when {
-                        artifactVersionMovedBackwards(
-                            expected.artifactPageVersion,
-                            store.artifactManifest?.pages?.get(pageKey)?.pageVersion,
-                        ) ->
-                            "artifact pageVersion changed"
-                        expected.candidateGenerationId != null &&
-                            expected.candidateGenerationId != store.artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
-                            "candidate generation changed"
-                        // The same candidate-grace rule as persistArtifactMutation
-                        // applies: `candidate != null` grace
-                        // applies — a dependency fingerprint expected against a
-                        // candidate-LESS record (candidate never opened, cleared by an
-                        // abort, or the candidate-less registration a batch start
-                        // performs for a held page) has nothing real to compare
-                        // against, so the mismatch must not reject. Snapshot captures
-                        // arm this clause from the page-snapshot fallback even with no
-                        // candidate, which made every such manual commit a false
-                        // reject. Fail direction preserved: generation, pageVersion,
-                        // candidate generation, block fingerprints, and the lease
-                        // token fences stay fully armed.
-                        expected.dependencyFingerprint != null &&
-                            store.artifactManifest?.pages?.get(pageKey)?.candidate != null &&
-                            expected.dependencyFingerprint != store.artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
-                            "candidate dependency fingerprint changed"
-                        expected.blockFingerprints != null &&
-                            expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
-                            "block fingerprint changed"
-                        expected.leaseToken != null && store.pageLeases[pageKey]?.token != expected.leaseToken ->
-                            "page lease token changed"
-                        expected.leaseToken == null && store.pageLeases[pageKey] != null ->
-                            "page lease token required"
-                        else -> null
-                    }
-                    if (rejection != null) {
-                        rejected(pageKey, description, rejection)
-                    } else {
-                        val candidate = try {
-                            patch(current?.detachedCopy())
-                        } catch (failure: IllegalArgumentException) {
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                failure.message ?: failure::class.java.simpleName,
-                            )
-                        } catch (failure: IllegalStateException) {
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                failure.message ?: failure::class.java.simpleName,
-                            )
-                        }
-                        val updated = store.ownedPage(pageKey, candidate)
-                        store.pages = store.pages.put(pageKey, store.publishPage(updated))
-                        if (!publishLocked(current, updated, expected)) {
-                            restorePageLocked(pageKey, current)
-                            return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-                        }
-                        PatchResult.Accepted(store.snapshotLocked(pageKey))
-                    }
+            val rejection = when {
+                artifactVersionMovedBackwards(
+                    expected.artifactPageVersion,
+                    store.artifactManifest?.pages?.get(pageKey)?.pageVersion,
+                ) ->
+                    "artifact pageVersion changed"
+                expected.candidateGenerationId != null &&
+                    expected.candidateGenerationId != store.artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
+                    "candidate generation changed"
+                // The same candidate-grace rule as persistArtifactMutation
+                // applies: `candidate != null` grace
+                // applies — a dependency fingerprint expected against a
+                // candidate-LESS record (candidate never opened, cleared by an
+                // abort, or the candidate-less registration a batch start
+                // performs for a held page) has nothing real to compare
+                // against, so the mismatch must not reject. Snapshot captures
+                // arm this clause from the page-snapshot fallback even with no
+                // candidate, which made every such manual commit a false
+                // reject. Fail direction preserved: generation, pageVersion,
+                // candidate generation, block fingerprints, and the lease
+                // token fences stay fully armed.
+                expected.dependencyFingerprint != null &&
+                    store.artifactManifest?.pages?.get(pageKey)?.candidate != null &&
+                    expected.dependencyFingerprint != store.artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
+                    "candidate dependency fingerprint changed"
+                expected.blockFingerprints != null &&
+                    expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                    "block fingerprint changed"
+                expected.leaseToken != null && store.pageLeases[pageKey]?.token != expected.leaseToken ->
+                    "page lease token changed"
+                expected.leaseToken == null && store.pageLeases[pageKey] != null ->
+                    "page lease token required"
+                else -> null
+            }
+            if (rejection != null) {
+                rejected(pageKey, description, rejection)
+            } else {
+                val candidate = try {
+                    patch(current?.detachedCopy())
+                } catch (failure: IllegalArgumentException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                } catch (failure: IllegalStateException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                }
+                val updated = store.ownedPage(pageKey, candidate)
+                store.pages = store.pages.put(pageKey, store.publishPage(updated))
+                if (!publishLocked(current, updated, expected)) {
+                    restorePageLocked(pageKey, current)
+                    return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+                }
+                PatchResult.Accepted(store.snapshotLocked(pageKey))
+            }
         }
     }
 
@@ -141,59 +140,59 @@ internal class ChapterPageMutations(
     ): PatchResult {
         if (store.isDefunct) return rejected(pageKey, description, "store is defunct")
         return mutex.withLock {
-                    when (val admission = store.publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                            detail = admission.toPatchRejectionDetail(),
-                        )
-                    }
-                    val rejection = pageWriteRejection(pageKey, expected)
-                    if (rejection != null) {
-                        val actual = store.snapshotLocked(pageKey)
-                        val actualLeaseToken = store.pageLeases[pageKey]?.token
-                        store.lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
-                            pageKey,
-                            "description" to description,
-                            "reason" to rejection.reason,
-                            "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                                "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
-                                "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
-                            "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                                "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
-                                "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
-                        )
-                        rejected(pageKey, description, rejection.reason, rejection.detail)
-                    } else {
-                        val previous = store.pages[pageKey]?.toDraft()
-                        val updated = store.ownedPage(pageKey, update(previous?.detachedCopy()))
-                        store.pages = store.pages.put(pageKey, store.publishPage(updated))
-                        if (!publishLocked(previous, updated, expected)) {
-                            restorePageLocked(pageKey, previous)
-                            val actual = store.snapshotLocked(pageKey)
-                            store.lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
-                                pageKey,
-                                "description" to description,
-                                "reason" to "ARTIFACT_PUBLICATION_FAILED",
-                                "artifactPublication" to (store.publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
-                                "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
-                                    "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
-                                    "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
-                                "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
-                                    "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
-                                    "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
-                            )
-                            return@withLock rejected(
-                                pageKey,
-                                description,
-                                "ARTIFACT_PUBLICATION_FAILED",
-                                PatchResult.Rejected.Detail.ArtifactPublicationFailed,
-                            )
-                        }
-                        PatchResult.Accepted(store.snapshotLocked(pageKey))
-                    }
+            when (val admission = store.publicationBridge.admitMutation()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                    detail = admission.toPatchRejectionDetail(),
+                )
+            }
+            val rejection = pageWriteRejection(pageKey, expected)
+            if (rejection != null) {
+                val actual = store.snapshotLocked(pageKey)
+                val actualLeaseToken = store.pageLeases[pageKey]?.token
+                store.lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
+                    pageKey,
+                    "description" to description,
+                    "reason" to rejection.reason,
+                    "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                        "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
+                        "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
+                    "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                        "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
+                        "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
+                )
+                rejected(pageKey, description, rejection.reason, rejection.detail)
+            } else {
+                val previous = store.pages[pageKey]?.toDraft()
+                val updated = store.ownedPage(pageKey, update(previous?.detachedCopy()))
+                store.pages = store.pages.put(pageKey, store.publishPage(updated))
+                if (!publishLocked(previous, updated, expected)) {
+                    restorePageLocked(pageKey, previous)
+                    val actual = store.snapshotLocked(pageKey)
+                    store.lastGuardedWriteRejectionDiagnostic = formatWriteDiagnostic(
+                        pageKey,
+                        "description" to description,
+                        "reason" to "ARTIFACT_PUBLICATION_FAILED",
+                        "artifactPublication" to (store.publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "reason unavailable"),
+                        "expected" to "{generation=${expected.generation}, pageVersion=${expected.pageVersion}, " +
+                            "artifactPageVersion=${expected.artifactPageVersion}, candidateGenerationId=${expected.candidateGenerationId}, " +
+                            "dependencyFingerprint=${expected.dependencyFingerprint}, leaseToken=${expected.leaseToken}}",
+                        "actual" to "{generation=${actual.generation}, pageVersion=${actual.pageVersion}, " +
+                            "artifactPageVersion=${actual.artifactPageVersion}, candidateGenerationId=${actual.candidateGenerationId}, " +
+                            "dependencyFingerprint=${actual.dependencyFingerprint}, leaseToken=${actual.leaseToken}}",
+                    )
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        "ARTIFACT_PUBLICATION_FAILED",
+                        PatchResult.Rejected.Detail.ArtifactPublicationFailed,
+                    )
+                }
+                PatchResult.Accepted(store.snapshotLocked(pageKey))
+            }
         }
     }
 
@@ -210,76 +209,76 @@ internal class ChapterPageMutations(
     ): TranslationPublicationReconciliation {
         if (store.isDefunct) return TranslationPublicationReconciliation.Deferred("store is defunct")
         return mutex.withLock {
-                    when (val admission = store.publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> {
-                            return@withLock TranslationPublicationReconciliation.Deferred(
-                                "${admission.code}: ${admission.message}",
-                            )
-                        }
-                    }
+            when (val admission = store.publicationBridge.admitMutation()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    return@withLock TranslationPublicationReconciliation.Deferred(
+                        "${admission.code}: ${admission.message}",
+                    )
+                }
+            }
 
-                    val actual = store.snapshotLocked(pageKey)
-                    val lease = store.pageLeases[pageKey]
-                    val identityDrift = when {
-                        actual.generation != expected.generation || store.generation != expected.generation ->
-                            "generation changed"
-                        expected.leaseToken == null ||
-                            lease == null ||
-                            lease.origin != PageWriteOrigin.BATCH ||
-                            lease.token != expected.leaseToken ||
-                            lease.generation != expected.generation ->
-                            "active BATCH lease changed"
-                        actual.candidateGenerationId != expected.candidateGenerationId ->
-                            "candidate generation changed"
-                        actual.dependencyFingerprint != expected.dependencyFingerprint ->
-                            "dependency fingerprint changed"
-                        actual.artifactPageVersion != expected.artifactPageVersion ->
-                            "artifact page version changed"
-                        expected.blockFingerprints != null &&
-                            actual.blockFingerprints != expected.blockFingerprints ->
-                            "block fingerprint changed"
-                        actual.pageVersion == expected.pageVersion ->
-                            "page version no longer differs"
-                        candidate.sourceFileName != pageKey ->
-                            "candidate page identity changed"
-                        candidate.translationStatus != StageStatus.READY ->
-                            "candidate is not a completed translation"
-                        else -> null
-                    }
-                    if (identityDrift != null) {
-                        return@withLock TranslationPublicationReconciliation.Deferred(identityDrift)
-                    }
+            val actual = store.snapshotLocked(pageKey)
+            val lease = store.pageLeases[pageKey]
+            val identityDrift = when {
+                actual.generation != expected.generation || store.generation != expected.generation ->
+                    "generation changed"
+                expected.leaseToken == null ||
+                    lease == null ||
+                    lease.origin != PageWriteOrigin.BATCH ||
+                    lease.token != expected.leaseToken ||
+                    lease.generation != expected.generation ->
+                    "active BATCH lease changed"
+                actual.candidateGenerationId != expected.candidateGenerationId ->
+                    "candidate generation changed"
+                actual.dependencyFingerprint != expected.dependencyFingerprint ->
+                    "dependency fingerprint changed"
+                actual.artifactPageVersion != expected.artifactPageVersion ->
+                    "artifact page version changed"
+                expected.blockFingerprints != null &&
+                    actual.blockFingerprints != expected.blockFingerprints ->
+                    "block fingerprint changed"
+                actual.pageVersion == expected.pageVersion ->
+                    "page version no longer differs"
+                candidate.sourceFileName != pageKey ->
+                    "candidate page identity changed"
+                candidate.translationStatus != StageStatus.READY ->
+                    "candidate is not a completed translation"
+                else -> null
+            }
+            if (identityDrift != null) {
+                return@withLock TranslationPublicationReconciliation.Deferred(identityDrift)
+            }
 
-                    val current = actual.page
-                        ?: return@withLock TranslationPublicationReconciliation.Deferred("page missing")
-                    if (sameTranslationOutput(current, candidate) && translationOutputIsDurableLocked(pageKey, current)) {
-                        return@withLock TranslationPublicationReconciliation.AlreadyDurable(actual)
-                    }
-                    val rebasedBlocks = rebaseTranslationBlocks(current, candidate)
-                        ?: return@withLock TranslationPublicationReconciliation.Deferred(
-                            "translation candidate block identity changed",
-                        )
+            val current = actual.page
+                ?: return@withLock TranslationPublicationReconciliation.Deferred("page missing")
+            if (sameTranslationOutput(current, candidate) && translationOutputIsDurableLocked(pageKey, current)) {
+                return@withLock TranslationPublicationReconciliation.AlreadyDurable(actual)
+            }
+            val rebasedBlocks = rebaseTranslationBlocks(current, candidate)
+                ?: return@withLock TranslationPublicationReconciliation.Deferred(
+                    "translation candidate block identity changed",
+                )
 
-                    val updated = current.detachedCopy().apply {
-                        blocks = rebasedBlocks
-                        translationStatus = candidate.translationStatus
-                        translationError = candidate.translationError
-                        translationFingerprint = candidate.translationFingerprint
-                        translationOrigin = candidate.translationOrigin
-                        sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
-                    }
-                    val owned = store.ownedPage(pageKey, updated)
-                    val expectedCurrent = actual.toPrecondition()
-                    store.pages = store.pages.put(pageKey, store.publishPage(owned))
-                    if (!publishLocked(current, owned, expectedCurrent)) {
-                        restorePageLocked(pageKey, current)
-                        TranslationPublicationReconciliation.PublicationFailed(
-                            store.publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
-                        )
-                    } else {
-                        TranslationPublicationReconciliation.Rebased(store.snapshotLocked(pageKey))
-                    }
+            val updated = current.detachedCopy().apply {
+                blocks = rebasedBlocks
+                translationStatus = candidate.translationStatus
+                translationError = candidate.translationError
+                translationFingerprint = candidate.translationFingerprint
+                translationOrigin = candidate.translationOrigin
+                sourceFingerprint = candidate.sourceFingerprint ?: sourceFingerprint
+            }
+            val owned = store.ownedPage(pageKey, updated)
+            val expectedCurrent = actual.toPrecondition()
+            store.pages = store.pages.put(pageKey, store.publishPage(owned))
+            if (!publishLocked(current, owned, expectedCurrent)) {
+                restorePageLocked(pageKey, current)
+                TranslationPublicationReconciliation.PublicationFailed(
+                    store.publicationBridge.lastArtifactPublicationRejectionDiagnostic ?: "ARTIFACT_PUBLICATION_FAILED",
+                )
+            } else {
+                TranslationPublicationReconciliation.Rebased(store.snapshotLocked(pageKey))
+            }
         }
     }
 
@@ -331,43 +330,43 @@ internal class ChapterPageMutations(
     ): PatchResult {
         if (store.isDefunct) return rejected(pageKey, description, "store is defunct")
         return mutex.withLock {
-                    when (val admission = store.publicationBridge.admitMutation()) {
-                        MutationAdmission.Granted -> Unit
-                        is MutationAdmission.Rejected -> return@withLock rejected(
-                            pageKey,
-                            description,
-                            "${admission.code}: ${admission.message}",
-                        )
-                    }
-                    val rejection = pageWriteRejection(pageKey, expected)
-                    if (rejection != null) {
-                        return@withLock rejected(pageKey, description, rejection.reason, rejection.detail)
-                    }
-                    val previous = store.pages[pageKey]?.toDraft()
-                    val updated = try {
-                        store.ownedPage(pageKey, update(previous?.detachedCopy()))
-                    } catch (error: IllegalArgumentException) {
-                        return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
-                    } catch (error: IllegalStateException) {
-                        return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
-                    }
-                    store.pages = store.pages.put(pageKey, store.publishPage(updated))
-                    val persisted = store.publicationBridge.persistArtifactMutation(
-                        pageKey = pageKey,
-                        previous = previous,
-                        updated = updated,
-                        expected = expected,
-                        durableFailure = failure,
-                    )
-                    if (!persisted) {
-                        restorePageLocked(pageKey, previous)
-                        return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
-                    }
-                    // A retryable/terminal candidate is deliberately not promoted. The
-                    // prior committed display remains the reader authority.
-                    store.stateFlow.value = store.snapshotPages()
-                    store.displayPublication.displaySnapshotLocked(listOf(pageKey))
-                    PatchResult.Accepted(store.snapshotLocked(pageKey))
+            when (val admission = store.publicationBridge.admitMutation()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
+            val rejection = pageWriteRejection(pageKey, expected)
+            if (rejection != null) {
+                return@withLock rejected(pageKey, description, rejection.reason, rejection.detail)
+            }
+            val previous = store.pages[pageKey]?.toDraft()
+            val updated = try {
+                store.ownedPage(pageKey, update(previous?.detachedCopy()))
+            } catch (error: IllegalArgumentException) {
+                return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
+            } catch (error: IllegalStateException) {
+                return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
+            }
+            store.pages = store.pages.put(pageKey, store.publishPage(updated))
+            val persisted = store.publicationBridge.persistArtifactMutation(
+                pageKey = pageKey,
+                previous = previous,
+                updated = updated,
+                expected = expected,
+                durableFailure = failure,
+            )
+            if (!persisted) {
+                restorePageLocked(pageKey, previous)
+                return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+            }
+            // A retryable/terminal candidate is deliberately not promoted. The
+            // prior committed display remains the reader authority.
+            store.stateFlow.value = store.snapshotPages()
+            store.displayPublication.displaySnapshotLocked(listOf(pageKey))
+            PatchResult.Accepted(store.snapshotLocked(pageKey))
         }
     }
 
@@ -474,7 +473,6 @@ internal class ChapterPageMutations(
         store.displayPublication.displaySnapshotLocked(listOf(pageKey))
     }
 
-
     internal fun rejected(
         pageKey: String,
         description: String,
@@ -530,7 +528,6 @@ internal class ChapterPageMutations(
     // reset, resolver, and batch callers. The drain owns queued lazy image
     // writes; artifact snapshots are published by the artifact engine inline.
 
-
     internal fun pageWriteRejection(pageKey: String, expected: PatchPrecondition): PageWriteRejection? {
         val current = store.pages[pageKey]
         val artifactPage = store.artifactManifest?.pages?.get(pageKey)
@@ -576,8 +573,6 @@ internal class ChapterPageMutations(
         }
     }
 
-
-
     internal suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         if (store.isDefunct) {
             rejected(pageKey, "updatePage", "store is defunct")
@@ -608,5 +603,4 @@ internal class ChapterPageMutations(
         }
         updatePageGuarded(pageKey, expected, "updatePage", update)
     }
-
 }

@@ -202,11 +202,11 @@ internal class ArtifactRetention(
     private fun reachablePaths(manifest: ChapterArtifactManifest): Set<String> = buildSet {
         manifest.pages.values.forEach { page ->
             listOfNotNull(page.committed, page.previousCommitted).forEach { bundle ->
-                                bundle.pageSnapshotFileName?.let(::add)
+                bundle.pageSnapshotFileName?.let(::add)
                 bundle.displayBase.fileName?.let(::add)
             }
             page.candidate?.let {
-                                it.pageSnapshotFileName?.let(::add)
+                it.pageSnapshotFileName?.let(::add)
             }
             listOf(
                 page.detection,

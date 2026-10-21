@@ -1,11 +1,16 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
+import eu.kanade.translation.coordinator.TranslationQueueStore
+import eu.kanade.translation.coordinator.TranslationSessionCoordinator
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.processing.BatchPageOperation
+import eu.kanade.translation.processing.TranslationProcessor
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk

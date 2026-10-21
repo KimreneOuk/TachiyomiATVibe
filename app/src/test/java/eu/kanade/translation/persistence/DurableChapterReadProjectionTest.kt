@@ -2,13 +2,12 @@ package eu.kanade.translation.persistence
 
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.coordinator.withDurablePause
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.coordinator.withDurablePause
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.test.runTest

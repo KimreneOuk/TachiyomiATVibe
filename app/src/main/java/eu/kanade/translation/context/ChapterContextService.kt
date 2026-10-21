@@ -5,8 +5,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ArtifactStageStatus
-import eu.kanade.translation.persistence.PageArtifactRecord
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.PageArtifactRecord
 import java.security.MessageDigest
 
 enum class LaneCapability {

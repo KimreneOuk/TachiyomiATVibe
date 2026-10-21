@@ -1,7 +1,5 @@
 package eu.kanade.translation.persistence
 
-import java.io.InputStream
-import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -11,9 +9,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-
-
-
+import java.io.InputStream
+import java.security.MessageDigest
 
 /** File-system-independent publication ordering used by both translation paths. */
 class CleanedImagePublisher(
@@ -175,7 +172,6 @@ class CleanedImagePublisher(
         data class WriteFailed(val failure: Throwable) : Result
     }
 }
-
 
 /** Stable byte identity for a cleaned image whose legacy name is not content-addressed. */
 @Serializable

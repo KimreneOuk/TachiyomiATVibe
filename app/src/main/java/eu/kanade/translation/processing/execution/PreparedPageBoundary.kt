@@ -2,8 +2,8 @@ package eu.kanade.translation.processing.execution
 
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.isTranslationDisplayReady
 
 /**
  * Failed pages remain retryable. Artifact-ready or genuinely textless pages are terminal;

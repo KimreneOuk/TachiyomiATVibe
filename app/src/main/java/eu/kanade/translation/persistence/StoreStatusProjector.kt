@@ -18,9 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-
-
-
 /**
  * Projection inputs handed to [StoreStatusProjector] by the owning store. The
  * manifest and flows are captured together, then each projection reads each
@@ -99,7 +96,7 @@ internal object ChapterStatusProjection {
                 (
                     manifest.pages[pageKey]?.candidate != null ||
                         (!page.hasRenderedResult && !page.isTextlessTerminal && page.isStageRunning)
-                )
+                    )
         }
         if (hasTerminalDurableFailure || hasInMemoryFailure) return Translation.State.ERROR
         if (hasRetryableDurableFailure) return Translation.State.PAUSED
@@ -149,7 +146,6 @@ internal object ChapterStatusProjection {
             reconciliation.chapterStatus
         }
     }
-
 }
 
 // Durable status and failure views are projected from one store snapshot. The
@@ -182,7 +178,6 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
      */
     fun artifactStatus(): Translation.State? = ChapterStatusProjection.artifactStatus(projectionData())
 }
-
 
 /** Strict page-map projection shared by durable chapter status and batch progress. */
 internal data class ChapterPageReconciliation(
@@ -296,7 +291,6 @@ internal object ChapterPageReconciler {
                 )
     }
 }
-
 
 /**
  * Durable-only projections of a [PageArtifactRecord] (Phase 7 S8): both

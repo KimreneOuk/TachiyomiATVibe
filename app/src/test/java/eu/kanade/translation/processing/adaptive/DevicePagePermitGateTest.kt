@@ -12,16 +12,12 @@ import eu.kanade.translation.diagnostics.TranslationTraceStageObserver
 import eu.kanade.translation.diagnostics.TranslationTraceStageObserverRegistry
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 
@@ -242,7 +238,6 @@ class DevicePagePermitGateTest {
         initialPermit.release()
         gate.activeCount shouldBe 0
     }
-
 
     private class FakeClock(var nowNanos: Long = 0L) : TranslationTraceClock {
         override fun nowNanos(): Long = nowNanos

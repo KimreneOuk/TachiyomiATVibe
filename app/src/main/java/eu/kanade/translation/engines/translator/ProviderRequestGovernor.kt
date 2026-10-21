@@ -7,12 +7,12 @@ import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
 import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
+import eu.kanade.translation.engines.translator.OperationPaidCallLifecycle
 import eu.kanade.translation.engines.translator.retry.RequestRetryBudgetExhaustedException
 import eu.kanade.translation.engines.translator.retry.classifyProviderFailure
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryAttempt
 import eu.kanade.translation.engines.translator.retry.currentRequestRetryBudget
 import eu.kanade.translation.engines.translator.retry.safeAdd
-import eu.kanade.translation.engines.translator.OperationPaidCallLifecycle
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart

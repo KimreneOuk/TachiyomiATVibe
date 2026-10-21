@@ -2,17 +2,11 @@ package eu.kanade.translation.persistence
 
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.persistence.ChapterArtifactEngine.SidecarPublication
-import eu.kanade.translation.persistence.ChapterArtifactEngine.TransactionOutcome
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ChapterArtifactEngine.DestructiveManifestReceipt
-import kotlinx.serialization.json.JsonObject
+import eu.kanade.translation.persistence.ChapterArtifactEngine.TransactionOutcome
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 class ChapterCandidateTransactions internal constructor(
@@ -298,7 +292,7 @@ class ChapterCandidateTransactions internal constructor(
                     translation = promotedTranslation,
                     pageVersion = page.pageVersion + if (persistCandidateSnapshot) 1 else 2,
                 )
-            ),
+                ),
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
             durableFailures = manifest.durableFailures - "$pageKey:${ArtifactStage.TRANSLATION.name}",
             updatedAtEpochMs = nowEpochMs,
@@ -308,6 +302,7 @@ class ChapterCandidateTransactions internal constructor(
         }
         return TransactionOutcome.Committed(updated, generationId)
     }
+
     /** Cancels a live candidate while retaining the committed pointer. */
     fun cancelLiveCandidate(
         manifest: ChapterArtifactManifest,
@@ -468,7 +463,8 @@ class ChapterCandidateTransactions internal constructor(
             val reason = "manifest publication failed; prior manifest remains authoritative"
             return TransactionOutcome.Rejected(
                 reason,
-                candidateOpenState = candidateOpenState,            )
+                candidateOpenState = candidateOpenState,
+            )
         }
         return TransactionOutcome.Committed(
             updated,
@@ -534,7 +530,6 @@ class ChapterCandidateTransactions internal constructor(
         // SAF tree sweep per page made relaunch slow on large chapters;
         // cross-page orphans stay with the chapter-boundary sweep.
         val orphans = buildList {
-            
             listOf(page.detection, page.ocr, page.inpaint, page.translation, page.layout)
                 .filter { it?.generationId == generationId }
                 .forEach { it?.artifactFileName?.let(::add) }
@@ -563,7 +558,6 @@ class ChapterCandidateTransactions internal constructor(
         }
         return null
     }
-
 
     /**
      * Process-death recovery (lifecycle contract §13): a stage persisted as
@@ -628,5 +622,4 @@ class ChapterCandidateTransactions internal constructor(
         ArtifactStage.TRANSLATION -> copy(translation = record)
         ArtifactStage.LAYOUT -> copy(layout = record)
     }
-
 }

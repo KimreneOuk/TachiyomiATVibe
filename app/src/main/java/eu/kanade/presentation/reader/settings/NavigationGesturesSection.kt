@@ -3,8 +3,8 @@ package eu.kanade.presentation.reader.settings
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel

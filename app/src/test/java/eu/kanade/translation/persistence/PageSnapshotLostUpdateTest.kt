@@ -1,8 +1,8 @@
 package eu.kanade.translation.persistence
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.StageFingerprints
+import eu.kanade.translation.model.StageStatus
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers

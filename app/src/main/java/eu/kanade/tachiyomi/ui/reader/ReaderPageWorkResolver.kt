@@ -3,9 +3,9 @@ package eu.kanade.tachiyomi.ui.reader
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.translation.model.onlinePageTranslationKey
 import eu.kanade.translation.coordinator.ReaderPageWork
 import eu.kanade.translation.coordinator.ReaderSessionToken
+import eu.kanade.translation.model.onlinePageTranslationKey
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference

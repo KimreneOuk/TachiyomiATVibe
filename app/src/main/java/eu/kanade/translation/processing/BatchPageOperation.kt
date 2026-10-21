@@ -7,15 +7,13 @@ import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -245,5 +243,4 @@ internal class BatchPageOperation(
         progress.value = value
         onProgress?.invoke(value)
     }
-
 }

@@ -1,13 +1,10 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.persistence.ArtifactStage
-import eu.kanade.translation.persistence.SidecarPointer
-import eu.kanade.translation.persistence.DisplayBaseReference
-import eu.kanade.translation.persistence.DisplayBaseKind
-import eu.kanade.translation.persistence.SourceIdentity
-
-
 import eu.kanade.translation.model.InpaintMaskBox
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.DisplayBaseKind
+import eu.kanade.translation.persistence.DisplayBaseReference
+import eu.kanade.translation.persistence.SourceIdentity
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test

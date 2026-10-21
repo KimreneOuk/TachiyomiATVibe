@@ -1,12 +1,12 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterDataResetController
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.mockk.every
@@ -14,7 +14,6 @@ import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest

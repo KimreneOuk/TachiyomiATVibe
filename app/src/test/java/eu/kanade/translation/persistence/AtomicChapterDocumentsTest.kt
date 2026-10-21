@@ -1,11 +1,5 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.context.*
-import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.TranslationProvenancePage
-import eu.kanade.translation.model.OcrBlockContent
-import eu.kanade.translation.model.EnvelopePlanInputPage
-
 import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceClock

@@ -9,12 +9,12 @@ import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterArtifactLayout
 import eu.kanade.translation.persistence.ChapterArtifactManifest
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.CommittedBundleMetadata
 import eu.kanade.translation.persistence.DisplayBaseKind
 import eu.kanade.translation.persistence.DisplayBaseReference
 import eu.kanade.translation.persistence.FakeChapterDocumentIo
 import eu.kanade.translation.persistence.PageArtifactRecord
-import eu.kanade.translation.persistence.ChapterTranslationStore
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

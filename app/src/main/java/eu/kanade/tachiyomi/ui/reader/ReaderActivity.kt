@@ -74,10 +74,10 @@ import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
-import eu.kanade.tachiyomi.ui.reader.buildTranslationPillUi
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
+import eu.kanade.tachiyomi.ui.reader.buildTranslationPillUi
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -95,8 +95,8 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import eu.kanade.translation.model.Translation
 import eu.kanade.translation.coordinator.TranslationSessionState
+import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -775,7 +775,8 @@ class ReaderActivity : BaseActivity() {
      * Sets the visibility of the menu according to [visible]. Also lifts the
      * floating translation status pill above the navigation dock while the
      * chrome is visible, so the dock never covers active translation feedback.
-     */    private fun setMenuVisibility(visible: Boolean) {
+     */
+    private fun setMenuVisibility(visible: Boolean) {
         viewModel.showMenus(visible)
         translationStatusPill?.let { pill ->
             val marginDp = if (visible) PILL_MARGIN_ABOVE_DOCK_DP else PILL_MARGIN_DP

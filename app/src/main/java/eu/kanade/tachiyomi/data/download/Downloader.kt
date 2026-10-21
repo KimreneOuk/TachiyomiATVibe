@@ -15,6 +15,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.diagnostics.BatchDownloadCause
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.diagnostics.BatchDownloadQueueResult
@@ -23,10 +25,8 @@ import eu.kanade.translation.diagnostics.BatchDownloadStage
 import eu.kanade.translation.diagnostics.BatchDownloadTerminalState
 import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
 import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
-import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.onlinePageTranslationKey
-import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

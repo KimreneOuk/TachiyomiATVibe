@@ -5,10 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import eu.kanade.translation.engines.vision.ocr.PageRecognitionEngine
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.persistence.ArtifactStage
-import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.processing.memory.MemoryGovernance
 import eu.kanade.translation.processing.memory.TranslationMemoryBudget
 import eu.kanade.translation.processing.memory.TranslationMemoryBudget.DecodeDecision

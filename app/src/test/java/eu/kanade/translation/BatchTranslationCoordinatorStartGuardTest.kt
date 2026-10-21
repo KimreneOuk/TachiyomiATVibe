@@ -1,16 +1,16 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import android.content.Context
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.coordinator.InMemorySharedPreferences
 import eu.kanade.translation.coordinator.TranslationQueueStore
+import eu.kanade.translation.coordinator.TranslationSessionCoordinator
+import eu.kanade.translation.coordinator.TranslationSessionState
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.TranslationProcessor
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger
  *   prior run; observed on device as back-to-back `schedule_start` events for
  *   the same chapter with `outcome=cancelled`).
  */
-class BatchTranslationCoordinatorBatchStartGuardTest {
+class BatchTranslationCoordinatorStartGuardTest {
 
     private val chapterId = 21L
     private val chapter = mockk<Chapter>(relaxed = true) {
@@ -105,15 +105,15 @@ class BatchTranslationCoordinatorBatchStartGuardTest {
         resolverRelease: CompletableDeferred<Unit>? = null,
     ) {
         storeResolver = {
-                val now = concurrent.incrementAndGet()
-                maxConcurrent.updateAndGet { previous -> maxOf(previous, now) }
-                try {
-                    resolverEntered?.complete(Unit)
-                    resolverRelease?.let { release -> runBlocking { withTimeout(5_000) { release.await() } } }
-                } finally {
-                    concurrent.decrementAndGet()
-                }
-                null
+            val now = concurrent.incrementAndGet()
+            maxConcurrent.updateAndGet { previous -> maxOf(previous, now) }
+            try {
+                resolverEntered?.complete(Unit)
+                resolverRelease?.let { release -> runBlocking { withTimeout(5_000) { release.await() } } }
+            } finally {
+                concurrent.decrementAndGet()
+            }
+            null
         }
         // Fast ERROR exit after the resolver: no artifact directory resolves,
         // and no chapter dir means the typed pre-pipeline failure exit.

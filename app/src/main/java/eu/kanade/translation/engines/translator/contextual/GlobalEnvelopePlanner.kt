@@ -1,10 +1,10 @@
 package eu.kanade.translation.engines.translator.contextual
 
-import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.model.EnvelopePlan
 import eu.kanade.translation.model.EnvelopePlanInputPage
 import eu.kanade.translation.model.PlannedEnvelope
 import eu.kanade.translation.model.StageFingerprints
+import eu.kanade.translation.persistence.ArtifactDocumentJson
 
 /**
  * Global multi-budget whole-page envelope planning.

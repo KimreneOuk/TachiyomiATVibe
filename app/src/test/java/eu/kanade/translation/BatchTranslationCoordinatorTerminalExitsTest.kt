@@ -1,21 +1,19 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import android.content.Context
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.coordinator.InMemorySharedPreferences
-import eu.kanade.translation.coordinator.TranslationQueueStore
+import eu.kanade.translation.processing.BatchPageOperation
 import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
-import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.util.getChapterPages
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -37,7 +35,6 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
-import com.hippo.unifile.UniFile
 import java.io.InputStream
 import java.lang.reflect.Field
 import java.util.concurrent.TimeUnit

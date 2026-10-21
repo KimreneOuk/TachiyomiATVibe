@@ -1,12 +1,12 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.blockFingerprints
-import eu.kanade.translation.model.isTranslationDisplayReady
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageFingerprints
+import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.model.toDraft
 import eu.kanade.translation.persistence.ChapterArtifactEngine.TransactionOutcome
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
@@ -65,7 +65,7 @@ internal class ChapterDisplayPublication(
         changedPageKeys: Iterable<String>,
     ) {
         val keys = changedPageKeys.toList()
-        store._display.update { current ->
+        store.publishedDisplay.update { current ->
             var updated = current
             keys.forEach { pageKey ->
                 val page = store.pages[pageKey]

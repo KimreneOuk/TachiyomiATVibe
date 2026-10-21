@@ -37,7 +37,6 @@ Open this file and the linked current review before resuming. Continue on one la
 - [Full architecture cleanup roadmap](artifacts/translation-simplicity-investigation/phases/index.md)
 - [Standing execution policy](artifacts/execution-policy/index.md)
 - [Validation audit and cost controls](artifacts/phase-3-implementation/validation-audit/index.md)
-- [Architecture investigation report](../../TachiyomiATVibe_Translation_Simplicity_First_Architecture_Report.md)
 - [All artifact pages](CATALOG.md)
 - [Source/export SHA256 inventory](MANIFEST.json)
 

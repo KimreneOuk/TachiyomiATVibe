@@ -1,12 +1,9 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.CleanedImageLifecycleController
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import io.mockk.every

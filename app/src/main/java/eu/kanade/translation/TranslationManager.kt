@@ -5,43 +5,41 @@ import androidx.annotation.VisibleForTesting
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
-import eu.kanade.translation.coordinator.*
+import eu.kanade.translation.coordinator.ChapterQueuePreflight
+import eu.kanade.translation.coordinator.CompletedDownloadRekeyCoordinator
+import eu.kanade.translation.coordinator.DownloadPageStreamResolver
+import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.coordinator.ReaderTranslationCoordinator
-import eu.kanade.translation.coordinator.TranslationSessionCoordinator
-import eu.kanade.translation.coordinator.TranslationRequestCoordinator
-import eu.kanade.translation.coordinator.TranslationProgressProjection
-import eu.kanade.translation.coordinator.ReaderSessionIntent
 import eu.kanade.translation.coordinator.SessionAdmission
-import eu.kanade.translation.coordinator.TranslationSessionState
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
+import eu.kanade.translation.coordinator.TranslationProgressProjection
+import eu.kanade.translation.coordinator.TranslationRequestCoordinator
+import eu.kanade.translation.coordinator.TranslationSessionCoordinator
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestFailureKind
-import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.persistence.ArtifactManifestProbe
-import eu.kanade.translation.persistence.*
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
+import eu.kanade.translation.persistence.ChapterDataResetController
 import eu.kanade.translation.persistence.ChapterResetPreflight
+import eu.kanade.translation.persistence.ChapterTranslationAccessController
 import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.CleanedImageLifecycleController
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.coordinator.TranslationPendingRequestStore
+import eu.kanade.translation.persistence.chapterResetPreflight
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
-import eu.kanade.translation.coordinator.TranslationStoreResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
@@ -132,6 +130,7 @@ class TranslationManager private constructor(
     internal val testReaderCoordinator: ReaderTranslationCoordinator? get() = testConstruction?.readerCoordinator
     internal val testReaderStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)?
         get() = testConstruction?.readerStoreResolver
+
     /**
      * Application-lifetime scope for one-off init work (queue rehydration). SupervisorJob so a
      * failure in restoreQueue does not cancel unrelated work; IO dispatcher because restoreQueue does DB reads.
@@ -189,7 +188,9 @@ class TranslationManager private constructor(
     val nativeStall: StateFlow<eu.kanade.translation.engines.translator.NativeStallState?>
         get() = processor.nativeStall
 
-    init { initializeTranslationManager() }
+    init {
+        initializeTranslationManager()
+    }
 
     val isRunning: Boolean
         get() = batchCoordinator.isRunning

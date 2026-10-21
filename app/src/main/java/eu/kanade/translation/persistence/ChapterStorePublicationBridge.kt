@@ -3,9 +3,9 @@ package eu.kanade.translation.persistence
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.StageFingerprints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
@@ -312,7 +312,7 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             ?: candidate?.dependencyFingerprint
             ?: StageFingerprints.pageSnapshot(previous ?: updated)
         if (candidate == null || candidate.origin != origin) {
-                val baseManifest = if (candidate != null && candidate.origin != origin) {
+            val baseManifest = if (candidate != null && candidate.origin != origin) {
                 when (val cancelled = engine.candidates.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
                     is ChapterArtifactEngine.TransactionOutcome.Committed -> cancelled.manifest
                     is ChapterArtifactEngine.TransactionOutcome.Rejected -> {

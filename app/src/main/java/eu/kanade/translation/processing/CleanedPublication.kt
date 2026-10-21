@@ -5,15 +5,15 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.stampName
+import eu.kanade.translation.persistence.ArtifactDocumentJson
+import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.CleanedImageIdentity
 import eu.kanade.translation.persistence.CleanedImageIdentitySidecar
-import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.ArtifactDocumentJson
 import eu.kanade.translation.persistence.TranslationFileProvider
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
+import kotlinx.serialization.decodeFromString
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import kotlinx.serialization.decodeFromString
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.NeuralInpaintModel
@@ -85,11 +85,12 @@ internal class CleanedPublication(
                 sidecarBytes?.let { ArtifactDocumentJson.decodeFromString<CleanedImageIdentitySidecar>(it.decodeToString()) }
             }.getOrNull()
             check(
-                sidecar != null && CleanedImageIdentity.verifyExisting(
-                    sidecarBytes = sidecarBytes,
-                    imageName = name,
-                    expectedContentSha256 = sidecar.contentSha256,
-                ) { existingImage?.openInputStream() },
+                sidecar != null &&
+                    CleanedImageIdentity.verifyExisting(
+                        sidecarBytes = sidecarBytes,
+                        imageName = name,
+                        expectedContentSha256 = sidecar.contentSha256,
+                    ) { existingImage?.openInputStream() },
             ) { "cleaned image name is already bound to different or unverified bytes" }
             return CleanedImageWriteResult(name, sidecar.contentSha256)
         }

@@ -1,17 +1,15 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import com.hippo.unifile.FakeUniFile
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
+import eu.kanade.translation.persistence.isFreshOrphanedCleanedImage
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk

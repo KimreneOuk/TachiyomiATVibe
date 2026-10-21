@@ -6,7 +6,6 @@ import eu.kanade.translation.model.PublishedPageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.toDraft
-import eu.kanade.translation.model.toPublishedPage
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.sync.Mutex

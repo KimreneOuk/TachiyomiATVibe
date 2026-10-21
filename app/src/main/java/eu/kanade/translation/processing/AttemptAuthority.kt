@@ -57,9 +57,11 @@ internal class AttemptAuthority(
         if (closed || callerJob?.isCancelled == true) {
             return@withLock rejectedClosed(description)
         }
-        when (val result = store.patchPage(pageKey, precondition, description) { current ->
-            update(current ?: PageTranslation(sourceFileName = pageKey))
-        }) {
+        when (
+            val result = store.patchPage(pageKey, precondition, description) { current ->
+                update(current ?: PageTranslation(sourceFileName = pageKey))
+            }
+        ) {
             is ChapterTranslationStore.PatchResult.Accepted -> {
                 precondition = result.snapshot.toPrecondition()
                 result

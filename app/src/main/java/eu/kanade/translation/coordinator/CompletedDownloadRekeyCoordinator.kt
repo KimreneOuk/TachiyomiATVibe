@@ -1,7 +1,6 @@
 package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.model.Translation
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider

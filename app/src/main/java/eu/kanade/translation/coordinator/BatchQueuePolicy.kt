@@ -1,15 +1,14 @@
 ﻿package eu.kanade.translation.coordinator
 
-import eu.kanade.translation.model.Translation
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.tachiyomi.source.online.HttpSource
-import tachiyomi.domain.translation.TranslationPreferences
+import eu.kanade.translation.model.Translation
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.manga.interactor.GetManga
-import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 

@@ -82,8 +82,11 @@ fun ReaderPageActionsDialog(
             ActionButton(
                 modifier = Modifier.weight(1f),
                 title = stringResource(
-                    if (pageTranslated) tachiyomi.i18n.at.ATMR.strings.reader_page_retranslate_action
-                    else tachiyomi.i18n.at.ATMR.strings.reader_translate,
+                    if (pageTranslated) {
+                        tachiyomi.i18n.at.ATMR.strings.reader_page_retranslate_action
+                    } else {
+                        tachiyomi.i18n.at.ATMR.strings.reader_translate
+                    },
                 ),
                 icon = Icons.Outlined.Save, // fallback icon
                 onClick = {

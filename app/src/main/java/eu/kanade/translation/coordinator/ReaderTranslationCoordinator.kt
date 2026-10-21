@@ -6,18 +6,18 @@ import eu.kanade.translation.model.PageRejectionKind
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.SinglePageOutcome
-import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.LeaseAcquisition
 import eu.kanade.translation.persistence.PageWriteOrigin
-import eu.kanade.translation.processing.adaptive.DevicePermitPriority
 import eu.kanade.translation.processing.MemoryPressurePolicy
 import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.processing.TranslationStageSignal
+import eu.kanade.translation.processing.adaptive.DevicePermitPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -109,8 +109,10 @@ internal class ReaderTranslationCoordinator(
     private val outcomeStates = ConcurrentHashMap<String, MutableStateFlow<Map<String, SinglePageOutcome>>>()
     private val outcomeLock = Any()
     private val staleOutcomes = MutableStateFlow<Map<String, SinglePageOutcome>>(emptyMap())
+
     @Volatile
     private var activeSessionChapterKey: String? = null
+
     @Volatile
     private var readerStopInFlight = false
 
@@ -274,9 +276,13 @@ internal class ReaderTranslationCoordinator(
         if (chapterKey in chapterCancellations || !admitReaderSession(chapterId) || isBatchActiveForChapter(chapterKey)) return null
         chapterCancellationJobs[chapterKey]?.join()
         return sessionBindingMutex.withLock {
-            if (readerStopInFlight || chapterKey in chapterCancellations ||
-                !admitReaderSession(chapterId) || isBatchActiveForChapter(chapterKey)
-            ) return@withLock null
+            if (readerStopInFlight ||
+                chapterKey in chapterCancellations ||
+                !admitReaderSession(chapterId) ||
+                isBatchActiveForChapter(chapterKey)
+            ) {
+                return@withLock null
+            }
             val previousChapterKey = activeSessionChapterKey
             if (previousChapterKey != null && previousChapterKey != chapterKey) {
                 chapterCancellationJobs[previousChapterKey]?.join()
@@ -284,8 +290,10 @@ internal class ReaderTranslationCoordinator(
             }
             if (chapterKey in chapterCancellations || readerStopInFlight) return@withLock null
             val existing = sessionBindings[chapterKey]
-            if (existing != null && existing.session.key == session.key &&
-                existing.session.store === session.store && existing.computeClass == computeClass
+            if (existing != null &&
+                existing.session.key == session.key &&
+                existing.session.store === session.store &&
+                existing.computeClass == computeClass
             ) {
                 activeSessionChapterKey = chapterKey
                 return@withLock existing.token
@@ -798,11 +806,12 @@ internal class ReaderTranslationCoordinator(
 
     private fun isChapterBatchActive(chapterId: Long, includePaused: Boolean): Boolean =
         batchCoordinator?.queueState?.value?.any { translation ->
-            translation.chapter.id == chapterId && (
-                translation.status == Translation.State.QUEUE ||
-                    translation.status == Translation.State.TRANSLATING ||
-                    (includePaused && translation.status == Translation.State.PAUSED)
-                )
+            translation.chapter.id == chapterId &&
+                (
+                    translation.status == Translation.State.QUEUE ||
+                        translation.status == Translation.State.TRANSLATING ||
+                        (includePaused && translation.status == Translation.State.PAUSED)
+                    )
         } == true
 
     private fun updatePendingCountLocked() {

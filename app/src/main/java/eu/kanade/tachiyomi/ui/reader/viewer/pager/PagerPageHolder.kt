@@ -7,14 +7,14 @@ import android.view.LayoutInflater
 import androidx.core.view.isVisible
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.ui.reader.TranslateButtonMode
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.shouldGhostTranslateButton
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
-import eu.kanade.tachiyomi.ui.reader.TranslateButtonMode
-import eu.kanade.tachiyomi.ui.reader.shouldGhostTranslateButton
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import eu.kanade.translation.diagnostics.TelemetryTrace
@@ -195,7 +195,10 @@ class PagerPageHolder(
         viewer.activity.viewModel.state
             .map { it.menuVisible }
             .distinctUntilChanged()
-            .onEach { menuVisible = it; if (!isPageBeingTranslated()) syncTranslateButtonState() }
+            .onEach {
+                menuVisible = it
+                if (!isPageBeingTranslated()) syncTranslateButtonState()
+            }
             .launchIn(holderScope)
         holderScope.launch {
             Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()

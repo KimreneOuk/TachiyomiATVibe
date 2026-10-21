@@ -1,22 +1,22 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import com.hippo.unifile.FakeUniFile
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.translation.coordinator.TranslationProgressProjection
+import eu.kanade.translation.coordinator.isReconstructibleDurableState
+import eu.kanade.translation.coordinator.reconstructDurableTerminalSnapshot
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.AtomicChapterDocuments
 import eu.kanade.translation.persistence.ChapterArtifactEngine
 import eu.kanade.translation.persistence.ChapterArtifactLayout
-import eu.kanade.translation.persistence.UniFileChapterDocumentIo
-import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.processing.TranslationProcessor
+import eu.kanade.translation.persistence.DurableChapterAccess
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
+import eu.kanade.translation.persistence.UniFileChapterDocumentIo
 import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
 import io.kotest.matchers.shouldBe
 import io.mockk.every

@@ -1,17 +1,12 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.persistence.SourceIdentity
-import eu.kanade.translation.persistence.DisplayBaseReference
-
-import eu.kanade.translation.persistence.SidecarPointer
-import eu.kanade.translation.persistence.DisplayBaseKind
-
-import eu.kanade.translation.persistence.ArtifactStage
-
-
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.persistence.ArtifactStage
+import eu.kanade.translation.persistence.DisplayBaseKind
+import eu.kanade.translation.persistence.DisplayBaseReference
+import eu.kanade.translation.persistence.SourceIdentity
 import java.security.MessageDigest
 import java.text.Normalizer
 

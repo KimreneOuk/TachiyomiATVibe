@@ -78,7 +78,6 @@ enum class FailureCategory {
     LEGACY_UNKNOWN,
 }
 
-
 /** Kind of display base a committed bundle renders over (lifecycle contract §9). */
 enum class DisplayBaseKind {
     /** Validated cleaned image produced by the inpaint stage. */

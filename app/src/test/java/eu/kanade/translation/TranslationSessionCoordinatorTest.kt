@@ -1,9 +1,11 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
+import eu.kanade.translation.coordinator.BatchSessionIntent
+import eu.kanade.translation.coordinator.ReaderSessionIntent
+import eu.kanade.translation.coordinator.SessionAdmission
+import eu.kanade.translation.coordinator.SessionRejection
+import eu.kanade.translation.coordinator.TranslationSessionCoordinator
+import eu.kanade.translation.coordinator.TranslationSessionState
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
@@ -96,5 +98,4 @@ class TranslationSessionCoordinatorTest {
         coordinator.finishSession()
         coordinator.state.value shouldBe TranslationSessionState.IDLE
     }
-
 }

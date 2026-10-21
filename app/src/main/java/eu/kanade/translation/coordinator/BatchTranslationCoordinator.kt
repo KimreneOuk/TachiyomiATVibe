@@ -7,32 +7,29 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.coordinator.TranslationQueueStore
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.ArtifactStage
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.coordinator.TranslationQueueStore
+import eu.kanade.translation.processing.BatchPageOperation
 import eu.kanade.translation.processing.MemoryPressureClass
 import eu.kanade.translation.processing.TranslationProcessor
-import eu.kanade.translation.processing.BatchPageOperation
-import eu.kanade.translation.processing.batch.progress.ReconciliationResult
 import eu.kanade.translation.processing.batch.progress.BatchProgressReconciler
+import eu.kanade.translation.processing.batch.progress.ReconciliationResult
 import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
-import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
-import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -52,9 +49,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.TranslationPreferences
@@ -62,10 +57,10 @@ import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.Closeable
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
-import java.io.Closeable
 
 internal class BatchTranslationCoordinator(
     private val context: Context,
@@ -102,20 +97,21 @@ internal class BatchTranslationCoordinator(
     fun statusFlow(): Flow<Translation> = translationQueueStatusFlow(queueState)
 
     private val activeChapters = ConcurrentHashMap.newKeySet<String>()
-    private val _progressFlows = ConcurrentHashMap<String, MutableStateFlow<BatchPageOperation.Progress>>()
+    private val progressFlows = ConcurrentHashMap<String, MutableStateFlow<BatchPageOperation.Progress>>()
 
     fun isChapterActive(chapterKey: String): Boolean = activeChapters.contains(chapterKey)
 
     fun getProgressFlow(chapterKey: String): StateFlow<BatchPageOperation.Progress>? =
-        _progressFlows[chapterKey]?.asStateFlow()
+        progressFlows[chapterKey]?.asStateFlow()
 
     fun isChapterBatchActive(chapterId: Long, includePaused: Boolean): Boolean =
         queueState.value.any { translation ->
-            translation.chapter.id == chapterId && (
-                translation.status == Translation.State.QUEUE ||
-                    translation.status == Translation.State.TRANSLATING ||
-                    (includePaused && translation.status == Translation.State.PAUSED)
-                )
+            translation.chapter.id == chapterId &&
+                (
+                    translation.status == Translation.State.QUEUE ||
+                        translation.status == Translation.State.TRANSLATING ||
+                        (includePaused && translation.status == Translation.State.PAUSED)
+                    )
         }
 
     val isAnyBatchTranslationActive: Boolean
@@ -740,7 +736,7 @@ internal class BatchTranslationCoordinator(
                                 currentStage = "INITIALIZING",
                             ),
                         )
-                        _progressFlows[chapterKey] = progress
+                        progressFlows[chapterKey] = progress
                         activeChapters.add(chapterKey)
                         try {
                             val streamsByKey = orderedStreams.associate { it.first to it.second }

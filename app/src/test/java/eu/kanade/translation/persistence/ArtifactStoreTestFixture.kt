@@ -1,11 +1,5 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.context.*
-import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.TranslationProvenancePage
-import eu.kanade.translation.model.OcrBlockContent
-import eu.kanade.translation.model.EnvelopePlanInputPage
-
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.hasRenderedResult

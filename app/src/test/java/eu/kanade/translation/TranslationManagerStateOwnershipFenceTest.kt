@@ -1,9 +1,7 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
+import eu.kanade.translation.coordinator.TranslationRequestCoordinator
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Modifier

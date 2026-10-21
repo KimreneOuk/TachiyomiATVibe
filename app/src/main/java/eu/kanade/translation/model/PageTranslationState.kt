@@ -4,6 +4,7 @@ enum class PageStage {
     Ocr,
     Translation,
     Inpaint,
+
     // Retained so persisted legacy page leases can still be decoded.
     Render,
 }

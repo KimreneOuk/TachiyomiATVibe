@@ -1,9 +1,9 @@
 package eu.kanade.tachiyomi.ui.reader
 
-import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslationView
+import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.processing.TranslationStageSignal
 

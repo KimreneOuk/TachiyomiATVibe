@@ -1,6 +1,5 @@
 package eu.kanade.translation.persistence
 
-
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock

@@ -13,12 +13,12 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
+import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.presentation.NotificationAction
 import eu.kanade.translation.presentation.SurfaceVisibility
 import eu.kanade.translation.presentation.TranslationNotificationCopy
 import eu.kanade.translation.presentation.TranslationUiTruth
-import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

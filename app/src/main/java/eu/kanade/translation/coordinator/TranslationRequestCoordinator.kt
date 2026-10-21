@@ -1,16 +1,16 @@
 package eu.kanade.translation.coordinator
 
+import eu.kanade.translation.coordinator.BatchTranslationCoordinator
+import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.translationQueueAdmissionFailureKind
-import eu.kanade.translation.processing.batch.BatchAdmissionContext
-import eu.kanade.translation.coordinator.TranslationPendingRequestRecord
-import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.presentation.TranslationUiProjection
+import eu.kanade.translation.processing.batch.BatchAdmissionContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -24,8 +24,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val REGISTERED_READER_STORE_WAIT_REASON =
     "Waiting for registered reader translation store to close before download re-key"
@@ -96,7 +96,9 @@ internal class TranslationRequestCoordinator(
     }
     private val restoreAdmittedChapterIds = ConcurrentHashMap.newKeySet<Long>()
     private val startupReconciliationOnce = AtomicBoolean(false)
+
     @Volatile private var downloadQueueRestoredChapterIds: Set<Long>? = null
+
     @Volatile private var translationQueueRestoreJob: Job? = null
 
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {

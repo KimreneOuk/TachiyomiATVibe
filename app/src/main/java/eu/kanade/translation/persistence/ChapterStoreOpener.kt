@@ -3,18 +3,15 @@ package eu.kanade.translation.persistence
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
-import eu.kanade.translation.model.PublishedPageTranslation
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.toPublishedPage
-import eu.kanade.translation.model.StageFingerprints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.decodeFromStream
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.ConcurrentHashMap
 
 /** Result of reading manifest metadata without opening page snapshots or sidecars. */

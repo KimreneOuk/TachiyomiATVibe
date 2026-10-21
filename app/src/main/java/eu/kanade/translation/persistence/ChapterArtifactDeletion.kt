@@ -4,9 +4,6 @@ import eu.kanade.translation.model.PageTranslationView
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-
-
-
 /** Result of a chapter artifact deletion attempt. */
 data class ChapterArtifactDeletionResult(
     val manifestRemoved: Boolean,
@@ -57,9 +54,11 @@ class ChapterArtifactDeletionPlan private constructor(
         var checkpointUnverified = false
         val documents = AtomicChapterDocuments(io)
         val engine = ChapterArtifactEngine(documents, layout)
-        when (val receipt = engine.publishDestructiveManifest(
-            ChapterArtifactManifest(chapterKey = layout.chapterKey),
-        )) {
+        when (
+            val receipt = engine.publishDestructiveManifest(
+                ChapterArtifactManifest(chapterKey = layout.chapterKey),
+            )
+        ) {
             is ChapterArtifactEngine.DestructiveManifestReceipt.Complete -> Unit
             is ChapterArtifactEngine.DestructiveManifestReceipt.PrimaryAdvancedBackupIncomplete -> {
                 checkpointUnverified = true
@@ -148,7 +147,6 @@ class ChapterArtifactDeletionPlan private constructor(
         }
     }
 }
-
 
 /**
  * Durable translation data that a chapter reset would affect. Counts are derived

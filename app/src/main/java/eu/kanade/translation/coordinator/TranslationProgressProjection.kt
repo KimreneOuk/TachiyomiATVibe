@@ -1,7 +1,6 @@
 package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.translation.model.BatchRebuildProgress
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation
@@ -10,18 +9,17 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ArtifactStageStatus
+import eu.kanade.translation.persistence.ChapterTranslationStore
+import eu.kanade.translation.persistence.DurableChapterAccess
+import eu.kanade.translation.persistence.DurableChapterState
+import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import eu.kanade.translation.persistence.DurableFailureMetadata
 import eu.kanade.translation.persistence.FailureCategory
 import eu.kanade.translation.persistence.toUiPauseReason
-import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
-import eu.kanade.translation.persistence.ChapterTranslationStore
-import eu.kanade.translation.persistence.DurableChapterState
-import eu.kanade.translation.persistence.DurableChapterAccess
-import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -33,7 +31,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.withContext
 
 /** Builds reader and manga progress from the live page and committed display state. */
 internal fun ChapterTranslationStore.progressSnapshot(
@@ -438,7 +435,7 @@ internal class TranslationProgressProjection(
                 .projectQueueStatus(queueStatus)
                 .withQueuePosition(chapterId)
         }
-.distinctUntilChanged()
+        .distinctUntilChanged()
 
     /** Adds the chapter's position among outstanding queue entries for reader progress. */
     private fun TranslationProgressSnapshot.withQueuePosition(

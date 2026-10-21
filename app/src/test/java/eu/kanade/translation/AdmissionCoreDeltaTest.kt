@@ -1,9 +1,5 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.IntOffset
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
@@ -44,8 +46,6 @@ import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.persistentListOf
 
 /**
  * Reader translation settings sheet with two-level navigation: General (the

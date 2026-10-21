@@ -1,14 +1,11 @@
 package eu.kanade.translation.persistence
 
-import eu.kanade.translation.model.StageFingerprints
-import eu.kanade.translation.model.TranslationProvenancePage
-import eu.kanade.translation.model.OcrBlockContent
-import eu.kanade.translation.model.EnvelopePlanInputPage
-
-
 import eu.kanade.translation.model.InpaintMaskBox
+import eu.kanade.translation.model.OcrBlockContent
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.TranslationProvenancePage
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test

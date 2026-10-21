@@ -1,9 +1,8 @@
 package eu.kanade.translation
 
-import eu.kanade.translation.coordinator.*
-import eu.kanade.translation.persistence.*
-import eu.kanade.translation.processing.*
-
+import eu.kanade.translation.coordinator.QueuedChapterView
+import eu.kanade.translation.coordinator.findRunningSameSourceConflict
+import eu.kanade.translation.coordinator.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize

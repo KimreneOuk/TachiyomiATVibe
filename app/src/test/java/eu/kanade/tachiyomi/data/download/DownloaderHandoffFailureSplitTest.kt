@@ -6,12 +6,12 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.coordinator.DownloadRekeyOutcome
+import eu.kanade.translation.coordinator.InMemorySharedPreferences
+import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
-import eu.kanade.translation.coordinator.InMemorySharedPreferences
-import eu.kanade.translation.coordinator.DownloadRekeyOutcome
-import eu.kanade.translation.coordinator.TranslationPendingRequestStore
-import eu.kanade.translation.TranslationManager
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
