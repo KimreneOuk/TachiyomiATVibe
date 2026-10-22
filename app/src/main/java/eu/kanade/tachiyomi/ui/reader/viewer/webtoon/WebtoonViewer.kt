@@ -32,6 +32,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Implementation of a [Viewer] to display pages with a [RecyclerView].
@@ -310,6 +311,25 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         } else {
             logcat { "Page $page not found in adapter" }
         }
+    }
+
+    /**
+     * Glides smoothly to continuous progress (0.0f..1.0f) without snapping to page boundaries.
+     */
+    fun scrollToFraction(fraction: Float) {
+        val totalItems = adapter.itemCount
+        if (totalItems <= 1) return
+        val clampedFraction = fraction.coerceIn(0f, 1f)
+        val exactProgress = clampedFraction * (totalItems - 1)
+        val position = exactProgress.toInt().coerceIn(0, totalItems - 1)
+        val subFraction = exactProgress - position
+
+        val child = layoutManager.findViewByPosition(position)
+        val itemHeight = child?.height?.takeIf { it > 0 } ?: recycler.height
+        val offsetPx = -(subFraction * itemHeight).roundToInt()
+
+        layoutManager.scrollToPositionWithOffset(position, offsetPx)
+        onScrolled(pos = position)
     }
 
     override val currentReaderPage: ReaderPage?

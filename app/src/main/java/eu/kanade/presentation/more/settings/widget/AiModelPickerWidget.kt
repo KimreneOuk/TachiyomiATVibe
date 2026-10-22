@@ -70,132 +70,159 @@ fun AiModelPickerWidget(
     )
 
     if (isDialogShown) {
-        var query by remember { mutableStateOf("") }
-        var manualDraft by remember(currentModel) { mutableStateOf(currentModel) }
-
-        AlertDialog(
+        AiModelPickerDialog(
+            title = title,
+            currentModel = currentModel,
+            recentModels = recentModels,
+            listState = listState,
+            hasApiKey = hasApiKey,
+            missingConnectionMessage = missingConnectionMessage,
             onDismissRequest = { isDialogShown = false },
-            title = {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
+            onFetchModels = onFetchModels,
+            onSelectModel = onSelectModel,
+            onManualModel = onManualModel,
+        )
+    }
+}
+
+@Composable
+fun AiModelPickerDialog(
+    title: String,
+    currentModel: String,
+    recentModels: List<String>,
+    listState: AiModelListState,
+    hasApiKey: Boolean,
+    missingConnectionMessage: String = "Enter an API key to fetch models",
+    onDismissRequest: () -> Unit,
+    onFetchModels: () -> Unit,
+    onSelectModel: (String) -> Unit,
+    onManualModel: (String) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var manualDraft by remember(currentModel) { mutableStateOf(currentModel) }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = title, modifier = Modifier.weight(1f))
+                IconButton(
+                    enabled = hasApiKey && listState !is AiModelListState.Loading,
+                    onClick = onFetchModels,
                 ) {
-                    Text(text = title, modifier = Modifier.weight(1f))
-                    IconButton(
-                        enabled = hasApiKey && listState !is AiModelListState.Loading,
-                        onClick = onFetchModels,
-                    ) {
-                        if (listState is AiModelListState.Loading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        } else {
-                            Icon(imageVector = Icons.Default.Refresh, contentDescription = "Reload models")
-                        }
+                    if (listState is AiModelListState.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Reload models")
                     }
                 }
-            },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        value = query,
-                        onValueChange = { query = it },
-                        label = { Text("Search models") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    )
+            }
+        },
+        text = {
+            Column {
+                OutlinedTextField(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search models") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                )
 
-                    PickerStatusLine(listState, hasApiKey, missingConnectionMessage)
+                PickerStatusLine(listState, hasApiKey, missingConnectionMessage)
 
-                    Box(modifier = Modifier.weight(1f, fill = false)) {
-                        val state = rememberLazyListState()
-                        ScrollbarLazyColumn(state = state) {
-                            val filteredRecent = recentModels.filter { matchesQuery(it, query) }
-                            val filteredAll = (listState as? AiModelListState.Loaded)?.models
-                                ?.filter { it !in recentModels && matchesQuery(it, query) }
-                                ?: emptyList()
+                Box(modifier = Modifier.weight(1f, fill = false)) {
+                    val state = rememberLazyListState()
+                    ScrollbarLazyColumn(state = state) {
+                        val filteredRecent = recentModels.filter { matchesQuery(it, query) }
+                        val filteredAll = (listState as? AiModelListState.Loaded)?.models
+                            ?.filter { it !in recentModels && matchesQuery(it, query) }
+                            ?: emptyList()
 
-                            if (filteredRecent.isEmpty() && filteredAll.isEmpty()) {
-                                item {
-                                    Text(
-                                        text = emptyMessage(
-                                            listState,
-                                            hasApiKey,
-                                            recentModels,
-                                            missingConnectionMessage,
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier
-                                            .secondaryItemAlpha()
-                                            .padding(vertical = 8.dp),
+                        if (filteredRecent.isEmpty() && filteredAll.isEmpty()) {
+                            item {
+                                Text(
+                                    text = emptyMessage(
+                                        listState,
+                                        hasApiKey,
+                                        recentModels,
+                                        missingConnectionMessage,
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier
+                                        .secondaryItemAlpha()
+                                        .padding(vertical = 8.dp),
+                                )
+                            }
+                        } else {
+                            if (filteredRecent.isNotEmpty()) {
+                                item(key = "header_recent") { SectionHeader("Recent") }
+                                items(filteredRecent, key = { "recent_$it" }) { id ->
+                                    ModelRow(
+                                        modelId = id,
+                                        isSelected = id == currentModel,
+                                        onSelected = {
+                                            onSelectModel(it)
+                                            onDismissRequest()
+                                        },
                                     )
                                 }
-                            } else {
-                                if (filteredRecent.isNotEmpty()) {
-                                    item(key = "header_recent") { SectionHeader("Recent") }
-                                    items(filteredRecent, key = { "recent_$it" }) { id ->
-                                        ModelRow(
-                                            modelId = id,
-                                            isSelected = id == currentModel,
-                                            onSelected = {
-                                                onSelectModel(it)
-                                                isDialogShown = false
-                                            },
-                                        )
-                                    }
-                                }
-                                if (filteredAll.isNotEmpty()) {
-                                    item(key = "header_all") { SectionHeader("All models") }
-                                    items(filteredAll, key = { "all_$it" }) { id ->
-                                        ModelRow(
-                                            modelId = id,
-                                            isSelected = id == currentModel,
-                                            onSelected = {
-                                                onSelectModel(it)
-                                                isDialogShown = false
-                                            },
-                                        )
-                                    }
+                            }
+                            if (filteredAll.isNotEmpty()) {
+                                item(key = "header_all") { SectionHeader("All models") }
+                                items(filteredAll, key = { "all_$it" }) { id ->
+                                    ModelRow(
+                                        modelId = id,
+                                        isSelected = id == currentModel,
+                                        onSelected = {
+                                            onSelectModel(it)
+                                            onDismissRequest()
+                                        },
+                                    )
                                 }
                             }
                         }
-                        if (state.canScrollBackward) HorizontalDivider(modifier = Modifier.align(Alignment.TopCenter))
-                        if (state.canScrollForward) HorizontalDivider(modifier = Modifier.align(Alignment.BottomCenter))
                     }
+                    if (state.canScrollBackward) HorizontalDivider(modifier = Modifier.align(Alignment.TopCenter))
+                    if (state.canScrollForward) HorizontalDivider(modifier = Modifier.align(Alignment.BottomCenter))
+                }
 
-                    Spacer(Modifier.size(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            modifier = Modifier.weight(1f),
-                            value = manualDraft,
-                            onValueChange = { manualDraft = it },
-                            label = { Text("Manual model ID") },
-                            singleLine = true,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedButton(
-                            enabled = manualDraft.isNotBlank() && manualDraft.trim() != currentModel,
-                            onClick = {
-                                onManualModel(manualDraft.trim())
-                                isDialogShown = false
-                            },
-                        ) {
-                            Text("Save")
-                        }
+                Spacer(Modifier.size(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        modifier = Modifier.weight(1f),
+                        value = manualDraft,
+                        onValueChange = { manualDraft = it },
+                        label = { Text("Manual model ID") },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        enabled = manualDraft.isNotBlank() && manualDraft.trim() != currentModel,
+                        onClick = {
+                            onManualModel(manualDraft.trim())
+                            onDismissRequest()
+                        },
+                    ) {
+                        Text("Save")
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { isDialogShown = false }) {
-                    Text(text = stringResource(MR.strings.action_cancel))
-                }
-            },
-        )
-    }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(text = stringResource(MR.strings.action_cancel))
+            }
+        },
+    )
 }
 
 @Composable

@@ -82,6 +82,14 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         firstVisibleItemPosition = layoutManager.findFirstVisibleItemPosition()
     }
 
+    override fun fling(velocityX: Int, velocityY: Int): Boolean {
+        if (currentScale <= 1f) {
+            val boostedVelocityY = (velocityY * 1.25f).toInt()
+            return super.fling(velocityX, boostedVelocityY)
+        }
+        return super.fling(velocityX, velocityY)
+    }
+
     override fun onScrollStateChanged(state: Int) {
         super.onScrollStateChanged(state)
         val layoutManager = layoutManager

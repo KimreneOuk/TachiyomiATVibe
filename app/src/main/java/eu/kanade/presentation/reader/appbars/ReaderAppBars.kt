@@ -28,6 +28,7 @@ import eu.kanade.presentation.reader.components.ReaderQuickActionsMenu
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 
@@ -76,6 +77,7 @@ fun ReaderAppBars(
     onClickTranslate: () -> Unit = {},
 ) {
     val isRtl = viewer is R2LPagerViewer
+    val isWebtoon = viewer is WebtoonViewer || readingMode.type is ReadingMode.ViewerType.Webtoon
     var quickActionsExpanded by remember { mutableStateOf(false) }
 
     // The quick menu lives and dies with the reader chrome: hiding the controls
@@ -166,6 +168,7 @@ fun ReaderAppBars(
 
                     ReaderNavigationDock(
                         isRtl = isRtl,
+                        isWebtoon = isWebtoon,
                         onNextChapter = onNextChapter,
                         enabledNext = enabledNext,
                         onPreviousChapter = onPreviousChapter,
@@ -182,6 +185,20 @@ fun ReaderAppBars(
                     )
                 }
             }
+        }
+
+        if (isWebtoon && totalPages > 1) {
+            ReaderVerticalScrubber(
+                visible = visible,
+                currentPage = currentPage,
+                totalPages = totalPages,
+                onScrollProgress = { fraction ->
+                    (viewer as? WebtoonViewer)?.scrollToFraction(fraction)
+                },
+                modifier = modifierWithInsetsPadding
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp),
+            )
         }
     }
 }

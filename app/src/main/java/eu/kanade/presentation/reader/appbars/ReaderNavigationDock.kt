@@ -37,6 +37,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.R
@@ -58,6 +59,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 @Composable
 fun ReaderNavigationDock(
     isRtl: Boolean,
+    isWebtoon: Boolean = false,
     onNextChapter: () -> Unit,
     enabledNext: Boolean,
     onPreviousChapter: () -> Unit,
@@ -107,7 +109,7 @@ fun ReaderNavigationDock(
                 )
             }
 
-            if (totalPages > 1) {
+            if (!isWebtoon && totalPages > 1) {
                 CompositionLocalProvider(
                     LocalLayoutDirection provides if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                 ) {
@@ -137,6 +139,20 @@ fun ReaderNavigationDock(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
+            } else if (isWebtoon && totalPages > 1) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(ATMR.strings.reader_dock_page_of_pages, currentPage, totalPages),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
             } else {

@@ -70,9 +70,10 @@ fun AdaptiveSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     enableSwipeDismiss: Boolean = true,
+    forceSheetMode: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val isTabletUi = isTabletUi()
+    val isTabletUi = if (forceSheetMode) false else isTabletUi()
 
     Dialog(
         onDismissRequest = onDismissRequest,

@@ -1,23 +1,58 @@
 package eu.kanade.presentation.components.vortex
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * Design tokens for the Vortex deep-charcoal and electric-orange theme.
+ * Design tokens dynamic bridge to the active Tachiyomi Material 3 theme.
  */
 object VortexTokens {
     val CanvasDimmer = Color.Black.copy(alpha = 0.65f)
     val CanvasDimmerZero = Color.Transparent
-    val SheetBackground = Color(0xFF121214)
-    val CardFill = Color(0xFF1E1E22)
-    val CardBorder = Color(0xFF2C2C32)
-    val AccentPrimary = Color(0xFFFF6600)
-    val AccentGlow = Color(0x40FF6600)
-    val TextPrimary = Color(0xFFFFFFFF)
-    val TextMuted = Color(0xFF8E8E93)
-    val TextOnAccent = Color(0xFF000000)
+
+    val SheetBackground: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.surfaceContainerHigh
+
+    val CardFill: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.surfaceContainer
+
+    val CardBorder: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.outlineVariant
+
+    val AccentPrimary: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.primary
+
+    val AccentGlow: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+
+    val TextPrimary: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.onSurface
+
+    val TextMuted: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val TextOnAccent: Color
+        @Composable
+        @ReadOnlyComposable
+        get() = MaterialTheme.colorScheme.onPrimary
 
     val ShapeSheet = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     val ShapeSquircle = RoundedCornerShape(14.dp)
