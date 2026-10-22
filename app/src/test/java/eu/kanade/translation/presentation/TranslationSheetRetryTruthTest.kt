@@ -3,8 +3,11 @@ package eu.kanade.translation.presentation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker
 import io.kotest.assertions.withClue
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -202,5 +205,19 @@ class TranslationSheetRetryTruthTest {
             true,
         )
         truth shouldBe null
+    }
+
+    @Test
+    fun `download failed request phase offers retry control`() {
+        val downloadFailed = TranslationProgressSnapshot.empty(1L, Translation.State.NOT_TRANSLATED)
+            .copy(
+                requestState = TranslationRequestState(
+                    chapterId = 1L,
+                    phase = TranslationRequestPhase.DOWNLOAD_FAILED,
+                ),
+            )
+        val truth = callTruth("forSheetRetryAction", 2, "download failed request", downloadFailed, true)
+        truth.shouldNotBeNull()
+        prop(truth, "label").toString() shouldBe "Retry translation"
     }
 }

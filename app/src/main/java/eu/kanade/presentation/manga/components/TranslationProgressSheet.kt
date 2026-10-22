@@ -50,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +69,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.util.system.activeNetworkState
+import eu.kanade.tachiyomi.util.system.networkStateFlow
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.BatchHeroPhase
@@ -76,10 +80,12 @@ import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.presentation.BatchStatusLineKind
 import eu.kanade.translation.presentation.TranslationUiTruth
 import kotlinx.coroutines.delay
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
@@ -133,6 +139,22 @@ fun TranslationProgressSheet(
     // queue detail) behind the Simple default; the choice is persisted in
     // the translation preferences so it survives sheet reopenings.
     val translationPreferences = remember { Injekt.get<TranslationPreferences>() }
+    val downloadPreferences = remember { Injekt.get<DownloadPreferences>() }
+    val context = LocalContext.current
+    val wifiRequired by downloadPreferences.downloadOnlyOverWifi().changes()
+        .collectAsState(initial = downloadPreferences.downloadOnlyOverWifi().get())
+    val networkState by remember(context) { context.networkStateFlow() }
+        .collectAsState(initial = context.activeNetworkState())
+
+    val isWifiWaiting = !snapshot.aborted && (
+        (wifiRequired && !networkState.isWifi && (
+            snapshot.requestState?.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD ||
+            snapshot.requestState?.phase == TranslationRequestPhase.STARTING ||
+            (snapshot.requestState?.phase == TranslationRequestPhase.DOWNLOAD_FAILED &&
+                snapshot.requestState.failureKind == TranslationRequestFailureKind.DOWNLOADER_STOPPED)
+        )) || snapshot.requestState?.reason?.contains("Wi-Fi", ignoreCase = true) == true
+    )
+
     var advancedView by remember {
         mutableStateOf(translationPreferences.translationProgressSheetAdvancedView().get())
     }
@@ -222,12 +244,7 @@ fun TranslationProgressSheet(
                 }
             }
 
-            //   a terminal persistence-rejected presentation. The
-            // tracker carried the typed rejection reason in the snapshot's
-            // nonDurableFailureReason but nothing rendered it (the abort
-            // banner's twin). Same red-banner presentation as the abort
-            // banner; abort keeps precedence so both banners never stack.
-            // The reason is bounded — it can embed a whole rejection chain.
+            // Red banner for terminal persistence rejection.
             if (snapshot.nonDurableFailure && !snapshot.aborted) {
                 val rejectionReason = snapshot.nonDurableFailureReason.orEmpty().take(200)
                 Surface(
@@ -249,10 +266,64 @@ fun TranslationProgressSheet(
                 }
             }
 
-            // TachiyomiAT  a terminal-aborted (cancelled) or terminal-failed
-            // batch must not dead-end in the banner — offer the restart the truth
-            // projection allows, only when the caller wired a restart callback.
-            // The P5 truth owns label/wording so no surface contradicts another.
+            // Wi-Fi policy waiting banner or download failure banner.
+            if (isWifiWaiting) {
+                Surface(
+                    color = WarningAmber.copy(alpha = 0.15f),
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = WarningAmber,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = stringResource(ATMR.strings.manga_batch_download_wifi_warning),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = stringResource(ATMR.strings.manga_batch_download_wifi_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            } else if (snapshot.requestState?.phase == TranslationRequestPhase.DOWNLOAD_FAILED && !snapshot.aborted) {
+                val failureReason = snapshot.requestState.reason.takeUnless { it.isNullOrBlank() }
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                        Text(
+                            text = if (failureReason != null) {
+                                stringResource(ATMR.strings.manga_batch_phase_download_failed) + " — " + failureReason
+                            } else {
+                                stringResource(ATMR.strings.manga_batch_phase_download_failed)
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
+
+            // Offers restart when truth allows and caller wired a restart callback.
             val sheetRetryTruth = TranslationUiTruth.forSheetRetryAction(snapshot, onRetry != null)
             if (sheetRetryTruth != null && onRetry != null) {
                 Button(

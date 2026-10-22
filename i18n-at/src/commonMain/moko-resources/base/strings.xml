@@ -227,6 +227,8 @@
          numeric 0% / 0/0 while no real translation page total exists yet. -->
     <string name="manga_batch_phase_accepted">Accepted — preparing batch</string>
     <string name="manga_batch_phase_waiting_for_download">Waiting for chapter download</string>
+    <string name="manga_batch_download_wifi_warning">Download waiting for Wi-Fi</string>
+    <string name="manga_batch_download_wifi_hint">Chapter download is paused because \'Only download over Wi-Fi\' is enabled. Connect to Wi-Fi or turn off this setting in Settings &gt; Downloads.</string>
     <string name="manga_batch_phase_downloading">Downloading %1$d%%</string>
     <string name="manga_batch_phase_download_failed">Download failed</string>
     <string name="manga_batch_phase_preparing">Preparing translation batch</string>

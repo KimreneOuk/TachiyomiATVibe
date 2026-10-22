@@ -123,11 +123,16 @@ internal class BatchTranslationCoordinator(
         queueState.value.firstOrNull { it.chapter.id == chapterId }
 
     fun rearmQueuedChapter(chapterId: Long): Boolean {
-        val translation = queuedTranslationOrNull(chapterId) ?: return false
-        if (translation.status == Translation.State.PAUSED || translation.status == Translation.State.ERROR) {
-            translation.status = Translation.State.QUEUE
+        synchronized(queueMutationLock) {
+            val translation = _queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return false
+            if (translation.status == Translation.State.PAUSED || translation.status == Translation.State.ERROR) {
+                translation.status = Translation.State.QUEUE
+                isPaused = false
+                _queueState.update { it.toList() }
+                persistQueue()
+            }
+            return true
         }
-        return true
     }
 
     fun queuePreflight(chapterId: Long?, sourceId: Long): ChapterQueuePreflight {
@@ -414,12 +419,11 @@ internal class BatchTranslationCoordinator(
 
             translationJob = scope.launch {
                 val activeTranslationFlow = queueState.transformLatest { queue ->
-                    if (queue.isEmpty()) return@transformLatest
-                    // Translation.status is mutable state inside each queue item, so observing only
-                    // queueState misses a transition to PAUSED/TRANSLATED and leaves the scheduler
-                    // waiting forever for the old ERROR-only wake-up. Recompute active membership
-                    // whenever any queued item's status changes; a paused item therefore releases
-                    // its source lane while another source/chapter may continue.
+                    if (queue.isEmpty()) {
+                        emit(emptyList())
+                        return@transformLatest
+                    }
+                    // Recompute active wave on queue or status change.
                     combine(queue.map(Translation::statusFlow)) {
                         selectChapterWave(queue)
                     }.distinctUntilChanged().collect { emit(it) }
@@ -429,14 +433,21 @@ internal class BatchTranslationCoordinator(
 
                     activeTranslationFlow.collectLatest { activeTranslations ->
                         val translationJobsToStop = translationJobs.filter { it.key !in activeTranslations }
-                        translationJobsToStop.forEach { (download, job) ->
+                        translationJobsToStop.forEach { (translation, job) ->
                             job.cancel()
-                            translationJobs.remove(download)
+                            translationJobs.remove(translation)
                         }
 
-                        val translationsToStart = activeTranslations.filter { it !in translationJobs }
+                        val translationsToStart = activeTranslations.filter {
+                            translationJobs[it]?.isActive != true
+                        }
                         translationsToStart.forEach { translation ->
-                            translationJobs[translation] = launchTranslationJob(translation)
+                            logcat(LogPriority.INFO) { "BatchTranslationCoordinator: launching job for chapter ${translation.chapter.id}" }
+                            val job = launchTranslationJob(translation)
+                            translationJobs[translation] = job
+                            job.invokeOnCompletion {
+                                translationJobs.remove(translation)
+                            }
                         }
                     }
                 }
@@ -449,14 +460,15 @@ internal class BatchTranslationCoordinator(
         var claimed = false
         try {
             if (chapterId != null) {
-                // Admit one live schedule per chapter. Set.add atomically claims
-                // ownership. A prior run can still be unwinding native work
-                // after cancellation, so wait for it rather than starting a
-                // second run that advances the store generation. The claim is
-                // released in finally after this coroutine fully unwinds.
+                // Admit one live schedule per chapter; releases on coroutine unwind.
+                var retries = 0
                 while (!inFlightChapterIds.add(chapterId)) {
-                    withTimeoutOrNull(IN_FLIGHT_CLAIM_RETRY_MS) {
+                    val waitResult = withTimeoutOrNull(IN_FLIGHT_CLAIM_RETRY_MS) {
                         inFlightClaimReleasedSignal.first()
+                    }
+                    if (waitResult == null && ++retries >= 3) {
+                        logcat(LogPriority.WARN) { "Breaking stale inFlightChapterId claim for chapter $chapterId" }
+                        inFlightChapterIds.remove(chapterId)
                     }
                 }
                 claimed = true
@@ -576,7 +588,13 @@ internal class BatchTranslationCoordinator(
         sourceCountKnown: Boolean = false,
     ) {
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        if (queueState.value.any { it.chapter.id == chapter.id }) return
+        val existing = queueState.value.firstOrNull { it.chapter.id == chapter.id }
+        if (existing != null) {
+            if (existing.status != Translation.State.TRANSLATING) {
+                existing.chapter.id?.let(::rearmQueuedChapter)
+            }
+            return
+        }
         // Invalid persisted configuration must not crash this UI action or
         // queue a batch that would fail every page with the same error. Catch
         // conversion failures and surface them as a toast.
@@ -612,6 +630,9 @@ internal class BatchTranslationCoordinator(
     // exceptional exits (missing files, unexpected exceptions) without the
     // async queue worker.
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
+        logcat(LogPriority.INFO) {
+            "BatchTranslationCoordinator: translateChapterInternal starting for chapter ${translation.chapter.id} (${translation.chapter.name})"
+        }
         var store: ChapterTranslationStore? = null
         var tracker: eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
@@ -667,7 +688,12 @@ internal class BatchTranslationCoordinator(
                 // Each closure reads from the shared reader; it's mmap'd so
                 // reads are seek-based, not re-decompressing.
                 streams = sharedArchive.useEntries { entries ->
-                    entries.filter { it.isFile && ImageUtil.isImage(it.name) }
+                    entries.filter {
+                        it.isFile && ImageUtil.isImage(it.name) {
+                            sharedArchive.getInputStream(it.name)
+                                ?: throw java.io.IOException("Archive entry '${it.name}' could not be opened (mmap)")
+                        }
+                    }
                         .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
                         .map { entry ->
                             Pair(entry.name) {
@@ -889,10 +915,16 @@ internal class BatchTranslationCoordinator(
 
     private fun addToQueue(translation: Translation) {
         synchronized(queueMutationLock) {
-            // queueChapter performs a best-effort preflight before resolving
-            // translation configuration, but restore/queue actions can race;
-            // the mutation itself owns the authoritative duplicate check.
-            if (_queueState.value.any { it.chapter.id == translation.chapter.id }) return
+            val existing = _queueState.value.firstOrNull { it.chapter.id == translation.chapter.id }
+            if (existing != null) {
+                if (existing.status != Translation.State.TRANSLATING) {
+                    existing.status = Translation.State.QUEUE
+                    isPaused = false
+                    _queueState.update { it.toList() }
+                    persistQueue()
+                }
+                return
+            }
             translation.status = Translation.State.QUEUE
             _queueState.update {
                 it + translation
@@ -936,7 +968,9 @@ internal class BatchTranslationCoordinator(
 
     /** Public batch entry: acquire session ownership, start queued work, and expose foreground work. */
     fun startWithSessionAdmission(): Boolean {
-        if (sessionCoordinator?.requestBatchSession(queueState.value.mapNotNull { it.chapter.id }.toSet()) == false) {
+        val chapterIds = queueState.value.mapNotNull { it.chapter.id }.toSet()
+        if (sessionCoordinator?.requestBatchSession(chapterIds) == false) {
+            logcat(LogPriority.WARN) { "BatchTranslationCoordinator: batch session rejected for $chapterIds" }
             return false
         }
         if (!isRunning) start()

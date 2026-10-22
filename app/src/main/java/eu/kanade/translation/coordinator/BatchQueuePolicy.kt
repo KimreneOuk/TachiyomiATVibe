@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.coordinator
+package eu.kanade.translation.coordinator
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.translator.TranslationEngineBuilder
@@ -48,28 +48,15 @@ internal suspend fun resolveTranslationFromChapterId(
     return Translation(source, manga, chapter)
 }
 
-/**
- * The exact wave selection body driven by [BatchTranslationCoordinator.launchTranslatorJob]:
- * QUEUE/TRANSLATING candidates only, the first TRANSLATING entry kept stable
- * and optionally paired with the next queued entry of the same source, then
- * the first source group capped at two. Co-located verbatim so tests can pin
- * the policy on real [Translation] instances without recreating the selection.
- */
+// Wave selection: prioritizes first active source, caps to two concurrent chapters.
 internal fun selectChapterWave(queue: List<Translation>): List<Translation> {
     val candidates = queue.asSequence().filter {
         it.status == Translation.State.QUEUE ||
             it.status == Translation.State.TRANSLATING
     }.toList()
-    // A rearmed paused entry must not preempt a chapter that is
-    // already translating. The queue still serializes by source;
-    // this preference only keeps a live worker stable while the
-    // rearm is idempotently recorded.
     val active = candidates.filter { it.status == Translation.State.TRANSLATING }
     val activeSource = active.firstOrNull()?.source
     val selected = if (active.isNotEmpty()) {
-        // Allow the next queued chapter from the active
-        // source to run native OCR/inpaint while provider
-        // waits are in flight for the active chapter.
         val nextQueue = candidates.firstOrNull {
             it.status == Translation.State.QUEUE &&
                 it !in active &&

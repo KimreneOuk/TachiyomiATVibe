@@ -36,11 +36,22 @@ import kotlin.math.min
 
 object ImageUtil {
 
+    private val SUPPORTED_IMAGE_EXTENSIONS = setOf(
+        "avif",
+        "gif",
+        "heif",
+        "jpg",
+        "jpeg",
+        "jxl",
+        "png",
+        "webp",
+    )
+
     fun isImage(name: String?, openStream: (() -> InputStream)? = null): Boolean {
         if (name == null) return false
 
-        val extension = name.substringAfterLast('.')
-        return ImageType.entries.any { it.extension == extension } || openStream?.let { findImageType(it) } != null
+        val extension = name.substringAfterLast('.').lowercase()
+        return extension in SUPPORTED_IMAGE_EXTENSIONS || openStream?.let { findImageType(it) } != null
     }
 
     fun findImageType(openStream: () -> InputStream): ImageType? {
@@ -572,7 +583,8 @@ object ImageUtil {
         }
     }
 
-    private val optimalImageHeight = getDisplayMaxHeightInPx * 2
+    private val optimalImageHeight
+        get() = getDisplayMaxHeightInPx * 2
 
     /**
      * Taken from Coil

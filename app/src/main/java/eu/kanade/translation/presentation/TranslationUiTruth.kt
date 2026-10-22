@@ -216,26 +216,14 @@ object TranslationUiTruth {
         )
     }
 
-    /**
-     *  the progress sheet's Retry affordance truth (the field defect: a
-     * cancelled batch dead-ended in the sheet's aborted banner with no way
-     * back). Offered ONLY when a restart is actually possible AND the caller
-     * wired the restart callback: a terminal-aborted batch (explicit
-     * cancellation of paid work), a terminal ERROR batch (FINISHED phase +
-     * ERROR state), or a durable READY_WITH_WARNINGS batch that ENDED with
-     * unresolved pages ( field fix, Chapter 21: a persistence-rejected
-     * run surfaced as "Ready (Warnings)" with no way back — the same requeue
-     * as Retry reuses committed pages and re-runs only the remainder).
-     * A successfully FINISHED batch is completion, not a failure state —
-     * never a Retry. Call sites without a callback keep today's banner-only
-     * shape.
-     */
+    /** Progress sheet Retry affordance: offered when restart is wired and batch is in a restartable terminal state. */
     fun forSheetRetryAction(
         snapshot: TranslationProgressSnapshot,
         restartWired: Boolean,
     ): PageUiTruth? {
         if (!restartWired) return null
         val restartableTerminal = snapshot.aborted ||
+            snapshot.requestState?.phase == TranslationRequestPhase.DOWNLOAD_FAILED ||
             (
                 (
                     snapshot.state == Translation.State.ERROR ||
