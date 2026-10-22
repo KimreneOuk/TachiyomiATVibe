@@ -312,4 +312,32 @@
     <string name="translation_advanced_data_summary">Manage saved translation data</string>
     <string name="translation_engine_needs_configuration">Needs setup before it can translate</string>
     <string name="translation_engine_configure_advanced">Set up credentials and model in Advanced settings</string>
+
+    <!-- Batch pre-configuration & execution modes -->
+    <string name="batch_translate_chapters">Translate chapters</string>
+    <string name="batch_execution_section">Execution</string>
+    <string name="batch_execution_standard">Standard</string>
+    <string name="batch_execution_charging_only">Only while charging</string>
+    <string name="batch_continue_background">Continue in background</string>
+    <string name="batch_background_progress_summary">Keep the app open or get notified when done.</string>
+    <string name="batch_waiting_for_charging">Waiting for charger…</string>
+
+    <!-- Batch progress details drawer & stats -->
+    <string name="batch_processing_details">Processing Details</string>
+    <string name="batch_details_swipe_hint">Pipeline status, live details, and more</string>
+    <string name="batch_swipe_up">Swipe up</string>
+    <string name="batch_translating_and_cleaning">Translating &amp; Cleaning</string>
+    <string name="batch_parallel_desc">Detect &amp; OCR completed. Translation and cleaning are running in parallel.</string>
+    <string name="batch_stat_elapsed">Elapsed</string>
+    <string name="batch_stat_remaining">Remaining</string>
+    <string name="batch_stat_speed">Speed</string>
+    <string name="batch_speed_pages_per_min">%1$.1f pages/min</string>
+    <string name="batch_live_status">Live Status</string>
+    <string name="batch_live_current_step">Current step</string>
+    <string name="batch_live_time_elapsed">Time elapsed</string>
+    <string name="batch_live_estimated_remaining">Estimated remaining</string>
+    <string name="batch_live_processing_speed">Processing speed</string>
+    <string name="batch_view_page_progress">View Page Progress</string>
+    <string name="batch_pages_optional">%1$d pages • Optional</string>
+    <string name="batch_background_progress">Background progress</string>
 </resources>

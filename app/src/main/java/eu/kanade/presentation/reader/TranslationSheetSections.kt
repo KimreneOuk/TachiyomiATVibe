@@ -18,6 +18,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
@@ -371,3 +373,31 @@ private fun PendingResetAction.confirmLabel(): String = when (this) {
     PendingResetAction.Everything -> stringResource(ATMR.strings.reader_data_reset_everything)
     PendingResetAction.DeleteChapter -> stringResource(ATMR.strings.reader_data_delete_chapter)
 }
+
+@Composable
+internal fun <T> ColumnScope.EngineListRow(
+    title: String,
+    entries: Map<out T, String>,
+    value: T,
+    onValueChange: (T) -> Unit,
+) {
+    ListPreferenceWidget(
+        value = value,
+        title = title,
+        subtitle = entries[value],
+        icon = null,
+        entries = entries,
+        onValueChange = onValueChange,
+    )
+}
+
+@Composable
+internal fun TranslationSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
+    )
+}
+
