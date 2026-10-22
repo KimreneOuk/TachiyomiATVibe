@@ -98,6 +98,9 @@ class TranslationPreferences(
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)
 
+    fun translationRequireCharging() = preferenceStore.getBoolean("translation_require_charging", false)
+    fun translationContinueInBackground() = preferenceStore.getBoolean("translation_continue_in_background", true)
+
     fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
     fun translationInpaintingNeuralModel(): Preference<NeuralInpaintModel> =

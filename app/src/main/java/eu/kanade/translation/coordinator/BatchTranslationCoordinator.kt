@@ -1,6 +1,7 @@
 package eu.kanade.translation.coordinator
 
 import android.content.Context
+import android.os.BatteryManager
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
@@ -618,7 +619,12 @@ internal class BatchTranslationCoordinator(
             }
             return
         }
-        val translation = Translation(source, manga, chapter, fromLang, toLang)
+        val executionMode = if (translationPreferences.translationRequireCharging().get()) {
+            eu.kanade.translation.model.BatchExecutionMode.ONLY_WHILE_CHARGING
+        } else {
+            eu.kanade.translation.model.BatchExecutionMode.STANDARD
+        }
+        val translation = Translation(source, manga, chapter, fromLang, toLang, executionMode)
         if (sourceCountKnown) {
             translation.probedSourcePageCount = probedSourcePageCount
             translation.sourceCountKnown = true
@@ -632,6 +638,14 @@ internal class BatchTranslationCoordinator(
     internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         logcat(LogPriority.INFO) {
             "BatchTranslationCoordinator: translateChapterInternal starting for chapter ${translation.chapter.id} (${translation.chapter.name})"
+        }
+        if (translation.executionMode == eu.kanade.translation.model.BatchExecutionMode.ONLY_WHILE_CHARGING) {
+            val batteryManager = runCatching { context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager }.getOrNull()
+            if (batteryManager != null && !batteryManager.isCharging) {
+                logcat(LogPriority.INFO) { "Chapter ${translation.chapter.id} paused: waiting for charging" }
+                translation.status = Translation.State.PAUSED
+                return null
+            }
         }
         var store: ChapterTranslationStore? = null
         var tracker: eu.kanade.translation.processing.batch.progress.TranslationBatchProgressTracker? = null

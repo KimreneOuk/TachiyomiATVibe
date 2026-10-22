@@ -6,12 +6,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
+enum class BatchExecutionMode {
+    STANDARD,
+    ONLY_WHILE_CHARGING,
+}
+
 data class Translation(
     val source: HttpSource,
     val manga: Manga,
     val chapter: Chapter,
     val fromLang: TextRecognizerLanguage = TextRecognizerLanguage.CHINESE,
     val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH,
+    val executionMode: BatchExecutionMode = BatchExecutionMode.STANDARD,
 ) {
     @Transient
     private val _statusFlow = MutableStateFlow(State.NOT_TRANSLATED)
