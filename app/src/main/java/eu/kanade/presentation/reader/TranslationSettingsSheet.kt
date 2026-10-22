@@ -7,13 +7,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -21,9 +22,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,9 +45,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
-import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
-import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
-import eu.kanade.presentation.reader.settings.OptionCardRow
+import eu.kanade.presentation.components.ConfigSelectorBox
+import eu.kanade.presentation.components.ConfigSwitchRow
+import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import eu.kanade.translation.engines.translator.AiTranslatorKind
@@ -54,7 +57,6 @@ import eu.kanade.translation.model.TextTranslatorLanguage
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
@@ -67,9 +69,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 /**
  * Modern single-surface reader translation settings sheet.
- * Consolidates the five primary controls (Enable, Auto, From, To, Translator Engine)
- * on a single accessible landing page, with a clean progressive-disclosure accordion
- * for advanced OCR, inpainting, and data management.
+ * Adapts the card-based layout and selector patterns of ConfirmTranslationDialog.
  */
 @Composable
 fun TranslationSettingsSheet(
@@ -104,11 +104,34 @@ fun TranslationSettingsSheet(
 ) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
 
-    val fromLangs = remember {
-        TextRecognizerLanguage.entries.associate { it.name to it.label }.toImmutableMap()
+    var fromMenuOpen by remember { mutableStateOf(false) }
+    var toMenuOpen by remember { mutableStateOf(false) }
+    var translatorMenuOpen by remember { mutableStateOf(false) }
+
+    val currentFromLabel = remember(state.translateFromLanguage) {
+        TextRecognizerLanguage.entries.firstOrNull { it.name.equals(state.translateFromLanguage, true) }?.label
+            ?: state.translateFromLanguage
     }
-    val toLangs = remember {
-        TextTranslatorLanguage.entries.associate { it.name to it.label }.toImmutableMap()
+    val currentToLabel = remember(state.translateToLanguage) {
+        TextTranslatorLanguage.entries.firstOrNull { it.name.equals(state.translateToLanguage, true) }?.label
+            ?: state.translateToLanguage
+    }
+
+    val currentTranslatorLabel = remember(state.engineCategory, state.standardEngine, state.aiEngine) {
+        when (state.engineCategory) {
+            TranslationEngineCategory.STANDARD -> StandardTranslatorKind.entries
+                .firstOrNull { it.name == state.standardEngine.name }?.label ?: state.standardEngine.name
+            TranslationEngineCategory.AI_MODEL -> AiTranslatorKind.entries
+                .firstOrNull { it.engine == state.aiEngine }?.label ?: state.aiEngine.name
+        }
+    }
+
+    val currentModelSubtitle = remember(state.engineCategory, state.aiModel) {
+        if (state.engineCategory == TranslationEngineCategory.AI_MODEL && state.aiModel.isNotBlank()) {
+            "Model: ${state.aiModel}"
+        } else {
+            null
+        }
     }
 
     AdaptiveSheet(
@@ -118,22 +141,40 @@ fun TranslationSettingsSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = MaterialTheme.padding.medium),
-            verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                .padding(MaterialTheme.padding.medium),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Header: Title and Close button
+            // Header: Title + Subtitle + Translate Icon + Close Button
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = MaterialTheme.padding.medium),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = stringResource(ATMR.strings.reader_compare_open_settings),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Translate,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                    Column {
+                        Text(
+                            text = stringResource(ATMR.strings.reader_compare_open_settings),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(ATMR.strings.pref_translation_summary),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 IconButton(onClick = onDismissRequest) {
                     Icon(
                         imageVector = Icons.Outlined.Close,
@@ -142,88 +183,142 @@ fun TranslationSettingsSheet(
                 }
             }
 
-            // Primary Switches
-            SwitchPreferenceWidget(
-                title = stringResource(ATMR.strings.pref_translation_enabled),
-                checked = state.enabled,
-                onCheckedChanged = onTranslationEnabledChange,
-            )
-            SwitchPreferenceWidget(
-                title = stringResource(ATMR.strings.pref_auto_translate),
-                subtitle = stringResource(ATMR.strings.pref_auto_translate_summary),
-                checked = state.autoTranslate,
-                onCheckedChanged = onAutoTranslateChange,
-            )
+            // Quick Switches: Enable & Auto-translate
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ConfigSwitchRow(
+                    title = stringResource(ATMR.strings.pref_translation_enabled),
+                    checked = state.enabled,
+                    onCheckedChange = onTranslationEnabledChange,
+                )
+                ConfigSwitchRow(
+                    title = stringResource(ATMR.strings.pref_auto_translate),
+                    subtitle = stringResource(ATMR.strings.pref_auto_translate_summary),
+                    checked = state.autoTranslate,
+                    onCheckedChange = onAutoTranslateChange,
+                )
+            }
 
-            // Languages Section
-            TranslationSectionLabel(stringResource(ATMR.strings.translation_section_languages))
-            SearchableListPreferenceWidget(
-                value = state.translateFromLanguage,
-                title = stringResource(ATMR.strings.pref_translate_from),
-                subtitle = fromLangs[state.translateFromLanguage],
-                icon = null,
-                entries = fromLangs,
-                recentItems = state.translationRecentLanguagesFrom,
-                onValueChange = onTranslateFromLanguageChange,
-            )
-            SearchableListPreferenceWidget(
-                value = state.translateToLanguage,
-                title = stringResource(ATMR.strings.pref_translate_to),
-                subtitle = toLangs[state.translateToLanguage],
-                icon = null,
-                entries = toLangs,
-                recentItems = state.translationRecentLanguagesTo,
-                onValueChange = onTranslateToLanguageChange,
-            )
-
-            // Translator Section
-            TranslationSectionLabel(stringResource(ATMR.strings.translation_section_translator))
-            OptionCardRow(
-                options = listOf(
-                    stringResource(ATMR.strings.pref_translation_type_standard) to TranslationEngineCategory.STANDARD,
-                    stringResource(ATMR.strings.pref_translation_type_ai) to TranslationEngineCategory.AI_MODEL,
-                ),
-                selected = state.engineCategory,
-                onSelect = onTranslationEngineCategoryChange,
-                perRow = 2,
-            )
-
-            when (state.engineCategory) {
-                TranslationEngineCategory.STANDARD -> {
-                    val engines = remember {
-                        StandardTranslatorKind.entries.associate {
-                            StandardEngine.valueOf(it.name) to it.label
+            // Languages Section: From & To side-by-side
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(ATMR.strings.translation_section_languages),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // From Language Picker
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(ATMR.strings.pref_translate_from),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Box {
+                            ConfigSelectorBox(
+                                text = currentFromLabel,
+                                onClick = { fromMenuOpen = true },
+                            )
+                            DropdownMenu(
+                                expanded = fromMenuOpen,
+                                onDismissRequest = { fromMenuOpen = false },
+                            ) {
+                                TextRecognizerLanguage.entries.forEach { lang ->
+                                    DropdownMenuItem(
+                                        text = { Text(lang.label) },
+                                        onClick = {
+                                            onTranslateFromLanguageChange(lang.name)
+                                            fromMenuOpen = false
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
-                    EngineListRow(
-                        title = stringResource(ATMR.strings.pref_standard_engine),
-                        entries = engines,
-                        value = state.standardEngine,
-                        onValueChange = onTranslationStandardEngineChange,
-                    )
-                }
-                TranslationEngineCategory.AI_MODEL -> {
-                    val providers = remember {
-                        AiTranslatorKind.entries.associate { it.engine to it.label }
-                    }
-                    EngineListRow(
-                        title = stringResource(ATMR.strings.pref_ai_provider),
-                        entries = providers,
-                        value = state.aiEngine,
-                        onValueChange = onTranslationAiEngineChange,
-                    )
-                    if (state.aiModel.isNotBlank()) {
+
+                    // To Language Picker
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Model: ${state.aiModel}",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = stringResource(ATMR.strings.pref_translate_to),
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                         )
+                        Spacer(Modifier.height(4.dp))
+                        Box {
+                            ConfigSelectorBox(
+                                text = currentToLabel,
+                                onClick = { toMenuOpen = true },
+                            )
+                            DropdownMenu(
+                                expanded = toMenuOpen,
+                                onDismissRequest = { toMenuOpen = false },
+                            ) {
+                                TextTranslatorLanguage.entries.forEach { lang ->
+                                    DropdownMenuItem(
+                                        text = { Text(lang.label) },
+                                        onClick = {
+                                            onTranslateToLanguageChange(lang.name)
+                                            toMenuOpen = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            // Stop All Translation button if active
+            // Translator Section: Engine and active model
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(ATMR.strings.translation_section_translator),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    ConfigSelectorBox(
+                        text = currentTranslatorLabel,
+                        onClick = { translatorMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = translatorMenuOpen,
+                        onDismissRequest = { translatorMenuOpen = false },
+                    ) {
+                        StandardTranslatorKind.entries.forEach { kind ->
+                            DropdownMenuItem(
+                                text = { Text(kind.label) },
+                                onClick = {
+                                    onTranslationEngineCategoryChange(TranslationEngineCategory.STANDARD)
+                                    onTranslationStandardEngineChange(StandardEngine.valueOf(kind.name))
+                                    translatorMenuOpen = false
+                                },
+                            )
+                        }
+                        AiTranslatorKind.entries.forEach { kind ->
+                            DropdownMenuItem(
+                                text = { Text(kind.label) },
+                                onClick = {
+                                    onTranslationEngineCategoryChange(TranslationEngineCategory.AI_MODEL)
+                                    onTranslationAiEngineChange(kind.engine)
+                                    translatorMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+                currentModelSubtitle?.let { modelSubtitle ->
+                    Text(
+                        text = modelSubtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            // Stop All Button (if active queue/batch)
             if (queue.isNotEmpty() || (translationBatchProgress != null && translationBatchProgress.donePages < translationBatchProgress.totalPages)) {
                 Button(
                     onClick = onStopAllTranslation,
@@ -231,16 +326,13 @@ fun TranslationSettingsSheet(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
                     ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = MaterialTheme.padding.medium, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(text = stringResource(ATMR.strings.reader_translation_stop_all))
                 }
             }
 
             HorizontalDivider(
-                modifier = Modifier.padding(vertical = 8.dp),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
             )
 
@@ -248,7 +340,6 @@ fun TranslationSettingsSheet(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = MaterialTheme.padding.medium)
                     .clip(RoundedCornerShape(12.dp))
                     .clickable { advancedExpanded = !advancedExpanded },
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
@@ -298,17 +389,15 @@ fun TranslationSettingsSheet(
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     // OCR Model Selection
-                    TranslationSectionLabel(stringResource(ATMR.strings.translation_advanced_ocr))
                     OcrSection(
                         state = state,
                         onOcrModelChange = onOcrModelChange,
                     )
 
                     // Inpainting Mode Selection
-                    TranslationSectionLabel(stringResource(ATMR.strings.translation_section_inpainting))
                     InpaintSection(
                         inpaintingMode = state.inpaintingMode,
                         neuralModel = state.inpaintingNeuralModel,
@@ -317,7 +406,6 @@ fun TranslationSettingsSheet(
                     )
 
                     // Data Management Section
-                    TranslationSectionLabel(stringResource(ATMR.strings.translation_section_data_management))
                     DataManagementSection(
                         onResetTranslationData = onResetTranslationData,
                         onResetInpaintData = onResetInpaintData,

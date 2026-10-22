@@ -45,6 +45,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.presentation.components.ConfigSelectorBox
+import eu.kanade.presentation.components.ConfigSwitchRow
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
@@ -373,33 +375,16 @@ fun ConfirmTranslationDialog(
                 }
 
                 // Continue in background independent switch
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(ATMR.strings.batch_continue_background),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            text = stringResource(ATMR.strings.batch_background_progress_summary),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = continueInBackground,
-                        onCheckedChange = { checked ->
-                            continueInBackground = checked
-                            translationPreferences.translationContinueInBackground().set(checked)
-                        },
-                    )
-                }
+                ConfigSwitchRow(
+                    title = stringResource(ATMR.strings.batch_continue_background),
+                    subtitle = stringResource(ATMR.strings.batch_background_progress_summary),
+                    checked = continueInBackground,
+                    onCheckedChange = { checked ->
+                        continueInBackground = checked
+                        translationPreferences.translationContinueInBackground().set(checked)
+                    },
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
 
             // Advanced settings row
@@ -445,47 +430,6 @@ fun ConfirmTranslationDialog(
                     Text(text = stringResource(ATMR.strings.manga_translate))
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ConfigSelectorBox(
-    text: String,
-    onClick: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            Icon(
-                imageVector = Icons.Filled.ArrowDropDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

@@ -1,12 +1,14 @@
 package eu.kanade.presentation.reader
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,7 +21,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
+import eu.kanade.presentation.components.ConfigSelectorBox
+import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
@@ -35,26 +38,48 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * Technical OCR configuration: model selection. Paddle v6 auto-routes its
- * compute device (GPU-first with CPU fallback), so there is no override.
+ * Technical OCR configuration: model selection.
  */
 @Composable
 internal fun ColumnScope.OcrSection(
     state: TranslationSettingsState,
     onOcrModelChange: (OcrModel) -> Unit,
 ) {
-    EngineListRow(
-        title = stringResource(ATMR.strings.pref_ocr_model),
-        entries = state.ocrModelEntries,
-        value = state.ocrModel,
-        onValueChange = onOcrModelChange,
-    )
+    var ocrMenuOpen by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = stringResource(ATMR.strings.pref_ocr_model),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            ConfigSelectorBox(
+                text = state.ocrModelEntries[state.ocrModel] ?: state.ocrModel.name,
+                onClick = { ocrMenuOpen = true },
+            )
+            DropdownMenu(
+                expanded = ocrMenuOpen,
+                onDismissRequest = { ocrMenuOpen = false },
+            ) {
+                state.ocrModelEntries.forEach { (model, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            onOcrModelChange(model)
+                            ocrMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**
- * Inpainting configuration. Neural modes run on the shared LiteRT GPU
- * delegate with no CPU/NPU fallback — displayed as an honest, non-selectable
- * hardware label rather than a selector the runtime ignores.
+ * Inpainting configuration.
  */
 @Composable
 internal fun ColumnScope.InpaintSection(
@@ -68,43 +93,89 @@ internal fun ColumnScope.InpaintSection(
         "BALANCE" to stringResource(ATMR.strings.pref_inpainting_mode_balance),
         "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
     )
+    var inpaintMenuOpen by remember { mutableStateOf(false) }
+    var neuralMenuOpen by remember { mutableStateOf(false) }
 
-    EngineListRow(
-        title = stringResource(ATMR.strings.pref_inpainting_mode),
-        entries = entries,
-        value = inpaintingMode,
-        onValueChange = onTranslationInpaintingModeChange,
-    )
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = stringResource(ATMR.strings.pref_inpainting_mode),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                ConfigSelectorBox(
+                    text = entries[inpaintingMode] ?: inpaintingMode,
+                    onClick = { inpaintMenuOpen = true },
+                )
+                DropdownMenu(
+                    expanded = inpaintMenuOpen,
+                    onDismissRequest = { inpaintMenuOpen = false },
+                ) {
+                    entries.forEach { (mode, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                onTranslationInpaintingModeChange(mode)
+                                inpaintMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
 
-    if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
-        val neuralModelEntries = mapOf(
-            NeuralInpaintModel.LAMA_LITERT_GPU to stringResource(ATMR.strings.pref_inpainting_mode_lama_gpu),
-            NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
-        )
-        EngineListRow(
-            title = stringResource(ATMR.strings.pref_inpainting_neural_model),
-            entries = neuralModelEntries,
-            value = neuralModel,
-            onValueChange = onTranslationInpaintingNeuralModelChange,
-        )
+        if (inpaintingMode == "BALANCE" || inpaintingMode == "QUALITY") {
+            val neuralModelEntries = mapOf(
+                NeuralInpaintModel.LAMA_LITERT_GPU to stringResource(ATMR.strings.pref_inpainting_mode_lama_gpu),
+                NeuralInpaintModel.AOT_GAN to stringResource(ATMR.strings.pref_inpainting_neural_model_aot_gan),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = stringResource(ATMR.strings.pref_inpainting_neural_model),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    ConfigSelectorBox(
+                        text = neuralModelEntries[neuralModel] ?: neuralModel.name,
+                        onClick = { neuralMenuOpen = true },
+                    )
+                    DropdownMenu(
+                        expanded = neuralMenuOpen,
+                        onDismissRequest = { neuralMenuOpen = false },
+                    ) {
+                        neuralModelEntries.forEach { (model, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    onTranslationInpaintingNeuralModelChange(model)
+                                    neuralMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
 
-        FilterChip(
-            selected = true,
-            onClick = {},
-            enabled = false,
-            label = {
-                Text(text = stringResource(ATMR.strings.pref_inpainting_hardware_gpu_fixed))
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = MaterialTheme.padding.medium),
-        )
-        Text(
-            text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-        )
+            FilterChip(
+                selected = true,
+                onClick = {},
+                enabled = false,
+                label = {
+                    Text(text = stringResource(ATMR.strings.pref_inpainting_hardware_gpu_fixed))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = stringResource(ATMR.strings.pref_inpainting_hardware_override_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -146,7 +217,7 @@ internal fun ColumnScope.ActivitySection(
                 request != null
             )
 
-    if (hasBatchProjection && snapshot != null) {
+    if (snapshot != null && hasBatchProjection) {
         val status = when {
             request?.phase == TranslationRequestPhase.STARTING ->
                 stringResource(ATMR.strings.manga_batch_phase_accepted)
@@ -270,9 +341,7 @@ private fun QueueRow(info: ReaderViewModel.QueuedPageInfo) {
 }
 
 /**
- * Destructive maintenance, separated from normal configuration. Every action
- * requires confirmation; the labels name exactly which artifacts are
- * invalidated. Semantics map 1:1 onto the existing view-model calls.
+ * Destructive maintenance, separated from normal configuration.
  */
 @Composable
 internal fun ColumnScope.DataManagementSection(
@@ -373,31 +442,3 @@ private fun PendingResetAction.confirmLabel(): String = when (this) {
     PendingResetAction.Everything -> stringResource(ATMR.strings.reader_data_reset_everything)
     PendingResetAction.DeleteChapter -> stringResource(ATMR.strings.reader_data_delete_chapter)
 }
-
-@Composable
-internal fun <T> ColumnScope.EngineListRow(
-    title: String,
-    entries: Map<out T, String>,
-    value: T,
-    onValueChange: (T) -> Unit,
-) {
-    ListPreferenceWidget(
-        value = value,
-        title = title,
-        subtitle = entries[value],
-        icon = null,
-        entries = entries,
-        onValueChange = onValueChange,
-    )
-}
-
-@Composable
-internal fun TranslationSectionLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
-    )
-}
-
