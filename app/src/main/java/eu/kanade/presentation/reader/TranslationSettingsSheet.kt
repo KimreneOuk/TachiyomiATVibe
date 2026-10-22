@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,7 +25,6 @@ import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,9 +43,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
-import eu.kanade.presentation.components.ConfigSelectorBox
 import eu.kanade.presentation.components.ConfigSwitchRow
-import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.components.SearchableConfigSelectorBox
+import eu.kanade.presentation.components.SelectorOption
+import eu.kanade.presentation.components.TranslatorChoice
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import eu.kanade.translation.engines.translator.AiTranslatorKind
@@ -69,7 +68,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 /**
  * Modern single-surface reader translation settings sheet.
- * Adapts the card-based layout and selector patterns of ConfirmTranslationDialog.
+ * Adapts the card-based layout and searchable selectors of ConfirmTranslationDialog.
  */
 @Composable
 fun TranslationSettingsSheet(
@@ -104,10 +103,6 @@ fun TranslationSettingsSheet(
 ) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
 
-    var fromMenuOpen by remember { mutableStateOf(false) }
-    var toMenuOpen by remember { mutableStateOf(false) }
-    var translatorMenuOpen by remember { mutableStateOf(false) }
-
     val currentFromLabel = remember(state.translateFromLanguage) {
         TextRecognizerLanguage.entries.firstOrNull { it.name.equals(state.translateFromLanguage, true) }?.label
             ?: state.translateFromLanguage
@@ -132,6 +127,42 @@ fun TranslationSettingsSheet(
         } else {
             null
         }
+    }
+
+    val fromOptions = remember {
+        TextRecognizerLanguage.entries.map { lang ->
+            SelectorOption(
+                value = lang.name,
+                label = lang.label,
+            )
+        }
+    }
+    val toOptions = remember {
+        TextTranslatorLanguage.entries.map { lang ->
+            SelectorOption(
+                value = lang.name,
+                label = lang.label,
+            )
+        }
+    }
+    val standardSubtitle = stringResource(ATMR.strings.pref_translation_type_standard)
+    val aiSubtitle = stringResource(ATMR.strings.pref_translation_type_ai)
+    val translatorOptions = remember(standardSubtitle, aiSubtitle) {
+        val standard: List<SelectorOption<TranslatorChoice>> = StandardTranslatorKind.entries.map { kind ->
+            SelectorOption(
+                value = TranslatorChoice.Standard(StandardEngine.valueOf(kind.name)),
+                label = kind.label,
+                subtitle = standardSubtitle,
+            )
+        }
+        val ai: List<SelectorOption<TranslatorChoice>> = AiTranslatorKind.entries.map { kind ->
+            SelectorOption(
+                value = TranslatorChoice.Ai(kind.engine),
+                label = kind.label,
+                subtitle = aiSubtitle,
+            )
+        }
+        standard + ai
     }
 
     AdaptiveSheet(
@@ -217,26 +248,13 @@ fun TranslationSettingsSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
-                        Box {
-                            ConfigSelectorBox(
-                                text = currentFromLabel,
-                                onClick = { fromMenuOpen = true },
-                            )
-                            DropdownMenu(
-                                expanded = fromMenuOpen,
-                                onDismissRequest = { fromMenuOpen = false },
-                            ) {
-                                TextRecognizerLanguage.entries.forEach { lang ->
-                                    DropdownMenuItem(
-                                        text = { Text(lang.label) },
-                                        onClick = {
-                                            onTranslateFromLanguageChange(lang.name)
-                                            fromMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                        SearchableConfigSelectorBox(
+                            selectedLabel = currentFromLabel,
+                            options = fromOptions,
+                            onSelect = onTranslateFromLanguageChange,
+                            placeholder = stringResource(ATMR.strings.pref_translate_from),
+                            matchAnchorWidth = false,
+                        )
                     }
 
                     // To Language Picker
@@ -247,26 +265,13 @@ fun TranslationSettingsSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
-                        Box {
-                            ConfigSelectorBox(
-                                text = currentToLabel,
-                                onClick = { toMenuOpen = true },
-                            )
-                            DropdownMenu(
-                                expanded = toMenuOpen,
-                                onDismissRequest = { toMenuOpen = false },
-                            ) {
-                                TextTranslatorLanguage.entries.forEach { lang ->
-                                    DropdownMenuItem(
-                                        text = { Text(lang.label) },
-                                        onClick = {
-                                            onTranslateToLanguageChange(lang.name)
-                                            toMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                        SearchableConfigSelectorBox(
+                            selectedLabel = currentToLabel,
+                            options = toOptions,
+                            onSelect = onTranslateToLanguageChange,
+                            placeholder = stringResource(ATMR.strings.pref_translate_to),
+                            matchAnchorWidth = false,
+                        )
                     }
                 }
             }
@@ -278,37 +283,24 @@ fun TranslationSettingsSheet(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    ConfigSelectorBox(
-                        text = currentTranslatorLabel,
-                        onClick = { translatorMenuOpen = true },
-                    )
-                    DropdownMenu(
-                        expanded = translatorMenuOpen,
-                        onDismissRequest = { translatorMenuOpen = false },
-                    ) {
-                        StandardTranslatorKind.entries.forEach { kind ->
-                            DropdownMenuItem(
-                                text = { Text(kind.label) },
-                                onClick = {
-                                    onTranslationEngineCategoryChange(TranslationEngineCategory.STANDARD)
-                                    onTranslationStandardEngineChange(StandardEngine.valueOf(kind.name))
-                                    translatorMenuOpen = false
-                                },
-                            )
+                SearchableConfigSelectorBox(
+                    selectedLabel = currentTranslatorLabel,
+                    options = translatorOptions,
+                    onSelect = { choice ->
+                        when (choice) {
+                            is TranslatorChoice.Standard -> {
+                                onTranslationEngineCategoryChange(TranslationEngineCategory.STANDARD)
+                                onTranslationStandardEngineChange(choice.engine)
+                            }
+                            is TranslatorChoice.Ai -> {
+                                onTranslationEngineCategoryChange(TranslationEngineCategory.AI_MODEL)
+                                onTranslationAiEngineChange(choice.engine)
+                            }
                         }
-                        AiTranslatorKind.entries.forEach { kind ->
-                            DropdownMenuItem(
-                                text = { Text(kind.label) },
-                                onClick = {
-                                    onTranslationEngineCategoryChange(TranslationEngineCategory.AI_MODEL)
-                                    onTranslationAiEngineChange(kind.engine)
-                                    translatorMenuOpen = false
-                                },
-                            )
-                        }
-                    }
-                }
+                    },
+                    placeholder = stringResource(ATMR.strings.translation_section_translator),
+                    matchAnchorWidth = true,
+                )
                 currentModelSubtitle?.let { modelSubtitle ->
                     Text(
                         text = modelSubtitle,

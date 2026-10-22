@@ -1,10 +1,6 @@
 package eu.kanade.presentation.manga.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,20 +11,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,9 +36,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
-import eu.kanade.presentation.components.ConfigSelectorBox
 import eu.kanade.presentation.components.ConfigSwitchRow
-import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.components.SearchableConfigSelectorBox
+import eu.kanade.presentation.components.SelectorOption
+import eu.kanade.presentation.components.TranslatorChoice
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import eu.kanade.translation.model.BatchExecutionMode
@@ -118,10 +110,6 @@ fun ConfirmTranslationDialog(
         mutableStateOf(translationPreferences.translationContinueInBackground().get())
     }
 
-    var fromMenuOpen by remember { mutableStateOf(false) }
-    var toMenuOpen by remember { mutableStateOf(false) }
-    var translatorMenuOpen by remember { mutableStateOf(false) }
-
     val currentFromLabel = remember(selectedFromLangName) {
         TextRecognizerLanguage.entries.firstOrNull { it.name.equals(selectedFromLangName, true) }?.label
             ?: selectedFromLangName
@@ -147,6 +135,42 @@ fun ConfirmTranslationDialog(
         } else {
             null
         }
+    }
+
+    val fromOptions = remember {
+        TextRecognizerLanguage.entries.map { lang ->
+            SelectorOption(
+                value = lang.name,
+                label = lang.label,
+            )
+        }
+    }
+    val toOptions = remember {
+        TextTranslatorLanguage.entries.map { lang ->
+            SelectorOption(
+                value = lang.name,
+                label = lang.label,
+            )
+        }
+    }
+    val standardSubtitle = stringResource(ATMR.strings.pref_translation_type_standard)
+    val aiSubtitle = stringResource(ATMR.strings.pref_translation_type_ai)
+    val translatorOptions = remember(standardSubtitle, aiSubtitle) {
+        val standard: List<SelectorOption<TranslatorChoice>> = StandardTranslatorKind.entries.map { kind ->
+            SelectorOption(
+                value = TranslatorChoice.Standard(StandardEngine.valueOf(kind.name)),
+                label = kind.label,
+                subtitle = standardSubtitle,
+            )
+        }
+        val ai: List<SelectorOption<TranslatorChoice>> = AiTranslatorKind.entries.map { kind ->
+            SelectorOption(
+                value = TranslatorChoice.Ai(kind.engine),
+                label = kind.label,
+                subtitle = aiSubtitle,
+            )
+        }
+        standard + ai
     }
 
     AdaptiveSheet(
@@ -211,27 +235,16 @@ fun ConfirmTranslationDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
-                        Box {
-                            ConfigSelectorBox(
-                                text = currentFromLabel,
-                                onClick = { fromMenuOpen = true },
-                            )
-                            DropdownMenu(
-                                expanded = fromMenuOpen,
-                                onDismissRequest = { fromMenuOpen = false },
-                            ) {
-                                TextRecognizerLanguage.entries.forEach { lang ->
-                                    DropdownMenuItem(
-                                        text = { Text(lang.label) },
-                                        onClick = {
-                                            selectedFromLangName = lang.name
-                                            translationPreferences.translateFromLanguage().set(lang.name)
-                                            fromMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                        SearchableConfigSelectorBox(
+                            selectedLabel = currentFromLabel,
+                            options = fromOptions,
+                            onSelect = { langName ->
+                                selectedFromLangName = langName
+                                translationPreferences.translateFromLanguage().set(langName)
+                            },
+                            placeholder = stringResource(ATMR.strings.pref_translate_from),
+                            matchAnchorWidth = false,
+                        )
                     }
 
                     // To Language Picker
@@ -242,27 +255,16 @@ fun ConfirmTranslationDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
-                        Box {
-                            ConfigSelectorBox(
-                                text = currentToLabel,
-                                onClick = { toMenuOpen = true },
-                            )
-                            DropdownMenu(
-                                expanded = toMenuOpen,
-                                onDismissRequest = { toMenuOpen = false },
-                            ) {
-                                TextTranslatorLanguage.entries.forEach { lang ->
-                                    DropdownMenuItem(
-                                        text = { Text(lang.label) },
-                                        onClick = {
-                                            selectedToLangName = lang.name
-                                            translationPreferences.translateToLanguage().set(lang.name)
-                                            toMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                        SearchableConfigSelectorBox(
+                            selectedLabel = currentToLabel,
+                            options = toOptions,
+                            onSelect = { langName ->
+                                selectedToLangName = langName
+                                translationPreferences.translateToLanguage().set(langName)
+                            },
+                            placeholder = stringResource(ATMR.strings.pref_translate_to),
+                            matchAnchorWidth = false,
+                        )
                     }
                 }
             }
@@ -274,41 +276,28 @@ fun ConfirmTranslationDialog(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    ConfigSelectorBox(
-                        text = currentTranslatorLabel,
-                        onClick = { translatorMenuOpen = true },
-                    )
-                    DropdownMenu(
-                        expanded = translatorMenuOpen,
-                        onDismissRequest = { translatorMenuOpen = false },
-                    ) {
-                        StandardTranslatorKind.entries.forEach { kind ->
-                            DropdownMenuItem(
-                                text = { Text(kind.label) },
-                                onClick = {
-                                    engineCategory = TranslationEngineCategory.STANDARD
-                                    standardEngine = StandardEngine.valueOf(kind.name)
-                                    translationPreferences.translationEngineCategory().set(engineCategory)
-                                    translationPreferences.translationStandardEngine().set(standardEngine)
-                                    translatorMenuOpen = false
-                                },
-                            )
+                SearchableConfigSelectorBox(
+                    selectedLabel = currentTranslatorLabel,
+                    options = translatorOptions,
+                    onSelect = { choice ->
+                        when (choice) {
+                            is TranslatorChoice.Standard -> {
+                                engineCategory = TranslationEngineCategory.STANDARD
+                                standardEngine = choice.engine
+                                translationPreferences.translationEngineCategory().set(engineCategory)
+                                translationPreferences.translationStandardEngine().set(standardEngine)
+                            }
+                            is TranslatorChoice.Ai -> {
+                                engineCategory = TranslationEngineCategory.AI_MODEL
+                                aiEngine = choice.engine
+                                translationPreferences.translationEngineCategory().set(engineCategory)
+                                translationPreferences.translationAiEngine().set(aiEngine)
+                            }
                         }
-                        AiTranslatorKind.entries.forEach { kind ->
-                            DropdownMenuItem(
-                                text = { Text(kind.label) },
-                                onClick = {
-                                    engineCategory = TranslationEngineCategory.AI_MODEL
-                                    aiEngine = kind.engine
-                                    translationPreferences.translationEngineCategory().set(engineCategory)
-                                    translationPreferences.translationAiEngine().set(aiEngine)
-                                    translatorMenuOpen = false
-                                },
-                            )
-                        }
-                    }
-                }
+                    },
+                    placeholder = stringResource(ATMR.strings.translation_section_translator),
+                    matchAnchorWidth = true,
+                )
                 currentModelSubtitle?.let { modelSubtitle ->
                     Text(
                         text = modelSubtitle,
