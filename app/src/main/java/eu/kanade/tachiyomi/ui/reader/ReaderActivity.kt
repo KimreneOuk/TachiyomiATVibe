@@ -62,6 +62,7 @@ import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.TranslationSettingsSheet
+import eu.kanade.presentation.reader.VortexReaderSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.TranslationCompareHandle
 import eu.kanade.presentation.reader.components.ZoomResetAffordance
@@ -639,20 +640,15 @@ class ReaderActivity : BaseActivity() {
                     )
                 }
                 is ReaderViewModel.Dialog.Settings -> {
-                    ReaderSettingsSheet(
+                    VortexReaderSheet(
+                        screenModel = settingsScreenModel,
+                        translationState = translationSettingsState,
+                        initialTab = 0,
+                        translateButtonWithControls = translationSettingsState.translateButtonWithControls,
+                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
                         onDismissRequest = onDismissRequest,
                         onShowMenus = { setMenuVisibility(true) },
                         onHideMenus = { setMenuVisibility(false) },
-                        screenModel = settingsScreenModel,
-                        translateButtonWithControls = translationSettingsState.translateButtonWithControls,
-                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
-                    )
-                }
-                is ReaderViewModel.Dialog.TranslationSettings -> {
-                    TranslationSettingsSheet(
-                        state = translationSettingsState,
-                        onDismissRequest = onDismissRequest,
-                        onStopAllTranslation = { viewModel.stopAllTranslation() },
                         onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
                         onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
@@ -662,22 +658,41 @@ class ReaderActivity : BaseActivity() {
                         onTranslationInpaintingNeuralModelChange = { viewModel.setTranslationInpaintingNeuralModel(it) },
                         onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
                         onTranslationStandardEngineChange = { viewModel.setTranslationStandardEngine(it) },
-                        onTranslationDeeplApiKeyChange = { viewModel.setTranslationDeeplApiKey(it) },
                         onTranslationAiEngineChange = { viewModel.setTranslationAiEngine(it) },
                         onTranslationAiApiKeyChange = { viewModel.setTranslationAiApiKey(it) },
-                        onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
                         onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
-                        onFetchAiModels = { viewModel.fetchAiModels() },
                         onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
                         onResetInpaintData = { viewModel.resetInpaintData() },
                         onResetOcrData = { viewModel.resetOcrData() },
                         onResetEverything = { viewModel.resetEverything() },
-                        onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
-                        queue = translationQueue,
-                        translationProgress = translationProgress,
-                        translationCurrentPage = translationCurrentPage,
-                        translationBatchProgress = translationBatchProgress,
-                        onRetryBatch = viewModel::retryCurrentBatch,
+                    )
+                }
+                is ReaderViewModel.Dialog.TranslationSettings -> {
+                    VortexReaderSheet(
+                        screenModel = settingsScreenModel,
+                        translationState = translationSettingsState,
+                        initialTab = 1,
+                        translateButtonWithControls = translationSettingsState.translateButtonWithControls,
+                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
+                        onDismissRequest = onDismissRequest,
+                        onShowMenus = { setMenuVisibility(true) },
+                        onHideMenus = { setMenuVisibility(false) },
+                        onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
+                        onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
+                        onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
+                        onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
+                        onOcrModelChange = { viewModel.setOcrModel(it) },
+                        onTranslationInpaintingModeChange = { viewModel.setTranslationInpaintingMode(it) },
+                        onTranslationInpaintingNeuralModelChange = { viewModel.setTranslationInpaintingNeuralModel(it) },
+                        onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
+                        onTranslationStandardEngineChange = { viewModel.setTranslationStandardEngine(it) },
+                        onTranslationAiEngineChange = { viewModel.setTranslationAiEngine(it) },
+                        onTranslationAiApiKeyChange = { viewModel.setTranslationAiApiKey(it) },
+                        onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
+                        onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
+                        onResetInpaintData = { viewModel.resetInpaintData() },
+                        onResetOcrData = { viewModel.resetOcrData() },
+                        onResetEverything = { viewModel.resetEverything() },
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {
