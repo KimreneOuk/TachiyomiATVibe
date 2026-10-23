@@ -165,8 +165,12 @@ object EngineMemoryBudget {
             null
         }
 
-        val app = Injekt.get<Application>()
-        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val app = try {
+            Injekt.get<Application>()
+        } catch (_: Throwable) {
+            null
+        }
+        val activityManager = app?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         var lowMem = false
         var sysAvail = 0L
         if (activityManager != null) {

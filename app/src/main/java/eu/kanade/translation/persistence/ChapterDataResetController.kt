@@ -188,7 +188,7 @@ internal class ChapterDataResetController(
         }
 
         // Reconcile batch progress so summary drops cleared data
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
+        reconcileBatchProgress(chapterId)
         return ChapterResetReceipt.incomplete(failures)
     }
 
@@ -292,13 +292,7 @@ internal class ChapterDataResetController(
         }
     }
 
-    private suspend fun reconcileBatchProgress(
-        chapterId: Long,
-        chapterName: String,
-        scanlator: String?,
-        mangaTitle: String,
-        source: Source,
-    ) {
+    private suspend fun reconcileBatchProgress(chapterId: Long) {
         // Refresh the active-store summary after a stage reset so the chapter
         // list can drop stale progress data. Only runs when the store is open
         // (i.e. the reader is active for this chapter); persisted-only chapters
