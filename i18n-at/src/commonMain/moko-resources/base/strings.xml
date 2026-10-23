@@ -4,20 +4,13 @@
     <string name="pref_category_translations">Translations</string>
     <string name="pref_translation_summary">Automatic Translations</string>
     <string name="manga_translate">Translate</string>
-    <string name="translation_reset_title">Reset translation data</string>
-    <string name="translation_reset_summary">%1$d OCR pages · %2$d cleaned pages · %3$d translated blocks</string>
-    <string name="translation_reset_keep_edits">Preserve %1$d manual edits</string>
-    <string name="translation_reset_translation">Reset translation</string>
-    <string name="translation_reset_translation_summary">Keeps OCR and cleaned images; clears translated text and color data.</string>
-    <string name="translation_reset_inpaint">Reset inpaint</string>
-    <string name="translation_reset_inpaint_summary">Keeps OCR and translated text; deletes cleaned images and color data.</string>
-    <string name="translation_reset_ocr">Reset OCR</string>
-    <string name="translation_reset_ocr_summary">Deletes all chapter translation data; pages will be OCRed again.</string>
-    <string name="translation_reset_everything">Delete everything</string>
+    <string name="translation_reset_chapter">Reset Chapter</string>
+    <string name="translation_reset_chapter_summary">Deletes all OCR data, cleaned images and translations for this chapter. Manual edits are removed.</string>
     <string name="manga_translation_progress">Translation progress</string>
     <string name="manga_translation_no_progress">Waiting for the chapter queue to start</string>
     <string name="error_mlkit_language_unsupported">MLKit doesn't support this language</string>
     <string name="pref_show_translations">Show Translations</string>
+    <string name="pref_show_translations_summary">Display rendered translated text on pages</string>
     <string name="pref_reader_font">Reader Font</string>
     <string name="pref_group_setup">Translation Setup</string>
     <string name="pref_translate_from">Translate From</string>
@@ -76,7 +69,6 @@
     <string name="pref_inpainting_hardware_gpu_fixed">GPU (LiteRT FP16)</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translation_stop_all">Stop all translation</string>
-    <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
     <string name="reader_batch_switch_title">Batch translation is active</string>
     <string name="reader_batch_switch_message">Pause batch translation and switch to reader translation?</string>
     <string name="reader_batch_switch_confirm">Pause and switch</string>
@@ -96,18 +88,6 @@
     <string name="reader_zoom_reset">Reset zoom</string>
 
     <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
-    <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>
-    <string name="reader_translation_queue_idle">No pages in the translation queue</string>
-    <string name="reader_translation_queued_count">Queued: %1$d</string>
-    <string name="reader_translation_stage_ocr">OCR</string>
-    <string name="reader_translation_stage_inpaint">Inpaint</string>
-    <string name="reader_translation_stage_translate">Translate</string>
-    <string name="reader_translation_stage_render">Render</string>
-    <string name="reader_translation_stage_running">%1$s…</string>
-    <string name="reader_translation_stage_done">Done</string>
-    <string name="reader_translation_stage_failed">Failed</string>
-    <string name="reader_translation_stage_queued">Queued</string>
-    <string name="reader_translation_page">Page %1$d</string>
 
     <!-- TachiyomiAT: live reader auto-translation feedback -->
 
@@ -143,10 +123,7 @@
     <string name="pref_reader_translate_button_mode_summary_with_controls">The translate button is hidden while reading and appears only with reader controls</string>
 
     <!-- TachiyomiAT: pre-translation confirmation popup (manga screen batch action) -->
-    <string name="translation_confirm_title">Translate this chapter?</string>
-    <string name="translation_confirm_summary">Current settings</string>
     <string name="translation_confirm_dont_show">Don\'t show this again</string>
-    <string name="translation_confirm_open_settings">Translation settings</string>
     <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
     <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
     <string name="pref_batch_relationship_prior">Ambiguous romance resolution (batch)</string>
@@ -155,47 +132,23 @@
     <string name="pref_batch_relationship_prior_male_female">Prefer male/female pairing</string>
 
     <!-- TachiyomiAT: redesigned batch progress sheet (§12 layout) -->
-    <string name="manga_batch_stage_ocr">OCR/Detection</string>
-    <string name="manga_batch_stage_translate">Translation</string>
-    <string name="manga_batch_stage_inpaint">Cleaning</string>
     <!-- TachiyomiAT bug 2 fix: split the old single Render row. Color is
          text-fill color estimation (renderStatus == READY); Display is
          hasRenderedResult, the reader's actual translated-image gate. -->
-    <string name="manga_batch_stage_render">Color</string>
-    <string name="manga_batch_stage_color">Color</string>
-    <string name="manga_batch_stage_display">Display</string>
-    <string name="manga_batch_stage_count">%4$d/%5$d processed · %1$d succeeded · %2$d failed · %3$d skipped</string>
-    <string name="manga_batch_partial">Partial pages: %1$d</string>
     <string name="manga_batch_aborted">Batch aborted: %1$s</string>
-    <string name="manga_batch_not_saved">Batch failed: %1$s</string>
     <string name="manga_batch_retry">Retry translation</string>
-    <string name="manga_batch_failures">Failures</string>
-    <string name="manga_batch_failure_group">• %1$s (pages: %2$s)</string>
     <string name="manga_batch_first_pass">Translating and rendering pages: %1$d/%2$d</string>
     <string name="manga_batch_finalizing">Finishing translation updates</string>
     <string name="manga_batch_page_progress">Page %1$d of %2$d</string>
-    <string name="manga_batch_percent">%1$d%%</string>
     <string name="manga_batch_stage_done">done</string>
-    <string name="manga_batch_stage_running">running</string>
     <string name="manga_batch_stage_failed">failed</string>
     <string name="manga_batch_stage_queued">queued</string>
-    <string name="manga_batch_legend_done">done</string>
-    <string name="manga_batch_legend_active">translating</string>
-    <string name="manga_batch_legend_pending">pending</string>
     <!-- TachiyomiAT: tier-led progress chips. Each page chip carries two
          stage blocks; Ready is the committed reader display projection, while
          Processed includes terminal failures and textless pages. -->
     <string name="manga_batch_tier_readable">Ready</string>
-    <string name="manga_batch_tier_final">Processed</string>
-    <string name="manga_batch_tier_working">Working</string>
     <string name="manga_batch_tier_failed">Failed</string>
-    <string name="manga_batch_tier_hint">Ready pages have a committed cleaned image and translated text. Processed pages also include terminal failures and textless pages.</string>
-    <string name="manga_batch_warnings">%1$d warnings</string>
     <string name="manga_batch_read_now">Read now</string>
-    <string name="manga_batch_status_ocr">Reading page text</string>
-    <string name="manga_batch_status_translate">Translating recognized text</string>
-    <string name="manga_batch_status_inpaint">Cleaning original text</string>
-    <string name="manga_batch_status_render">Preparing translated text overlay</string>
 
     <string name="manga_translate_download_first">Translate (will download first)</string>
     <string name="manga_translate_multi">Translate</string>
@@ -217,32 +170,18 @@
     <string name="manga_batch_stage_ai_name">AI Translation</string>
     <string name="manga_batch_stage_inpaint_name">Bubble Cleaning</string>
     <string name="manga_batch_stage_render_name">Text Overlay</string>
-    <string name="manga_batch_read_now_count">Read now (%1$d ready)</string>
-    <string name="manga_batch_pages_ready_hint">%1$d of %2$d pages ready to read</string>
-    <string name="manga_batch_resume">Resume Translation</string>
-    <string name="manga_batch_cancel_safe_hint">Cancelling only stops background processing. Saved pages and translations are kept intact.</string>
-    <string name="manga_batch_status_queued">Queued / Ready to resume</string>
     <string name="manga_batch_status_paused">Paused</string>
     <!-- Phase-aware drawer hero. Shown instead of a
          numeric 0% / 0/0 while no real translation page total exists yet. -->
-    <string name="manga_batch_phase_accepted">Accepted — preparing batch</string>
-    <string name="manga_batch_phase_waiting_for_download">Waiting for chapter download</string>
     <string name="manga_batch_download_wifi_warning">Download waiting for Wi-Fi</string>
-    <string name="manga_batch_download_wifi_hint">Chapter download is paused because \'Only download over Wi-Fi\' is enabled. Connect to Wi-Fi or turn off this setting in Settings &gt; Downloads.</string>
-    <string name="manga_batch_phase_downloading">Downloading %1$d%%</string>
     <string name="manga_batch_phase_download_failed">Download failed</string>
-    <string name="manga_batch_phase_preparing">Preparing translation batch</string>
     <string name="manga_batch_phase_queued">Queued for translation</string>
-    <string name="manga_batch_phase_finalizing">Finalizing translated chapter</string>
     <string name="manga_batch_phase_completed">Completed</string>
-    <string name="manga_batch_phase_failed_no_pages">Translation failed — chapter has no readable pages</string>
     <!-- Explicit terminal download-side states and the
          admission-failure state that must never read as a download failure. -->
     <string name="manga_batch_phase_cancelled">Translation cancelled</string>
-    <string name="manga_batch_phase_admission_failed">Translation could not be queued</string>
     <!-- Partial download: available pages are real, the
          source total is unknown, and the drawer must never show a percentage. -->
-    <string name="manga_batch_phase_unknown_total">Pages available; source total unknown</string>
     <!-- Phase-truth copy for resume rebuild/restore, derived in
          TranslationUiTruth and shared by the progress sheet and the reader
          bottom bar, so neither surface freezes on stale "Batch X/Y" copy. -->
@@ -263,19 +202,7 @@
 
     <!-- Reader settings sheet sections -->
     <string name="reader_settings_title">Reader settings</string>
-    <string name="reader_section_appearance">Appearance</string>
-    <string name="reader_section_image_display">Image display</string>
     <string name="reader_section_display_adjustment">Display adjustment</string>
-    <string name="reader_section_navigation_gestures">Navigation &amp; gestures</string>
-    <string name="reader_section_floating_controls">Floating controls</string>
-
-    <!-- Translation settings sheet groups -->
-    <string name="translation_section_quick_controls">Quick controls</string>
-    <string name="translation_section_ocr">OCR configuration</string>
-    <string name="translation_section_inpainting">Inpainting</string>
-    <string name="translation_section_activity">Translation activity</string>
-    <string name="translation_section_data_management">Translation data management</string>
-    <string name="translation_data_management_summary">Reset cached artifacts for this chapter. Your reader position and library are never touched.</string>
 
     <!-- Destructive data management rows (moved from the compare handle dialog) -->
     <string name="reader_data_reset_confirm_title">Reset translation data?</string>
@@ -285,8 +212,6 @@
     <string name="reader_data_reset_inpaint">Reset inpainting results</string>
     <string name="reader_data_reset_ocr">Reset OCR artifacts</string>
     <string name="reader_data_reset_everything">Reset everything</string>
-    <string name="reader_data_delete_chapter">Delete chapter translation</string>
-    <string name="reader_data_delete_chapter_summary">Removes the translated chapter completely</string>
     <string name="action_reset">Reset</string>
 
     <!-- Translator floater preferences -->
@@ -300,51 +225,7 @@
     <!-- Auto-translate quick toggle on the floater menu -->
     <string name="reader_floater_auto_translate">Auto-translate</string>
 
-    <!-- Translation settings two-level navigation -->
-    <string name="translation_section_languages">Languages</string>
-    <string name="translation_section_translator">Translator</string>
-    <string name="translation_section_advanced">Advanced settings</string>
-    <string name="translation_section_advanced_summary">OCR, inpainting, models and processing</string>
-    <string name="translation_engine_active_title">Translation engine</string>
-    <string name="translation_advanced_engine_summary">Providers, models, API keys and prompts</string>
-    <string name="translation_advanced_ocr">Text recognition (OCR)</string>
-    <string name="translation_advanced_ocr_summary">Detection, recognition and language</string>
-    <string name="translation_advanced_inpaint_summary">Image cleaning and quality</string>
-    <string name="translation_advanced_activity_summary">Queue, progress and retry</string>
-    <string name="translation_advanced_data_summary">Manage saved translation data</string>
-    <string name="translation_engine_needs_configuration">Needs setup before it can translate</string>
-    <string name="translation_engine_configure_advanced">Set up credentials and model in Advanced settings</string>
-
-    <!-- Batch pre-configuration & execution modes -->
-    <string name="batch_translate_chapters">Translate chapters</string>
-    <string name="batch_execution_section">Execution</string>
-    <string name="batch_execution_standard">Standard</string>
-    <string name="batch_execution_charging_only">Only while charging</string>
-    <string name="batch_continue_background">Continue in background</string>
-    <string name="batch_background_progress_summary">Keep the app open or get notified when done.</string>
-    <string name="batch_waiting_for_charging">Waiting for charger…</string>
-
-    <!-- Batch progress details drawer & stats -->
-    <string name="batch_processing_details">Processing Details</string>
-    <string name="batch_details_swipe_hint">Pipeline status, live details, and more</string>
-    <string name="batch_swipe_up">Swipe up</string>
-    <string name="batch_translating_and_cleaning">Translating &amp; Cleaning</string>
-    <string name="batch_parallel_desc">Detect &amp; OCR completed. Translation and cleaning are running in parallel.</string>
-    <string name="batch_stat_elapsed">Elapsed</string>
-    <string name="batch_stat_remaining">Remaining</string>
-    <string name="batch_stat_speed">Speed</string>
-    <string name="batch_speed_pages_per_min">%1$.1f pages/min</string>
-    <string name="batch_live_status">Live Status</string>
-    <string name="batch_live_current_step">Current step</string>
-    <string name="batch_live_time_elapsed">Time elapsed</string>
-    <string name="batch_live_estimated_remaining">Estimated remaining</string>
-    <string name="batch_live_processing_speed">Processing speed</string>
-    <string name="batch_view_page_progress">View Page Progress</string>
-    <string name="batch_pages_optional">%1$d pages • Optional</string>
-    <string name="batch_background_progress">Background progress</string>
-    <string name="translation_reset_chapter">Reset Chapter</string>
-    <string name="translation_reset_chapter_summary">Deletes all OCR data, cleaned images and translations for this chapter. Manual edits are removed.</string>
-    <string name="pref_show_translations_summary">Display rendered translated text on pages</string>
+    <!-- Sheet redesign: reader drawer -->
     <string name="reader_sheet_subtitle">Reading mode &amp; display</string>
     <string name="reader_section_navigation_feel">Navigation &amp; feel</string>
     <string name="reader_mode_manga">Manga</string>
@@ -353,6 +234,8 @@
     <string name="reader_mode_webtoon_summary">Long strip</string>
     <string name="reader_custom_brightness_summary">Override system brightness while reading</string>
     <string name="reader_brightness_level">Brightness level</string>
+
+    <!-- Sheet redesign: translation drawer -->
     <string name="reader_translation_sheet_title">Translation</string>
     <string name="reader_translation_sheet_subtitle">Live translation &amp; vision pipeline</string>
     <string name="reader_translation_section_activation">Activation</string>
@@ -369,7 +252,17 @@
     <string name="reader_translation_ocr_mlkit_summary">Universal Latin/CJK</string>
     <string name="reader_translation_deepl_api_key">DeepL API key</string>
     <string name="reader_translation_reset_summary">Purges cached artifacts for this chapter</string>
+
+    <!-- Translation settings shared section headings -->
+    <string name="translation_section_languages">Languages</string>
+    <string name="translation_section_translator">Translator</string>
+    <string name="translation_section_advanced">Advanced settings</string>
+
+    <!-- Batch pre-configuration -->
+    <string name="batch_translate_chapters">Translate chapters</string>
     <string name="batch_start_cta">Start batch (%1$d)</string>
+
+    <!-- Batch progress sheet (focus & details) -->
     <string name="batch_translation_title">Batch translation</string>
     <string name="batch_tab_focus">Focus</string>
     <string name="batch_tab_details">Details</string>
@@ -379,5 +272,13 @@
     <string name="batch_queue_done">Done</string>
     <string name="batch_queue_queued">Queued</string>
     <string name="batch_queue_retry">Retry</string>
+    <string name="batch_stat_elapsed">Elapsed</string>
+    <string name="batch_stat_remaining">Remaining</string>
+    <string name="batch_stat_speed">Speed</string>
+    <string name="batch_speed_pages_per_min">%1$.1f pages/min</string>
     <string name="batch_live_status">Live status</string>
+    <string name="batch_live_current_step">Current step</string>
+    <string name="batch_live_time_elapsed">Time elapsed</string>
+    <string name="batch_live_estimated_remaining">Estimated remaining</string>
+    <string name="batch_live_processing_speed">Processing speed</string>
 </resources>

@@ -4,12 +4,12 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.DownloadRekeyOutcome
-import eu.kanade.translation.model.onlinePageTranslationKey
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.diagnostics.BatchDownloadResult
 import eu.kanade.translation.diagnostics.BatchDownloadStage
 import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
 import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
+import eu.kanade.translation.model.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat

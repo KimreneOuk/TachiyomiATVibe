@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.annotation.VisibleForTesting
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.chapter.model.toSChapter
-import eu.kanade.domain.manga.model.getComicInfo
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
@@ -13,10 +12,7 @@ import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
-import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
-import eu.kanade.tachiyomi.util.storage.saveTo
 import eu.kanade.translation.TranslationManager
-import eu.kanade.translation.coordinator.DownloadRekeyOutcome
 import eu.kanade.translation.diagnostics.BatchDownloadCause
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.diagnostics.BatchDownloadQueueResult
@@ -26,14 +22,12 @@ import eu.kanade.translation.diagnostics.BatchDownloadTerminalState
 import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
 import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
 import eu.kanade.translation.model.TranslationRequestFailureKind
-import eu.kanade.translation.model.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,15 +39,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
-import mihon.core.archive.ZipWriter
 import nl.adaptivity.xmlutil.serialization.XML
-import okhttp3.Response
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.extension
 import tachiyomi.core.common.util.lang.launchIO
@@ -61,8 +52,6 @@ import tachiyomi.core.common.util.lang.launchNow
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.core.metadata.comicinfo.COMIC_INFO_FILE
-import tachiyomi.core.metadata.comicinfo.ComicInfo
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -72,9 +61,7 @@ import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.File
 import java.io.IOException
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /** Manages chapter download queuing and execution lifecycle. */
@@ -799,8 +786,6 @@ class Downloader private constructor(
         )
     }
 
-
-
     private fun tracePathOperation(
         chapterId: Long,
         traceContext: BatchDownloadTraceContext,
@@ -837,7 +822,6 @@ class Downloader private constructor(
             error = error,
         )
     }
-
 
     internal fun validateDownload(
         download: Download,
@@ -883,7 +867,6 @@ class Downloader private constructor(
     private fun removeFromQueue(download: Download) {
         removeFromQueueIf { it == download }
     }
-
 
     private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
         val removedChapterIds = mutableListOf<Long>()
@@ -979,7 +962,6 @@ class Downloader private constructor(
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
     }
 }
-
 
 // Arbitrary minimum required space to start a download: 200 MB
 private const val MIN_DISK_SPACE = 200L * 1024 * 1024
