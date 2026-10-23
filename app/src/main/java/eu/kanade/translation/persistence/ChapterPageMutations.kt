@@ -536,10 +536,7 @@ internal class ChapterPageMutations(
                 PageWriteRejection("generation expected=${expected.generation} actual=${store.generation}")
             expected.pageVersion != (current?.pageVersion ?: 0L) -> {
                 val actualVersion = current?.pageVersion ?: 0L
-                PageWriteRejection(
-                    reason = "pageVersion expected=${expected.pageVersion} actual=$actualVersion",
-                    detail = PatchResult.Rejected.Detail.PageVersionMismatch(expected.pageVersion, actualVersion),
-                )
+                PageWriteRejection("pageVersion expected=${expected.pageVersion} actual=$actualVersion")
             }
             artifactVersionMovedBackwards(expected.artifactPageVersion, artifactPage?.pageVersion) ->
                 PageWriteRejection("artifact pageVersion expected=${expected.artifactPageVersion} actual=${artifactPage?.pageVersion}")
@@ -562,10 +559,7 @@ internal class ChapterPageMutations(
                 PageWriteRejection("block fingerprint changed")
             expected.leaseToken != null && store.pageLeases[pageKey]?.token != expected.leaseToken -> {
                 val actualToken = store.pageLeases[pageKey]?.token
-                PageWriteRejection(
-                    reason = "page lease token expected=${expected.leaseToken} actual=$actualToken",
-                    detail = PatchResult.Rejected.Detail.PageLeaseTokenMismatch(expected.leaseToken, actualToken),
-                )
+                PageWriteRejection("page lease token expected=${expected.leaseToken} actual=$actualToken")
             }
             expected.leaseToken == null && store.pageLeases[pageKey] != null ->
                 PageWriteRejection("page lease token required")

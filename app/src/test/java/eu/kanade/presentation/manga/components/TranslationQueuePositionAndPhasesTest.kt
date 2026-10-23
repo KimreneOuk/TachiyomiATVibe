@@ -18,25 +18,6 @@ import org.junit.jupiter.api.Test
 class TranslationQueuePositionAndPhasesTest {
 
     @Test
-    fun `ordinal suffix covers the standard english rules`() {
-        ordinalSuffix(1) shouldBe "1st"
-        ordinalSuffix(2) shouldBe "2nd"
-        ordinalSuffix(3) shouldBe "3rd"
-        ordinalSuffix(4) shouldBe "4th"
-        ordinalSuffix(11) shouldBe "11th"
-        ordinalSuffix(12) shouldBe "12th"
-        ordinalSuffix(13) shouldBe "13th"
-        ordinalSuffix(21) shouldBe "21st"
-        ordinalSuffix(100) shouldBe "100th"
-    }
-
-    @Test
-    fun `queue position label says the truth about waiting its turn`() {
-        queuePositionLabel(2, 3) shouldBe "Queued (2nd of 3) — waiting for earlier batches"
-        queuePositionLabel(3, 7) shouldBe "Queued (3rd of 7) — waiting for earlier batches"
-    }
-
-    @Test
     fun `first-in-line queued chapter keeps the existing resume wording`() {
         val snapshot = queueSnapshot(position = 1, total = 3)
 

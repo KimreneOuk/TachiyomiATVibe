@@ -3,12 +3,9 @@ package eu.kanade.translation.persistence
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
@@ -48,8 +45,6 @@ class ChapterArtifactEngine(
     /** Bounded retention sweep. */
     private val retentionSweep = ArtifactRetention(io, layout)
     private val retentionScopeJob = SupervisorJob()
-    private val retentionScope = CoroutineScope(retentionScopeJob + Dispatchers.IO)
-    private val retentionInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
     data class LoadResult(
         val manifest: ChapterArtifactManifest,
@@ -402,27 +397,6 @@ class ChapterArtifactEngine(
         val result = deleteAgainstLiveManifest(candidates)
         logRetentionResult(candidates.size, result, startedAt)
         return result
-    }
-
-    /** Deduplicated fire-and-forget boundary sweep; the store keeps the live recheck lock. */
-    fun reconcileRetentionAsync(
-        manifestSnapshot: suspend () -> ChapterArtifactManifest?,
-        deleteAgainstLiveManifest: suspend (Collection<String>) -> RetentionResult,
-    ) {
-        if (!retentionInFlight.compareAndSet(false, true)) return
-        retentionScope.launch {
-            try {
-                reconcileRetentionOffLock(manifestSnapshot, deleteAgainstLiveManifest)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                logcat(LogPriority.ERROR, failure) {
-                    "TachiyomiAT retention sweep failed: chapter=${layout.chapterKey}"
-                }
-            } finally {
-                retentionInFlight.set(false)
-            }
-        }
     }
 
     /** Cancels and joins every asynchronous sweep at a store teardown boundary. */

@@ -213,19 +213,7 @@ class ChapterTranslationStore internal constructor(
             val detail: Detail? = null,
         ) : PatchResult {
             sealed interface Detail {
-                data object BatchPageLeaseMissing : Detail
-
                 data object ArtifactPublicationFailed : Detail
-
-                data class PageVersionMismatch(
-                    val expectedVersion: Long,
-                    val actualVersion: Long,
-                ) : Detail
-
-                data class PageLeaseTokenMismatch(
-                    val expectedToken: Long,
-                    val actualToken: Long?,
-                ) : Detail
             }
         }
     }
@@ -704,20 +692,6 @@ class ChapterTranslationStore internal constructor(
     suspend fun reconcileArtifactRetention() {
         val engine = mutex.withLock { artifactEngine } ?: return
         engine.reconcileRetentionOffLock(
-            manifestSnapshot = { mutex.withLock { artifactManifest } },
-            deleteAgainstLiveManifest = { candidates ->
-                mutex.withLock {
-                    artifactEngine?.deleteVerifiedRetentionCandidates(candidates)
-                        ?: eu.kanade.translation.persistence.RetentionResult(0, emptyList())
-                }
-            },
-        )
-    }
-
-    /** Fire-and-forget boundary sweep; ChapterArtifactEngine owns deduplication and lifecycle. */
-    fun reconcileArtifactRetentionAsync() {
-        val engine = artifactEngine ?: return
-        engine.reconcileRetentionAsync(
             manifestSnapshot = { mutex.withLock { artifactManifest } },
             deleteAgainstLiveManifest = { candidates ->
                 mutex.withLock {

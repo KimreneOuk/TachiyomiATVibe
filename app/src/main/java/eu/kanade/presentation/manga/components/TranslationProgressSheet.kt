@@ -1031,12 +1031,6 @@ private fun formatSeconds(totalSeconds: Long): String {
     return if (m > 0) "${m}m ${s}s" else "${s}s"
 }
 
-internal fun queuePositionLabel(position: Int, total: Int): String =
-    TranslationUiTruth.queuedPositionLabel(position, total)
-
-internal fun ordinalSuffix(value: Int): String =
-    TranslationUiTruth.ordinalSuffixOf(value)
-
 internal fun batchStatusHeaderSubtitle(
     snapshot: TranslationProgressSnapshot,
     isResuming: Boolean = false,
