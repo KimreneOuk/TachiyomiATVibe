@@ -9,7 +9,6 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -90,16 +89,6 @@ internal class StoreWriteDrainCoordinator(
             if (drainJob === pendingDrain) drainJob = null
             markGenerationDefunctLocked()
             releaseRetainedWorkLocked()
-        }
-    }
-
-    /** Starts a fire-and-forget close boundary. */
-    fun close(afterFlush: suspend () -> Unit = {}) {
-        drainScope.launch {
-            flush()
-            withContext(NonCancellable) { afterFlush() }
-        }.invokeOnCompletion {
-            drainScope.cancel()
         }
     }
 

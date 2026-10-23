@@ -3,10 +3,8 @@ package eu.kanade.translation.persistence
 import eu.kanade.translation.diagnostics.ReaderEntryTrace
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PublishedPageTranslation
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
@@ -85,13 +83,9 @@ class ChapterArtifactEngine(
                 }
                 return LoadResult(existing)
             }
-            //  the recursive sweep must not run for large chapters — it
-            // runs at the serialized reader boundary. Large-chapter cleanup
-            // is owned by the deferred
-            // maintenance path (follow-up: event-driven retention per
-            // Recommendation 1). Small chapters keep the synchronous sweep:
-            // their managed tree is a handful of SAF listings, and
-            // crash/cancel garbage must not accumulate between passes.
+            // The crawl is minutes of SAF listings on large chapters, so it never
+            // runs here; event-driven retention (follow-up) owns their cleanup.
+            // Small chapters sweep so crash/cancel garbage cannot accumulate.
             if (existing.pages.size <= 8) {
                 val retentionStage = ReaderEntryTrace.begin("store.retention", null)
                 reconcileRetention(existing)
@@ -364,70 +358,8 @@ class ChapterArtifactEngine(
     ): RetentionResult =
         retentionSweep.reconcileRetention(manifest, stagedReachable)
 
-    /**
-     * Collects retention candidates outside the facade mutex. It is pure over
-     * its inputs (the passed
-     * manifest + the immutable layout/IO) and takes minutes of SAF round-trips
-     * on real storage; taking either the facade mutex or another state lock
-     * during it froze every page lease in the pipeline (jdb thread dump,
-     * 2026-09-15: 20+ minute batch stall on a 70-page chapter). Pair with
-     * [deleteVerifiedRetentionCandidates], which re-verifies each candidate
-     * against the live manifest under the facade Mutex.
-     */
-    fun collectRetentionCandidates(
-        manifest: ChapterArtifactManifest,
-        stagedReachable: Set<String> = emptySet(),
-    ): Set<String> = retentionSweep.collectOrphanCandidates(manifest, stagedReachable)
-
-    /**
-     * Runs the long filesystem crawl without a store lock, then delegates the
-     * bounded live-manifest recheck/deletion to the owning store boundary.
-     * The store supplies those two boundaries because it owns the mutable
-     * manifest snapshot and must serialize deletion against page publication.
-     */
-    suspend fun reconcileRetentionOffLock(
-        manifestSnapshot: suspend () -> ChapterArtifactManifest?,
-        deleteAgainstLiveManifest: suspend (Collection<String>) -> RetentionResult,
-    ): RetentionResult? {
-        val manifest = manifestSnapshot() ?: return null
-        val startedAt = System.currentTimeMillis()
-        val candidates = withContext(Dispatchers.IO) {
-            collectRetentionCandidates(manifest)
-        }
-        val result = deleteAgainstLiveManifest(candidates)
-        logRetentionResult(candidates.size, result, startedAt)
-        return result
-    }
-
     /** Cancels and joins every asynchronous sweep at a store teardown boundary. */
     suspend fun cancelRetentionWorkAndJoin() = retentionScopeJob.cancelAndJoin()
-
-    private fun logRetentionResult(
-        candidateCount: Int,
-        result: RetentionResult,
-        startedAt: Long,
-    ) {
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT retention sweep: candidates=$candidateCount " +
-                "deleted=${result.deletedCount} in ${System.currentTimeMillis() - startedAt}ms"
-        }
-    }
-
-    /** Re-verifies candidates and deletes them under the facade mutex. */
-    fun deleteVerifiedRetentionCandidates(
-        candidateOrphans: Collection<String>,
-        manifest: ChapterArtifactManifest,
-        stagedReachable: Set<String> = emptySet(),
-    ): RetentionResult =
-        retentionSweep.deleteVerifiedOrphans(candidateOrphans, manifest, stagedReachable)
-
-    /** Resolves the live verification manifest under the publication mutex. */
-    fun deleteVerifiedRetentionCandidates(
-        candidateOrphans: Collection<String>,
-    ): RetentionResult {
-        val live = readManifest() ?: return RetentionResult(0, emptyList())
-        return retentionSweep.deleteVerifiedOrphans(candidateOrphans, live)
-    }
 
     /**
      * Reclaims explicitly unlinked artifact files without a full tree crawl.

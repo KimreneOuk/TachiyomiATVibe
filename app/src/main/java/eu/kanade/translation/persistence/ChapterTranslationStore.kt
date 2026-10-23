@@ -680,28 +680,6 @@ class ChapterTranslationStore internal constructor(
         }
     }
 
-    fun close() = writeDrain.close {
-        try {
-            reconcileArtifactRetention()
-        } finally {
-            artifactEngine?.cancelRetentionWorkAndJoin()
-        }
-    }
-
-    /** Performs the bounded artifact-tree sweep at a serialized chapter boundary. */
-    suspend fun reconcileArtifactRetention() {
-        val engine = mutex.withLock { artifactEngine } ?: return
-        engine.reconcileRetentionOffLock(
-            manifestSnapshot = { mutex.withLock { artifactManifest } },
-            deleteAgainstLiveManifest = { candidates ->
-                mutex.withLock {
-                    artifactEngine?.deleteVerifiedRetentionCandidates(candidates)
-                        ?: eu.kanade.translation.persistence.RetentionResult(0, emptyList())
-                }
-            },
-        )
-    }
-
     companion object {
         /** Open mechanics live on the opener collaborator; these shells keep existing callers unaffected. */
 

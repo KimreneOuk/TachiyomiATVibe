@@ -526,9 +526,9 @@ class ChapterCandidateTransactions internal constructor(
             val reason = "manifest publication failed; candidate remains recorded"
             return TransactionOutcome.Rejected(reason)
         }
-        // Delete only the known files unlinked by this cancellation. A full
-        // SAF tree sweep per page made relaunch slow on large chapters;
-        // cross-page orphans stay with the chapter-boundary sweep.
+        // Delete only the known files unlinked by this cancellation; a full
+        // SAF sweep per page made relaunch slow on large chapters. Cross-page
+        // orphans wait for the deferred event-driven retention sweep.
         val orphans = buildList {
             listOf(page.detection, page.ocr, page.inpaint, page.translation, page.layout)
                 .filter { it?.generationId == generationId }
