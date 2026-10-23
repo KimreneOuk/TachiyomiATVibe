@@ -861,17 +861,11 @@ class ReaderViewModel @JvmOverloads constructor(
     fun deleteCurrentChapterTranslation() =
         translationController.deleteCurrentChapterTranslation()
 
-    fun resetTranslationData(preserveEdits: Boolean) =
-        translationController.resetTranslationData(preserveEdits)
-
-    fun resetInpaintData() =
-        translationController.resetInpaintData()
+    fun resetTranslationData() =
+        translationController.resetTranslationData()
 
     fun resetOcrData() =
         translationController.resetOcrData()
-
-    fun resetEverything() =
-        translationController.resetEverything()
 
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
         // Manual UI taps pass force == null; programmatic re-dispatch (which

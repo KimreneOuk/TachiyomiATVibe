@@ -673,10 +673,8 @@ class ReaderActivity : BaseActivity() {
                         onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
                         onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
                         onFetchAiModels = { viewModel.fetchAiModels() },
-                        onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
-                        onResetInpaintData = { viewModel.resetInpaintData() },
+                        onResetTranslationData = { viewModel.resetTranslationData() },
                         onResetOcrData = { viewModel.resetOcrData() },
-                        onResetEverything = { viewModel.resetEverything() },
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

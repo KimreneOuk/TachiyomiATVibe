@@ -172,12 +172,9 @@
 
     <!-- Destructive data management rows (moved from the compare handle dialog) -->
     <string name="reader_data_reset_confirm_title">Reset translation data?</string>
-    <string name="reader_data_reset_confirm_message">%1$s will be regenerated the next time this chapter is translated. This cannot be undone.</string>
+    <string name="reader_data_reset_confirm_message">%1$s will be regenerated the next time this page is translated. This cannot be undone.</string>
     <string name="reader_data_reset_keep_edits">Reset translation output (keep edits)</string>
-    <string name="reader_data_reset_clear_edits">Reset translation output (clear edits)</string>
-    <string name="reader_data_reset_inpaint">Reset inpainting results</string>
-    <string name="reader_data_reset_ocr">Reset OCR artifacts</string>
-    <string name="reader_data_reset_everything">Reset everything</string>
+    <string name="reader_data_reset_page">Reset page</string>
     <string name="action_reset">Reset</string>
 
     <!-- Translator floater preferences -->
@@ -216,7 +213,7 @@
     <string name="reader_translation_ocr_mangaocr_summary">High-accuracy Japanese</string>
     <string name="reader_translation_ocr_mlkit_summary">Universal Latin/CJK</string>
     <string name="reader_translation_deepl_api_key">DeepL API key</string>
-    <string name="reader_translation_reset_summary">Purges cached artifacts for this chapter</string>
+    <string name="reader_translation_reset_summary">Purges cached artifacts for this page</string>
 
     <!-- Translation settings shared section headings -->
     <string name="translation_section_languages">Languages</string>

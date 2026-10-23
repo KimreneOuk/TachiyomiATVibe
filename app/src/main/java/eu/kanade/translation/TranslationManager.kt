@@ -496,11 +496,8 @@ class TranslationManager private constructor(
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
         chapterDataReset.deleteTranslation(chapter, manga, source)
 
-    suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) =
-        chapterDataReset.resetTranslationData(chapter, manga, source, pageKey, preserveEdits)
-
-    suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
-        chapterDataReset.resetInpaintData(chapter, manga, source, pageKey)
+    suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
+        chapterDataReset.resetTranslationData(chapter, manga, source, pageKey)
 
     suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
         chapterDataReset.resetOcrData(chapter, manga, source, pageKey)

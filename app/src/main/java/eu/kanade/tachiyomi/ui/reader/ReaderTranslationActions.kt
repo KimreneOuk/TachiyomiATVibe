@@ -155,7 +155,7 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
         }
     }
 
-    internal fun resetTranslationData(preserveEdits: Boolean) {
+    internal fun resetTranslationData() {
         val manga = manga ?: return
         val page = state.value.currentPage as? ReaderPage ?: return
         val chapter = page.chapter.chapter
@@ -172,29 +172,7 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
 
         viewModelScope.launchIO {
             val pageKey = resolvePageKey(page)
-            translationManager.resetTranslationData(chapter.toDomainChapter()!!, manga, source, pageKey, preserveEdits)
-            recomputeTranslationState()
-        }
-    }
-
-    internal fun resetInpaintData() {
-        val manga = manga ?: return
-        val page = state.value.currentPage as? ReaderPage ?: return
-        val chapter = page.chapter.chapter
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
-
-        page.translatedStream = null
-        page.translation = null
-        page.showTranslatedImage = false
-        page.translationToggled = false
-
-        val readerPages = setOf(page)
-        eventChannel.trySend(ReaderViewModel.Event.RefreshTranslationPages(readerPages))
-        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
-
-        viewModelScope.launchIO {
-            val pageKey = resolvePageKey(page)
-            translationManager.resetInpaintData(chapter.toDomainChapter()!!, manga, source, pageKey)
+            translationManager.resetTranslationData(chapter.toDomainChapter()!!, manga, source, pageKey)
             recomputeTranslationState()
         }
     }
@@ -219,10 +197,6 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
             translationManager.resetOcrData(chapter.toDomainChapter()!!, manga, source, pageKey)
             recomputeTranslationState()
         }
-    }
-
-    internal fun resetEverything() {
-        resetOcrData()
     }
 
     /**

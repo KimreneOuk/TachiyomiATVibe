@@ -5,10 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.DeleteSweep
-import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -26,16 +23,14 @@ import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * Data wipe section of the reader translation sheet: granular reset rows
- * (translation output, inpainting, OCR, everything), each gated behind a
- * confirm dialog.
+ * Data wipe section of the reader translation sheet: per-page reset rows —
+ * translation output with manual edits preserved, and full page
+ * invalidation — each gated behind a confirm dialog.
  */
 @Composable
 internal fun TranslationResetSection(
-    onResetTranslationData: (Boolean) -> Unit,
-    onResetInpaintData: () -> Unit,
+    onResetTranslationData: () -> Unit,
     onResetOcrData: () -> Unit,
-    onResetEverything: () -> Unit,
 ) {
     var pendingReset by remember { mutableStateOf<ResetTarget?>(null) }
 
@@ -51,31 +46,13 @@ internal fun TranslationResetSection(
             icon = Icons.Outlined.EditNote,
             title = stringResource(ATMR.strings.reader_data_reset_keep_edits),
             subtitle = stringResource(ATMR.strings.reader_translation_reset_summary),
-            onClick = { pendingReset = ResetTarget.TRANSLATION_KEEP_EDITS },
-        )
-        TranslationActionRow(
-            icon = Icons.Outlined.DeleteSweep,
-            title = stringResource(ATMR.strings.reader_data_reset_clear_edits),
-            subtitle = stringResource(ATMR.strings.reader_translation_reset_summary),
-            onClick = { pendingReset = ResetTarget.TRANSLATION_CLEAR_EDITS },
-        )
-        TranslationActionRow(
-            icon = Icons.Outlined.Brush,
-            title = stringResource(ATMR.strings.reader_data_reset_inpaint),
-            subtitle = stringResource(ATMR.strings.reader_translation_reset_summary),
-            onClick = { pendingReset = ResetTarget.INPAINT },
-        )
-        TranslationActionRow(
-            icon = Icons.Outlined.DocumentScanner,
-            title = stringResource(ATMR.strings.reader_data_reset_ocr),
-            subtitle = stringResource(ATMR.strings.reader_translation_reset_summary),
-            onClick = { pendingReset = ResetTarget.OCR },
+            onClick = { pendingReset = ResetTarget.TRANSLATION },
         )
         TranslationActionRow(
             icon = Icons.Outlined.DeleteOutline,
-            title = stringResource(ATMR.strings.reader_data_reset_everything),
+            title = stringResource(ATMR.strings.reader_data_reset_page),
             subtitle = stringResource(ATMR.strings.reader_translation_reset_summary),
-            onClick = { pendingReset = ResetTarget.EVERYTHING },
+            onClick = { pendingReset = ResetTarget.PAGE },
             danger = true,
         )
     }
@@ -92,11 +69,8 @@ internal fun TranslationResetSection(
                     onClick = {
                         pendingReset = null
                         when (target) {
-                            ResetTarget.TRANSLATION_KEEP_EDITS -> onResetTranslationData(true)
-                            ResetTarget.TRANSLATION_CLEAR_EDITS -> onResetTranslationData(false)
-                            ResetTarget.INPAINT -> onResetInpaintData()
-                            ResetTarget.OCR -> onResetOcrData()
-                            ResetTarget.EVERYTHING -> onResetEverything()
+                            ResetTarget.TRANSLATION -> onResetTranslationData()
+                            ResetTarget.PAGE -> onResetOcrData()
                         }
                     },
                 ) { Text(stringResource(ATMR.strings.action_reset)) }
@@ -111,20 +85,14 @@ internal fun TranslationResetSection(
 }
 
 private enum class ResetTarget {
-    TRANSLATION_KEEP_EDITS,
-    TRANSLATION_CLEAR_EDITS,
-    INPAINT,
-    OCR,
-    EVERYTHING,
+    TRANSLATION,
+    PAGE,
 }
 
 @Composable
 private fun ResetTarget.label(): String = stringResource(
     when (this) {
-        ResetTarget.TRANSLATION_KEEP_EDITS -> ATMR.strings.reader_data_reset_keep_edits
-        ResetTarget.TRANSLATION_CLEAR_EDITS -> ATMR.strings.reader_data_reset_clear_edits
-        ResetTarget.INPAINT -> ATMR.strings.reader_data_reset_inpaint
-        ResetTarget.OCR -> ATMR.strings.reader_data_reset_ocr
-        ResetTarget.EVERYTHING -> ATMR.strings.reader_data_reset_everything
+        ResetTarget.TRANSLATION -> ATMR.strings.reader_data_reset_keep_edits
+        ResetTarget.PAGE -> ATMR.strings.reader_data_reset_page
     },
 )

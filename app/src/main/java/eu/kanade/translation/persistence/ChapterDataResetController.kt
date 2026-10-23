@@ -165,7 +165,6 @@ internal class ChapterDataResetController(
         manga: Manga,
         source: Source,
         pageKey: String,
-        preserveEdits: Boolean,
     ): ChapterResetReceipt {
         val chapterId = chapter.id ?: return ChapterResetReceipt.COMPLETE
         durableStatusResolver.clearDurableStatusCache()
@@ -175,7 +174,7 @@ internal class ChapterDataResetController(
 
         val store = activeStores.get(chapterId)
         if (store != null) {
-            resetPageTranslationData(store, pageKey, preserveEdits, failures)
+            resetPageTranslationData(store, pageKey, failures)
         } else {
             openExistingChapterTranslationStore(
                 chapterId,
@@ -184,7 +183,7 @@ internal class ChapterDataResetController(
                 manga.title,
                 source,
             )?.let { s ->
-                resetPageTranslationData(s, pageKey, preserveEdits, failures)
+                resetPageTranslationData(s, pageKey, failures)
             }
         }
 
@@ -196,13 +195,15 @@ internal class ChapterDataResetController(
     private suspend fun resetPageTranslationData(
         store: ChapterTranslationStore,
         pageKey: String,
-        preserveEdits: Boolean,
         failures: MutableList<String>,
     ) {
         store.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
             page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
+            // Hand-edited blocks survive verbatim: clearing their text would
+            // make the AI apply path skip them as user edits and pin the page
+            // on empty translations instead of re-translating.
             val newBlocks = page.blocks.map { block ->
-                if (preserveEdits && block.userEditedAt != null) {
+                if (block.userEditedAt != null) {
                     block
                 } else {
                     block.copy(
@@ -224,76 +225,6 @@ internal class ChapterDataResetController(
             }
         }
         store.demoteCommittedDisplay(pageKey, "translation data reset")?.let { failures += "$pageKey: $it" }
-        store.flush()
-    }
-
-    suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String): ChapterResetReceipt {
-        val chapterId = chapter.id ?: return ChapterResetReceipt.COMPLETE
-        durableStatusResolver.clearDurableStatusCache()
-        cancelPageTranslation(chapterId, pageKey)
-        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-        val failures = mutableListOf<String>()
-
-        var ownershipStore = activeStores.get(chapterId)
-        val store = ownershipStore
-        val persistedCleanedName = store?.state?.value?.get(pageKey)?.cleanedImageName
-        if (store != null) {
-            resetPageInpaintData(store, pageKey, failures)
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { s ->
-                ownershipStore = s
-                resetPageInpaintData(s, pageKey, failures)
-            }
-        }
-
-        val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val retiredNames = buildSet {
-            persistedCleanedName?.let(::add)
-            add("$safePageKey.cleaned.png")
-            add("$safePageKey.cleaned.jpg")
-            add("$safePageKey.rendered.png")
-            provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-                ?.listFiles()
-                ?.asSequence()
-                .orEmpty()
-                .mapNotNull { it.name }
-                .filter { it.startsWith("$safePageKey.cleaned.") }
-                .forEach(::add)
-        }
-        retiredNames.forEach { imageName ->
-            retirePageCompanionImage(manga, chapter, source, pageKey, imageName) {
-                ownershipStore?.isCleanedImageReferencedByAnotherPage(pageKey, imageName) == true
-            }
-        }
-
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
-        return ChapterResetReceipt.incomplete(failures)
-    }
-
-    private suspend fun resetPageInpaintData(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        failures: MutableList<String>,
-    ) {
-        store.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
-            page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
-            page.copy(
-                cleanedImageName = null,
-                cleanedImageContentHash = null,
-                inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
-            ).also {
-                it.inpaintError = null
-                it.renderError = null
-            }
-        }
-        store.demoteCommittedDisplay(pageKey, "inpaint data reset")?.let { failures += "$pageKey: $it" }
         store.flush()
     }
 
@@ -325,6 +256,19 @@ internal class ChapterDataResetController(
             }
         }
 
+        retireCleanedCompanionImages(chapter, manga, source, pageKey, persistedCleanedName, ownershipStore)
+        return ChapterResetReceipt.incomplete(failures)
+    }
+
+    /** Retires the page's cleaned/rendered companion images unless another page still references them. */
+    private fun retireCleanedCompanionImages(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+        pageKey: String,
+        persistedCleanedName: String?,
+        ownershipStore: ChapterTranslationStore?,
+    ) {
         val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val retiredNames = buildSet {
             persistedCleanedName?.let(::add)
@@ -346,7 +290,6 @@ internal class ChapterDataResetController(
                 ownershipStore?.isCleanedImageReferencedByAnotherPage(pageKey, imageName) == true
             }
         }
-        return ChapterResetReceipt.incomplete(failures)
     }
 
     private suspend fun reconcileBatchProgress(

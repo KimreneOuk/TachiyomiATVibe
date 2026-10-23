@@ -58,10 +58,8 @@ fun ReaderTranslationSheet(
     onTranslationAiBaseUrlChange: (String) -> Unit,
     onTranslationAiModelChange: (String) -> Unit,
     onFetchAiModels: () -> Unit,
-    onResetTranslationData: (Boolean) -> Unit,
-    onResetInpaintData: () -> Unit,
+    onResetTranslationData: () -> Unit,
     onResetOcrData: () -> Unit,
-    onResetEverything: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AdaptiveSheet(
@@ -132,9 +130,7 @@ fun ReaderTranslationSheet(
 
                 TranslationResetSection(
                     onResetTranslationData = onResetTranslationData,
-                    onResetInpaintData = onResetInpaintData,
                     onResetOcrData = onResetOcrData,
-                    onResetEverything = onResetEverything,
                 )
             }
         }

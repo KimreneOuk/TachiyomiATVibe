@@ -514,10 +514,8 @@ internal class ReaderTranslationController(
 
     internal suspend fun cancelTranslationForChapter(chapter: ReaderChapter) = actions.cancelTranslationForChapter(chapter)
     internal fun deleteCurrentChapterTranslation() = actions.deleteCurrentChapterTranslation()
-    internal fun resetTranslationData(preserveEdits: Boolean) = actions.resetTranslationData(preserveEdits)
-    internal fun resetInpaintData() = actions.resetInpaintData()
+    internal fun resetTranslationData() = actions.resetTranslationData()
     internal fun resetOcrData() = actions.resetOcrData()
-    internal fun resetEverything() = actions.resetEverything()
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) = actions.translateSinglePage(page, force)
     internal fun confirmPageRetranslation(page: ReaderPage) = actions.confirmPageRetranslation(page)
     internal fun confirmBatchReaderSwitch(request: ReaderViewModel.Dialog.BatchReaderSwitch) = actions.confirmBatchReaderSwitch(request)
