@@ -703,10 +703,11 @@ internal class BatchTranslationCoordinator(
                 // reads are seek-based, not re-decompressing.
                 streams = sharedArchive.useEntries { entries ->
                     entries.filter {
-                        it.isFile && ImageUtil.isImage(it.name) {
-                            sharedArchive.getInputStream(it.name)
-                                ?: throw java.io.IOException("Archive entry '${it.name}' could not be opened (mmap)")
-                        }
+                        it.isFile &&
+                            ImageUtil.isImage(it.name) {
+                                sharedArchive.getInputStream(it.name)
+                                    ?: throw java.io.IOException("Archive entry '${it.name}' could not be opened (mmap)")
+                            }
                     }
                         .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
                         .map { entry ->

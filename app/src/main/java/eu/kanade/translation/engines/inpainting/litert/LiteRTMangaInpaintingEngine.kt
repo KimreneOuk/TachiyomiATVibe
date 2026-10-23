@@ -160,7 +160,8 @@ class LiteRTMangaInpaintingEngine(
                 // 2. Experimental Qualcomm NPU — separate opt-in, LaMa INT8
                 // only, attempted ONLY after GPU failed. Never for AOT; never
                 // displaces the GPU-first attempt above.
-                val npuAttempted = !compiled && enableExperimentalNpu &&
+                val npuAttempted = !compiled &&
+                    enableExperimentalNpu &&
                     neuralModel == NeuralInpaintModel.LAMA_LITERT_GPU &&
                     Accelerator.NPU in availableAccelerators
                 if (npuAttempted) {
@@ -357,7 +358,9 @@ class LiteRTMangaInpaintingEngine(
         val cachedTime = prefs.getLong(versionKey, -1L)
         val cachedSize = prefs.getLong(sizeKey, -1L)
 
-        if (targetFile.exists() && targetFile.length() > 1_000_000L && cachedTime == appUpdateTime &&
+        if (targetFile.exists() &&
+            targetFile.length() > 1_000_000L &&
+            cachedTime == appUpdateTime &&
             (cachedSize <= 0L || targetFile.length() == cachedSize)
         ) {
             return targetFile
