@@ -23,10 +23,7 @@ class PageInpaintingEngine(
     },
     private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU,
 ) {
-    private val neuralModelDisplayName = when (neuralModel) {
-        NeuralInpaintModel.LAMA_LITERT_GPU -> "Manga LaMa (LiteRT GPU)"
-        NeuralInpaintModel.AOT_GAN -> "AOT-GAN"
-    }
+    private val neuralModelDisplayName = LiteRTMangaInpaintingEngine.displayNameFor(neuralModel)
 
     fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         // Persisted masks and detector-only regions can outlive OCR blocks.
