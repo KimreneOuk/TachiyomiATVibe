@@ -502,9 +502,12 @@ class ReaderViewModel @JvmOverloads constructor(
         // S3 (Milestone M2): Warm up recognition engines when translation is enabled.
         if (translationPreferences.translationEnabled().get()) {
             viewModelScope.launchIO {
+                // Throwable, not Exception: missing engine natives surface as
+                // Errors (UnsatisfiedLinkError/NoClassDefFoundError), and warm-up
+                // is best-effort — it must never take the reader down.
                 try {
                     translationManager.warmUp()
-                } catch (_: Exception) {}
+                } catch (_: Throwable) {}
             }
         }
 
