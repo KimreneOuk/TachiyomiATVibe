@@ -451,7 +451,6 @@ class MangaScreenModel(
             translationPreferences = translationPreferences,
             translationSnapshots = translationSnapshots,
             scope = screenModelScope,
-            snackbarHostState = snackbarHostState,
             getSuccessState = { successState },
             updateSuccessState = ::updateSuccessState,
             dismissDialog = ::dismissDialog,
@@ -459,6 +458,8 @@ class MangaScreenModel(
             updateTranslationRequests = ::updateTranslationRequests,
             updateTranslationState = ::updateTranslationState,
             onTranslationsQueuedBehindDownloads = ::warnTranslationsQueuedBehindDownloads,
+            onTranslationCancelled = ::showTranslationCancelledNotice,
+            onTranslationResumePaused = ::showTranslationResumePausedNotice,
         )
     }
 
@@ -472,6 +473,26 @@ class MangaScreenModel(
         screenModelScope.launch {
             snackbarHostState.showSnackbar(
                 message = context.stringResource(ATMR.strings.manga_batch_download_wifi_warning),
+                duration = SnackbarDuration.Short,
+            )
+        }
+    }
+
+    private fun showTranslationCancelledNotice(onUndo: () -> Unit) {
+        screenModelScope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = context.stringResource(ATMR.strings.batch_cancelled_toast),
+                actionLabel = context.stringResource(ATMR.strings.translation_cancelled_undo),
+                withDismissAction = true,
+            )
+            if (result == SnackbarResult.ActionPerformed) onUndo()
+        }
+    }
+
+    private fun showTranslationResumePausedNotice() {
+        screenModelScope.launch {
+            snackbarHostState.showSnackbar(
+                message = context.stringResource(ATMR.strings.translation_resume_paused_hint),
                 duration = SnackbarDuration.Short,
             )
         }

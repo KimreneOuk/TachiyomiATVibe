@@ -1,9 +1,5 @@
 package eu.kanade.tachiyomi.ui.manga
 
-import android.app.Application
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.Dialog
@@ -18,18 +14,13 @@ import eu.kanade.translation.processing.batch.BatchAdmissionProbe
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.TranslationPreferences
-import tachiyomi.i18n.at.ATMR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /** Coordinates translation batching, acknowledgement, confirmation, and resets for MangaScreenModel. */
 internal class MangaTranslationCoordinator(
@@ -38,7 +29,6 @@ internal class MangaTranslationCoordinator(
     private val translationPreferences: TranslationPreferences,
     private val translationSnapshots: ChapterTranslationSnapshotRegistry,
     private val scope: CoroutineScope,
-    private val snackbarHostState: SnackbarHostState,
     private val getSuccessState: () -> State.Success?,
     private val updateSuccessState: ((State.Success) -> State.Success) -> Unit,
     private val dismissDialog: () -> Unit,
@@ -46,6 +36,8 @@ internal class MangaTranslationCoordinator(
     private val updateTranslationRequests: (Map<Long, TranslationRequestState>) -> Unit,
     private val updateTranslationState: (Translation) -> Unit,
     private val onTranslationsQueuedBehindDownloads: () -> Unit = {},
+    private val onTranslationCancelled: (onUndo: () -> Unit) -> Unit = {},
+    private val onTranslationResumePaused: () -> Unit = {},
 ) {
     internal var pendingTranslationGroup: List<ChapterList.Item> = emptyList()
 
@@ -92,19 +84,11 @@ internal class MangaTranslationCoordinator(
                         updateTranslationRequests(translationManager.pendingTranslationRequests.value)
                     }
                     val manga = getSuccessState()?.manga
-                    scope.launch {
-                        val context = Injekt.get<Application>()
-                        val result = snackbarHostState.showSnackbar(
-                            message = context.stringResource(ATMR.strings.batch_cancelled_toast),
-                            actionLabel = context.stringResource(ATMR.strings.translation_cancelled_undo),
-                            withDismissAction = true,
-                        )
-                        if (result == SnackbarResult.ActionPerformed && manga != null) {
-                            if (wasPendingRequest) {
-                                confirmChapterTranslation(targetItem)
-                            } else {
-                                translationManager.translateChapter(manga, targetItem.chapter)
-                            }
+                    onTranslationCancelled {
+                        if (wasPendingRequest) {
+                            confirmChapterTranslation(targetItem)
+                        } else if (manga != null) {
+                            translationManager.translateChapter(manga, targetItem.chapter)
                         }
                     }
                 }
@@ -276,16 +260,10 @@ internal class MangaTranslationCoordinator(
     fun resumeChapterTranslation(item: ChapterList.Item, force: Boolean = false) {
         val chapterId = item.chapter.id ?: return
         scope.launchIO {
-            val resumed = translationManager.requeueTranslation(chapterId, force)
-            if (resumed) {
+            if (translationManager.requeueTranslation(chapterId, force)) {
                 translationManager.startTranslation()
             } else {
-                withUIContext {
-                    snackbarHostState.showSnackbar(
-                        message = "Translation is still paused; retry when the provider cooldown expires",
-                        duration = SnackbarDuration.Short,
-                    )
-                }
+                onTranslationResumePaused()
             }
         }
     }

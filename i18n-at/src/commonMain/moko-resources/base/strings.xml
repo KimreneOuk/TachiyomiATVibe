@@ -174,6 +174,7 @@
     <!-- Phase-aware drawer hero. Shown instead of a
          numeric 0% / 0/0 while no real translation page total exists yet. -->
     <string name="manga_batch_download_wifi_warning">Download waiting for Wi-Fi</string>
+    <string name="translation_resume_paused_hint">Translation is still paused; retry when the provider cooldown expires</string>
     <string name="manga_batch_phase_download_failed">Download failed</string>
     <string name="manga_batch_phase_queued">Queued for translation</string>
     <string name="manga_batch_phase_completed">Completed</string>
