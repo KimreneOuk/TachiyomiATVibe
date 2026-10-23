@@ -17,10 +17,7 @@
     <string name="pref_ocr_model">OCR model</string>
     <string name="pref_translate_to">Translate To</string>
     <string name="pref_group_engine">Translator</string>
-    <string name="pref_translator_engine">Translator Engine</string>
     <string name="pref_sub_engine_api_key">Your Secret Key</string>
-    <string name="pref_engine_api_key">LLM Api Key</string>
-    <string name="pref_group_advanced">Advanced Settings</string>
     <string name="pref_engine_model">LLM Model</string>
     <string name="pref_engine_temperature">LLM Temperature</string>
     <string name="pref_engine_max_output">LLM Max Output Token Count</string>
@@ -42,31 +39,15 @@
     <string name="pref_ai_base_url_lmstudio">LM Studio base URL</string>
     <string name="pref_ai_key_set">Your key is set (not shown)</string>
     <string name="pref_ai_key_not_set">Not set</string>
-    <string name="pref_ai_fetch_models">Fetch models</string>
-    <string name="pref_ai_fetching_models">Fetching…</string>
-    <string name="pref_ai_models_recent">Recent</string>
-    <string name="pref_ai_models_all">All models</string>
-    <string name="pref_ai_search_models">Search models</string>
-    <string name="pref_ai_model_manual">Manual model ID</string>
     <string name="pref_ai_no_key">Enter an API key to fetch models</string>
     <string name="pref_ai_no_base_url">Enter a base URL to fetch models</string>
-    <string name="pref_ai_invalid_key">Invalid or expired API key</string>
-    <string name="pref_ai_no_models">No models returned</string>
-    <string name="pref_ai_fetch_error">Failed to fetch models: %1$s</string>
-    <string name="pref_ai_current_model">Current model: %1$s</string>
-    <string name="pref_ai_current_model_none">No model selected</string>
-    <string name="pref_ai_recent_empty">No recent models yet</string>
     <string name="pref_inpainting_mode">Inpainting mode</string>
     <string name="pref_inpainting_mode_quality">Quality</string>
     <string name="pref_inpainting_mode_fast">Fast</string>
     <string name="pref_inpainting_mode_balance">Balance</string>
     <string name="pref_inpainting_mode_lama_gpu">Manga LaMa (LiteRT GPU FP16)</string>
     <string name="pref_inpainting_neural_model">Neural inpainting model</string>
-    <string name="pref_inpainting_neural_model_summary">Choose the model used by Balance and Quality modes.</string>
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (LiteRT GPU FP16)</string>
-    <string name="pref_inpainting_hardware_override">Inpainting accelerator</string>
-    <string name="pref_inpainting_hardware_override_summary">In Balance and Quality, both models use the LiteRT GPU delegate (FP16), with no CPU or NPU fallback. If the GPU is unavailable, neural modes are unavailable unless classical fallback is enabled.</string>
-    <string name="pref_inpainting_hardware_gpu_fixed">GPU (LiteRT FP16)</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translation_stop_all">Stop all translation</string>
     <string name="reader_batch_switch_title">Batch translation is active</string>
@@ -96,14 +77,12 @@
     <string name="reader_compare_show_original">Show original</string>
     <string name="reader_compare_show_translated">Show translated</string>
     <string name="reader_compare_open_settings">Translation settings</string>
-    <string name="reader_compare_delete_translation">Delete translation</string>
 
     <!-- Reader overlay translation settings sheet -->
     <string name="translation_settings">Translation</string>
     <string name="pref_translation_enabled">Enable translation</string>
     <string name="pref_auto_translate">Auto-translate pages</string>
     <string name="pref_auto_translate_summary">Translates the current page and pre-processes upcoming pages automatically</string>
-    <string name="pref_auto_translate_prefetch">Prefetch pages ahead</string>
 
     <!-- TachiyomiAT: floating translation status pill (active-page stage). -->
     <string name="reader_translation_pill_queued">Queued</string>
@@ -126,10 +105,6 @@
     <string name="translation_confirm_dont_show">Don\'t show this again</string>
     <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
     <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
-    <string name="pref_batch_relationship_prior">Ambiguous romance resolution (batch)</string>
-    <string name="pref_batch_relationship_prior_summary">Applies only to chapter batch AI translation; explicit source evidence always wins</string>
-    <string name="pref_batch_relationship_prior_neutral">Neutral (keep ambiguity)</string>
-    <string name="pref_batch_relationship_prior_male_female">Prefer male/female pairing</string>
 
     <!-- TachiyomiAT: redesigned batch progress sheet (§12 layout) -->
     <!-- TachiyomiAT bug 2 fix: split the old single Render row. Color is
@@ -162,10 +137,6 @@
     <string name="auto_translation_disabled_toast">Auto translation disabled</string>
     <string name="batch_cancelled_toast">Batch translation cancelled</string>
     <string name="translation_cancelled_undo">Undo</string>
-    <string name="pref_enable_reasoning">AI Model Reasoning Mode</string>
-    <string name="pref_enable_reasoning_summary">Enables deep contextual reasoning and sanitizes thought blocks for thinking-enabled AI models.</string>
-    <string name="pref_rate_limit_safe">15 RPM Safe Pacing</string>
-    <string name="pref_rate_limit_safe_summary">Paces AI translation requests to avoid HTTP 429 rate limit errors on free-tier API keys.</string>
     <string name="manga_batch_stage_ocr_name">Detection &amp; OCR</string>
     <string name="manga_batch_stage_ai_name">AI Translation</string>
     <string name="manga_batch_stage_inpaint_name">Bubble Cleaning</string>
@@ -187,13 +158,7 @@
          TranslationUiTruth and shared by the progress sheet and the reader
          bottom bar, so neither surface freezes on stale "Batch X/Y" copy. -->
     <string name="translation_status_rebuilding">Rebuilding pipeline…</string>
-    <string name="translation_status_restoring">Restoring %1$d of %2$d pages…</string>
     <string name="translation_bar_restoring">Restoring %1$d pages…</string>
-    <string name="translation_status_rebuilding_short">Rebuilding</string>
-    <string name="translation_status_restoring_short">Restoring pages</string>
-    <string name="translation_status_resuming">Resuming…</string>
-    <string name="translation_sheet_advanced_toggle">Advanced details</string>
-    <string name="translation_sheet_failures_notice">%1$d pages need attention</string>
 
     <!-- Reader UX modernization prototype: floating navigation chrome -->
     <string name="reader_quick_actions">More actions</string>
@@ -217,7 +182,6 @@
 
     <!-- Translator floater preferences -->
     <string name="pref_floater_show">Show translator floater</string>
-    <string name="pref_floater_show_summary">Floating compare handle on the reader edge</string>
     <string name="pref_floater_idle_fade">Fade floater while inactive</string>
     <string name="pref_floater_idle_fade_summary">Dims and tucks toward the edge after a few idle seconds</string>
     <string name="pref_floater_reset_position">Reset floater position</string>
