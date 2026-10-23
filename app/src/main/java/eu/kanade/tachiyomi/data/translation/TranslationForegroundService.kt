@@ -84,7 +84,13 @@ class TranslationForegroundService : Service() {
                         val resumed = manager.requeueTranslation(chapterId)
                         retryInFlight = false
                         if (resumed) {
-                            manager.startTranslation()
+                            if (manager.isNeuralStartBlocked()) {
+                                logcat(LogPriority.WARN) {
+                                    "Translation retry blocked: selected inpainting model assets are missing"
+                                }
+                            } else {
+                                manager.startTranslation()
+                            }
                         } else {
                             val snapshot = manager.getTranslationProgress(chapterId).first()
                             val translation = manager.getQueuedTranslationOrNull(chapterId)

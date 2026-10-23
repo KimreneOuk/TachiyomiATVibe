@@ -224,6 +224,11 @@
     <string name="batch_translate_chapters">Translate chapters</string>
     <string name="batch_start_cta">Start batch (%1$d)</string>
 
+    <!-- Neural inpainting preflight -->
+    <string name="translation_inpaint_model_missing_title">Inpainting model missing</string>
+    <string name="translation_inpaint_model_missing_message">%1$s inpainting needs the %2$s model, which is not included in this build. Fast inpainting works without any model.</string>
+    <string name="translation_inpaint_switch_fast">Switch to Fast &amp; continue</string>
+
     <!-- Batch progress sheet (focus & details) -->
     <string name="batch_translation_title">Batch translation</string>
     <string name="batch_tab_focus">Focus</string>

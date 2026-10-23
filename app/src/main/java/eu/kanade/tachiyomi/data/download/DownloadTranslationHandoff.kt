@@ -143,7 +143,14 @@ internal class DownloadTranslationHandoff(
                     BatchDownloadResult.START,
                 )
             }
-            translationManager.startTranslationAfterDownloadIfRequested(download.manga, download.chapter)
+            if (translationManager.isNeuralStartBlocked()) {
+                logcat(LogPriority.WARN) {
+                    "Post-download auto-translation skipped for chapter ${download.chapter.id}: " +
+                        "selected inpainting model assets are missing from this build"
+                }
+            } else {
+                translationManager.startTranslationAfterDownloadIfRequested(download.manga, download.chapter)
+            }
             traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                 BatchDownloadDiagnostics.handoff(
                     download.chapter.id,

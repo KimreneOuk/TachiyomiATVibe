@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.Dialog
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.State
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
+import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.ChapterResetReceipt
@@ -38,8 +40,26 @@ internal class MangaTranslationCoordinator(
     private val onTranslationsQueuedBehindDownloads: () -> Unit = {},
     private val onTranslationCancelled: (onUndo: () -> Unit) -> Unit = {},
     private val onTranslationResumePaused: () -> Unit = {},
+    private val inpaintStartBlocked: () -> Boolean = { false },
 ) {
     internal var pendingTranslationGroup: List<ChapterList.Item> = emptyList()
+
+    /**
+     * True when the start may proceed; otherwise shows the model-missing
+     * dialog whose continue action re-runs [continueTranslation] after the
+     * user switches to FAST.
+     */
+    private fun ensureInpaintModelAvailable(continueTranslation: () -> Unit): Boolean {
+        if (!inpaintStartBlocked()) return true
+        val modeName = InpaintingMode.fromPref(translationPreferences.translationInpaintingMode().get()).name
+        val modelName = LiteRTMangaInpaintingEngine.displayNameFor(
+            translationPreferences.translationInpaintingNeuralModel().get(),
+        )
+        updateSuccessState {
+            it.copy(dialog = Dialog.InpaintModelMissing(modeName, modelName, continueTranslation))
+        }
+        return false
+    }
 
     fun runChapterTranslationActions(
         item: ChapterList.Item,
@@ -88,7 +108,9 @@ internal class MangaTranslationCoordinator(
                         if (wasPendingRequest) {
                             confirmChapterTranslation(targetItem)
                         } else if (manga != null) {
-                            translationManager.translateChapter(manga, targetItem.chapter)
+                            ensureInpaintModelAvailable {
+                                translationManager.translateChapter(manga, targetItem.chapter)
+                            }
                         }
                     }
                 }
@@ -100,8 +122,10 @@ internal class MangaTranslationCoordinator(
     fun retryBatchTranslation(chapterId: Long) {
         val manga = getSuccessState()?.manga ?: return
         val item = getSuccessState()?.chapters?.firstOrNull { it.id == chapterId } ?: return
-        translationManager.translateChapter(manga, item.chapter)
-        translationManager.startTranslation()
+        ensureInpaintModelAvailable {
+            translationManager.translateChapter(manga, item.chapter)
+            translationManager.startTranslation()
+        }
     }
 
     fun showChapterResetDialog(item: ChapterList.Item) {
@@ -149,6 +173,9 @@ internal class MangaTranslationCoordinator(
 
     fun confirmChapterTranslation(item: ChapterList.Item) {
         val manga = getSuccessState()?.manga ?: return
+        // pendingTranslationGroup stays pending while blocked so the dialog's
+        // continue action re-enters with the original full group.
+        if (!ensureInpaintModelAvailable({ confirmChapterTranslation(item) })) return
         val group = pendingTranslationGroup
             .takeIf { it.any { candidate -> candidate.chapter.id == item.chapter.id } }
             ?: listOf(item)
@@ -259,12 +286,21 @@ internal class MangaTranslationCoordinator(
 
     fun resumeChapterTranslation(item: ChapterList.Item, force: Boolean = false) {
         val chapterId = item.chapter.id ?: return
-        scope.launchIO {
-            if (translationManager.requeueTranslation(chapterId, force)) {
-                translationManager.startTranslation()
-            } else {
-                onTranslationResumePaused()
+        ensureInpaintModelAvailable {
+            scope.launchIO {
+                if (translationManager.requeueTranslation(chapterId, force)) {
+                    translationManager.startTranslation()
+                } else {
+                    onTranslationResumePaused()
+                }
             }
+        }
+    }
+
+    /** Un-pauses the whole batch queue; guarded like every other batch start. */
+    fun resumeTranslationQueue() {
+        ensureInpaintModelAvailable {
+            translationManager.startTranslation()
         }
     }
 
@@ -279,11 +315,14 @@ internal class MangaTranslationCoordinator(
 
     fun confirmReplaceRunningChapter(item: ChapterList.Item) {
         val manga = getSuccessState()?.manga ?: return
+        // Captured before the guard replaces the dialog state.
         val preflight = (getSuccessState()?.dialog as? Dialog.RunningTranslationConflict)?.conflict ?: return
-        dismissDialog()
-        scope.launchNonCancellable {
-            translationManager.cancelRunningChapterForReplace(preflight.chapterId)
-            translationManager.translateChapter(manga, item.chapter)
+        ensureInpaintModelAvailable {
+            dismissDialog()
+            scope.launchNonCancellable {
+                translationManager.cancelRunningChapterForReplace(preflight.chapterId)
+                translationManager.translateChapter(manga, item.chapter)
+            }
         }
     }
 
@@ -298,43 +337,48 @@ internal class MangaTranslationCoordinator(
     }
 
     fun finishDownloadBeforeTranslation(dialog: Dialog.PartialDownloadTranslation) {
-        dismissDialog()
-        val manga = getSuccessState()?.manga ?: return
-        scope.launchNonCancellable {
-            queueAwaitingDownloadTranslations(manga, dialog.group, translationManager::pendingRequestGeneration)
+        val manga = getSuccessState()?.manga
+        ensureInpaintModelAvailable {
+            dismissDialog()
+            if (manga == null) return@ensureInpaintModelAvailable
+            scope.launchNonCancellable {
+                queueAwaitingDownloadTranslations(manga, dialog.group, translationManager::pendingRequestGeneration)
+            }
         }
     }
 
     fun translatePartialDownloadNow(dialog: Dialog.PartialDownloadTranslation) {
-        dismissDialog()
-        val manga = getSuccessState()?.manga ?: return
-        scope.launchNonCancellable {
-            val generations = mutableMapOf<Long, Long>()
-            val contexts = mutableMapOf<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext>()
-            val chapters = mutableListOf<Chapter>()
-            dialog.group.forEach { item ->
-                val chapterId = item.chapter.id ?: return@forEach
-                val generation = translationManager.pendingRequestGeneration(chapterId) ?: return@forEach
-                val decision = dialog.decisions[chapterId] ?: return@forEach
-                generations[chapterId] = generation
-                contexts[chapterId] = when (decision) {
-                    is BatchAdmissionDecision.Partial ->
-                        eu.kanade.translation.processing.batch.BatchAdmissionContext(
-                            probedSourcePageCount = decision.expectedSourcePageCount,
-                            sourceCountKnown = true,
-                        )
-                    BatchAdmissionDecision.UnknownCount ->
-                        eu.kanade.translation.processing.batch.BatchAdmissionContext(
-                            probedSourcePageCount = null,
-                            sourceCountKnown = true,
-                        )
-                    BatchAdmissionDecision.Complete ->
-                        eu.kanade.translation.processing.batch.BatchAdmissionContext(null, false)
+        ensureInpaintModelAvailable {
+            dismissDialog()
+            val manga = getSuccessState()?.manga ?: return@ensureInpaintModelAvailable
+            scope.launchNonCancellable {
+                val generations = mutableMapOf<Long, Long>()
+                val contexts = mutableMapOf<Long, eu.kanade.translation.processing.batch.BatchAdmissionContext>()
+                val chapters = mutableListOf<Chapter>()
+                dialog.group.forEach { item ->
+                    val chapterId = item.chapter.id ?: return@forEach
+                    val generation = translationManager.pendingRequestGeneration(chapterId) ?: return@forEach
+                    val decision = dialog.decisions[chapterId] ?: return@forEach
+                    generations[chapterId] = generation
+                    contexts[chapterId] = when (decision) {
+                        is BatchAdmissionDecision.Partial ->
+                            eu.kanade.translation.processing.batch.BatchAdmissionContext(
+                                probedSourcePageCount = decision.expectedSourcePageCount,
+                                sourceCountKnown = true,
+                            )
+                        BatchAdmissionDecision.UnknownCount ->
+                            eu.kanade.translation.processing.batch.BatchAdmissionContext(
+                                probedSourcePageCount = null,
+                                sourceCountKnown = true,
+                            )
+                        BatchAdmissionDecision.Complete ->
+                            eu.kanade.translation.processing.batch.BatchAdmissionContext(null, false)
+                    }
+                    chapters += item.chapter
                 }
-                chapters += item.chapter
-            }
-            if (chapters.isNotEmpty()) {
-                translationManager.translateChaptersIfCurrent(manga, chapters, generations, contexts)
+                if (chapters.isNotEmpty()) {
+                    translationManager.translateChaptersIfCurrent(manga, chapters, generations, contexts)
+                }
             }
         }
     }

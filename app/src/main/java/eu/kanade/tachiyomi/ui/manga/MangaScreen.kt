@@ -399,6 +399,34 @@ class MangaScreen(
                 )
             }
 
+            is MangaScreenModel.Dialog.InpaintModelMissing -> {
+                AlertDialog(
+                    onDismissRequest = onDismissRequest,
+                    title = {
+                        Text(text = stringResource(ATMR.strings.translation_inpaint_model_missing_title))
+                    },
+                    text = {
+                        Text(
+                            text = stringResource(
+                                ATMR.strings.translation_inpaint_model_missing_message,
+                                dialog.modeName,
+                                dialog.modelName,
+                            ),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.continueTranslationWithFastInpainting(dialog) }) {
+                            Text(text = stringResource(ATMR.strings.translation_inpaint_switch_fast))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismissRequest) {
+                            Text(text = stringResource(MR.strings.action_cancel))
+                        }
+                    },
+                )
+            }
+
             is MangaScreenModel.Dialog.RunningTranslationConflict -> {
                 AlertDialog(
                     onDismissRequest = { screenModel.cancelPendingTranslationRequest(dialog.item) },

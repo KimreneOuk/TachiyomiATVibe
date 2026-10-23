@@ -231,7 +231,12 @@ class MangaScreenModelCancelledBatchReconciliationTest {
             downloadManager = downloadManager,
             downloadPreferences = downloadPreferences,
             translationManager = translationManager,
-            translationPreferences = mockk(relaxed = true),
+            translationPreferences = mockk {
+                // The inpaint preflight reads the mode; FAST keeps every start unblocked.
+                every { translationInpaintingMode() } returns mockk {
+                    every { get() } returns "FAST"
+                }
+            },
             downloadCache = downloadCache,
             getMangaAndChapters = getMangaAndChapters,
             getDuplicateLibraryManga = mockk(relaxed = true),

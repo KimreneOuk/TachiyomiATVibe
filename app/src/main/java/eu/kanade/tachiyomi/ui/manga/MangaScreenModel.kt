@@ -45,6 +45,8 @@ import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
+import eu.kanade.translation.engines.inpainting.InpaintingMode
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
@@ -460,6 +462,9 @@ class MangaScreenModel(
             onTranslationsQueuedBehindDownloads = ::warnTranslationsQueuedBehindDownloads,
             onTranslationCancelled = ::showTranslationCancelledNotice,
             onTranslationResumePaused = ::showTranslationResumePausedNotice,
+            inpaintStartBlocked = {
+                LiteRTMangaInpaintingEngine.isNeuralStartBlocked(translationPreferences, context)
+            },
         )
     }
 
@@ -889,8 +894,15 @@ class MangaScreenModel(
         if (paused) {
             translationManager.pauseTranslation()
         } else {
-            translationManager.startTranslation()
+            translationCoordinator.resumeTranslationQueue()
         }
+    }
+
+    // TachiyomiAT
+    fun continueTranslationWithFastInpainting(dialog: Dialog.InpaintModelMissing) {
+        translationPreferences.translationInpaintingMode().set(InpaintingMode.FAST.name)
+        dismissDialog()
+        dialog.onContinue()
     }
 
     // TachiyomiAT
@@ -1321,6 +1333,14 @@ class MangaScreenModel(
         data class PartialDownloadTranslation(
             val group: List<ChapterList.Item>,
             val decisions: Map<Long, eu.kanade.translation.processing.batch.BatchAdmissionDecision>,
+        ) : Dialog
+
+        // BALANCE/QUALITY start blocked because the selected neural model's
+        // assets are absent from this build; continue offers a FAST switch.
+        data class InpaintModelMissing(
+            val modeName: String,
+            val modelName: String,
+            val onContinue: () -> Unit,
         ) : Dialog
     }
 

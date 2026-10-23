@@ -218,6 +218,10 @@ class MangaScreenModelMultiSelectBatchTest {
         evictCachedScreenModelScope()
 
         every { translationPreferences.translationConfirmPretranslate() } returns confirmPref
+        // The inpaint preflight reads the mode; FAST keeps every start unblocked.
+        every { translationPreferences.translationInpaintingMode() } returns mockk {
+            every { get() } returns "FAST"
+        }
 
         evictCachedScreenModelScope()
 

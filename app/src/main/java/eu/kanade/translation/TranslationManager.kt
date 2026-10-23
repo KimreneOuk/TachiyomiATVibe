@@ -16,6 +16,7 @@ import eu.kanade.translation.coordinator.TranslationProgressProjection
 import eu.kanade.translation.coordinator.TranslationRequestCoordinator
 import eu.kanade.translation.coordinator.TranslationSessionCoordinator
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -287,6 +288,10 @@ class TranslationManager private constructor(
     fun onMemoryPressure(level: Int) = readerCoordinator.onMemoryPressure(level)
 
     fun startTranslation() = batchCoordinator.startWithSessionAdmission()
+
+    /** BALANCE/QUALITY starts cannot proceed while the selected model's assets are absent from this build. */
+    fun isNeuralStartBlocked(): Boolean =
+        LiteRTMangaInpaintingEngine.isNeuralStartBlocked(translationPreferences, context)
 
     fun pauseTranslation() = batchCoordinator.pause()
 
