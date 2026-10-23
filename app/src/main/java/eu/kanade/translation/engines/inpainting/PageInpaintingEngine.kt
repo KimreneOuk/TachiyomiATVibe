@@ -22,6 +22,7 @@ class PageInpaintingEngine(
         Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
     },
     private val neuralModel: NeuralInpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU,
+    private val notifyInpaintFailed: (String) -> Unit = { InpaintingFailureNotifier.announce(it) },
 ) {
     private val neuralModelDisplayName = LiteRTMangaInpaintingEngine.displayNameFor(neuralModel)
 
@@ -136,6 +137,7 @@ class PageInpaintingEngine(
             pageTranslation.errorMessage = e.message
             pageTranslation.updatedAt = System.currentTimeMillis()
             logcat(LogPriority.WARN, e) { "Page inpainting failed" }
+            notifyInpaintFailed(mode.name)
             null
         }
     }

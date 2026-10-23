@@ -230,6 +230,7 @@
     <string name="translation_inpaint_switch_fast">Switch to Fast &amp; continue</string>
     <string name="reader_inpaint_model_missing_toast">%1$s inpainting needs the %2$s model, which is not in this build. Switch inpainting to Fast in settings.</string>
     <string name="reader_auto_inpaint_model_missing_toast">Auto-translation needs an inpainting model missing from this build. Switch inpainting to Fast in settings.</string>
+    <string name="translation_inpaint_failed_toast">Inpainting failed (%1$s) — translations are shown on the original image</string>
 
     <!-- Batch progress sheet (focus & details) -->
     <string name="batch_translation_title">Batch translation</string>

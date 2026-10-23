@@ -62,7 +62,8 @@ class PageInpaintingEngineTest {
         val page = PageTranslation()
         page.inpaintMaskBoxes = listOf(InpaintMaskBox(10, 20, 40, 60, 2))
 
-        PageInpaintingEngine(InpaintingMode.FAST, inpainter).inpaint(bitmap(), page) shouldBe null
+        PageInpaintingEngine(InpaintingMode.FAST, inpainter, notifyInpaintFailed = {})
+            .inpaint(bitmap(), page) shouldBe null
 
         page.inpaintStatus shouldBe StageStatus.FAILED
         page.errorMessage shouldBe "cleanup failed"
@@ -77,7 +78,7 @@ class PageInpaintingEngineTest {
         val page = PageTranslation()
         page.inpaintMaskBoxes = listOf(InpaintMaskBox(10, 20, 40, 60, 2))
 
-        PageInpaintingEngine(InpaintingMode.BALANCE, inpainter, qualityFallbackPref = { false })
+        PageInpaintingEngine(InpaintingMode.BALANCE, inpainter, qualityFallbackPref = { false }, notifyInpaintFailed = {})
             .inpaint(bitmap(), page) shouldBe null
 
         page.inpaintStatus shouldBe StageStatus.FAILED
@@ -104,7 +105,7 @@ class PageInpaintingEngineTest {
         val page1 = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
         val page2 = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
         var pref = false
-        val engine = PageInpaintingEngine(InpaintingMode.QUALITY, inpainter, qualityFallbackPref = { pref })
+        val engine = PageInpaintingEngine(InpaintingMode.QUALITY, inpainter, qualityFallbackPref = { pref }, notifyInpaintFailed = {})
 
         engine.inpaint(bitmap(), page1)
         page1.inpaintStatus shouldBe StageStatus.FAILED
@@ -337,6 +338,46 @@ class PageInpaintingEngineTest {
 
         message shouldBe "cancelled"
         page.inpaintStatus shouldBe StageStatus.RUNNING
+    }
+
+    @Test
+    fun `a failed page announces to the user while success and cancellation stay silent`() {
+        val announced = mutableListOf<String>()
+
+        // Neural-less QUALITY needs an explicit fallback pref or the engine
+        // throws before reaching the backend under test.
+        val failing = mockk<NeuralInpaintingCoordinator>()
+        every { failing.isInitialized() } returns false
+        every { failing.freeTextNeuralFill = any() } just runs
+        every { failing.bubbleNeuralFill = any() } just runs
+        every { failing.inpaintRegions(any(), any(), any(), any(), any()) } throws IllegalStateException("cleanup failed")
+        val failedPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+        PageInpaintingEngine(InpaintingMode.QUALITY, failing, qualityFallbackPref = { true }, notifyInpaintFailed = announced::add)
+            .inpaint(bitmap(), failedPage)
+
+        val succeeding = mockk<NeuralInpaintingCoordinator>()
+        every { succeeding.isInitialized() } returns false
+        every { succeeding.freeTextNeuralFill = any() } just runs
+        every { succeeding.bubbleNeuralFill = any() } just runs
+        every { succeeding.lastRunDegraded } returns false
+        every { succeeding.inpaintRegions(any(), any(), any(), any(), any()) } returns mockk()
+        val readyPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+        PageInpaintingEngine(InpaintingMode.QUALITY, succeeding, qualityFallbackPref = { true }, notifyInpaintFailed = announced::add)
+            .inpaint(bitmap(), readyPage)
+
+        val cancelling = mockk<NeuralInpaintingCoordinator>()
+        every { cancelling.isInitialized() } returns false
+        every { cancelling.freeTextNeuralFill = any() } just runs
+        every { cancelling.bubbleNeuralFill = any() } just runs
+        every { cancelling.inpaintRegions(any(), any(), any(), any(), any()) } throws CancellationException("cancelled")
+        val cancelledPage = PageTranslation().apply { inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2)) }
+        try {
+            PageInpaintingEngine(InpaintingMode.QUALITY, cancelling, qualityFallbackPref = { true }, notifyInpaintFailed = announced::add)
+                .inpaint(bitmap(), cancelledPage)
+        } catch (_: CancellationException) {
+        }
+
+        announced shouldBe listOf("QUALITY")
     }
 
     private fun assertMaskProcessed(page: PageTranslation) {
