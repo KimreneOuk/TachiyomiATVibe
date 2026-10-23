@@ -8,7 +8,6 @@ import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.Dialog
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.State
-import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
@@ -26,7 +25,6 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.at.ATMR
@@ -47,6 +45,7 @@ internal class MangaTranslationCoordinator(
     private val observeTranslationProgress: (Long) -> Unit,
     private val updateTranslationRequests: (Map<Long, TranslationRequestState>) -> Unit,
     private val updateTranslationState: (Translation) -> Unit,
+    private val onTranslationsQueuedBehindDownloads: () -> Unit = {},
 ) {
     internal var pendingTranslationGroup: List<ChapterList.Item> = emptyList()
 
@@ -385,18 +384,7 @@ internal class MangaTranslationCoordinator(
         }
         if (admitted.isNotEmpty()) {
             enqueueTranslationDownloads(downloadManager, manga, admitted)
-            val context: Application = Injekt.get()
-            val downloadPreferences: DownloadPreferences = Injekt.get()
-            val wifiRequired = downloadPreferences.downloadOnlyOverWifi().get()
-            val isWifi = context.activeNetworkState().isWifi
-            if (wifiRequired && !isWifi) {
-                scope.launch {
-                    snackbarHostState.showSnackbar(
-                        message = context.stringResource(ATMR.strings.manga_batch_download_wifi_warning),
-                        duration = SnackbarDuration.Short,
-                    )
-                }
-            }
+            onTranslationsQueuedBehindDownloads()
         }
     }
 }

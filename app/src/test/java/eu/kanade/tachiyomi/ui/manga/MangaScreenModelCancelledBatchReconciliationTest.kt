@@ -48,6 +48,7 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.TestMethodOrder
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
 import tachiyomi.domain.manga.model.Manga
@@ -114,6 +115,9 @@ class MangaScreenModelCancelledBatchReconciliationTest {
 
     private val getMangaAndChapters = mockk<GetMangaWithChapters>(relaxed = true)
     private val downloadManager = mockk<DownloadManager>(relaxed = true)
+    private val downloadPreferences = mockk<DownloadPreferences> {
+        every { downloadOnlyOverWifi() } returns mockk { every { get() } returns false }
+    }
     private val translationManager = mockk<TranslationManager>(relaxed = true)
     private val downloadCache = mockk<DownloadCache>(relaxed = true)
     private val trackerManager = mockk<TrackerManager>(relaxed = true)
@@ -225,6 +229,7 @@ class MangaScreenModelCancelledBatchReconciliationTest {
             trackerManager = trackerManager,
             trackChapter = mockk(relaxed = true),
             downloadManager = downloadManager,
+            downloadPreferences = downloadPreferences,
             translationManager = translationManager,
             translationPreferences = mockk(relaxed = true),
             downloadCache = downloadCache,

@@ -41,6 +41,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
@@ -81,6 +82,7 @@ import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.chapter.service.calculateChapterGap
 import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
@@ -92,6 +94,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -108,6 +111,7 @@ class MangaScreenModel(
     private val trackerManager: TrackerManager = Injekt.get(),
     private val trackChapter: TrackChapter = Injekt.get(),
     private val downloadManager: DownloadManager = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
     // TachiyomiAT
     private val translationManager: TranslationManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
@@ -454,7 +458,23 @@ class MangaScreenModel(
             observeTranslationProgress = { chapterId -> observeTranslationProgress(chapterId) },
             updateTranslationRequests = ::updateTranslationRequests,
             updateTranslationState = ::updateTranslationState,
+            onTranslationsQueuedBehindDownloads = ::warnTranslationsQueuedBehindDownloads,
         )
+    }
+
+    /**
+     * Presents the offline hint for translations queued behind downloads:
+     * fires only when Wi-Fi-only is enabled and the device is off Wi-Fi.
+     */
+    private fun warnTranslationsQueuedBehindDownloads() {
+        if (!downloadPreferences.downloadOnlyOverWifi().get()) return
+        if (context.activeNetworkState().isWifi) return
+        screenModelScope.launch {
+            snackbarHostState.showSnackbar(
+                message = context.stringResource(ATMR.strings.manga_batch_download_wifi_warning),
+                duration = SnackbarDuration.Short,
+            )
+        }
     }
 
     init {
