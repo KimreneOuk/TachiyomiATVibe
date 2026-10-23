@@ -16,6 +16,7 @@ import eu.kanade.translation.coordinator.ReaderTrigger
 import eu.kanade.translation.coordinator.SessionAdmission
 import eu.kanade.translation.coordinator.SessionRejection
 import eu.kanade.translation.diagnostics.NativeVisionTelemetry
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
@@ -55,6 +56,10 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
 
     private fun recomputeTranslationState() = owner.recomputeTranslationState()
     private fun getCurrentChapter() = owner.getCurrentChapter()
+
+    /** BALANCE/QUALITY starts are impossible while the selected model's assets are absent; FAST never blocks. */
+    private fun inpaintModelMissing(): Boolean =
+        LiteRTMangaInpaintingEngine.isNeuralStartBlocked(translationPreferences, Injekt.get<Application>())
     private fun resolvePageKey(page: ReaderPage) = owner.resolvePageKey(page)
     private suspend fun ensureQueueSession(chapter: ReaderChapter) = controller.ensureQueueSession(chapter)
     private fun resetAutoTranslationState() = controller.resetAutoTranslationState()
@@ -208,6 +213,12 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
      * beyond the receipt check is needed here.
      */
     internal fun confirmPageRetranslation(page: ReaderPage) {
+        // Refuse BEFORE the destructive reset so a missing model can't wipe
+        // the page's OCR data and then fail the same way again.
+        if (inpaintModelMissing()) {
+            Injekt.get<Application>().toast(ATMR.strings.reader_inpaint_model_missing_toast)
+            return
+        }
         val manga = manga ?: return
         val chapter = page.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
@@ -243,6 +254,10 @@ internal class ReaderTranslationActions(private val controller: ReaderTranslatio
     }
 
     internal fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
+        if (inpaintModelMissing()) {
+            Injekt.get<Application>().toast(ATMR.strings.reader_inpaint_model_missing_toast)
+            return
+        }
         val tapTimeNs = System.nanoTime()
         when (
             val admission = translationManager.sessionCoordinator.requestReaderSession(

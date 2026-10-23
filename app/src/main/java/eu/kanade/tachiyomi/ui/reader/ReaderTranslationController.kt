@@ -16,6 +16,7 @@ import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ReaderSessionToken
 import eu.kanade.translation.diagnostics.AutoSmoothnessTelemetry
 import eu.kanade.translation.diagnostics.NativeVisionTelemetry
+import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.engines.translator.TranslatorComputeClass
 import eu.kanade.translation.engines.translator.providers.AiModelFetcher
 import eu.kanade.translation.engines.vision.ocr.OcrModelCatalog
@@ -88,6 +89,19 @@ internal class ReaderTranslationController(
             owner.currentTranslationStore = value
         }
     private val pageArrivalTimes get() = owner.pageArrivalTimes
+
+    // Presence can't change mid-process, so the auto path toasts once.
+    private var autoInpaintMissingToasted = false
+
+    /** BALANCE/QUALITY starts are impossible while the selected model's assets are absent; FAST never blocks. */
+    private fun inpaintModelMissing(): Boolean =
+        LiteRTMangaInpaintingEngine.isNeuralStartBlocked(translationPreferences, Injekt.get<Application>())
+
+    private fun maybeToastAutoInpaintMissing() {
+        if (autoInpaintMissingToasted) return
+        autoInpaintMissingToasted = true
+        Injekt.get<Application>().toast(ATMR.strings.reader_auto_inpaint_model_missing_toast)
+    }
 
     internal fun recordArrivalWait(pageIndex: Int, pageKey: String) {
         val arrivalEpoch = pageArrivalTimes.remove(pageIndex) ?: return
@@ -303,6 +317,10 @@ internal class ReaderTranslationController(
      * latest viewport when it completes.
      */
     internal fun handleAutoTranslation(currentPage: ReaderPage) {
+        if (inpaintModelMissing()) {
+            maybeToastAutoInpaintMissing()
+            return
+        }
         val chapterKey = currentPage.chapter.chapter.id?.toString() ?: return
         readerCoordinator.sessionTokenForChapter(chapterKey)?.let { token ->
             dispatchViewport(token, currentPage)
@@ -470,6 +488,12 @@ internal class ReaderTranslationController(
     /** Reader auto-toggle transition; explicit taps remain in the captured session after auto-off. */
     internal fun onReaderAutoToggled(enabled: Boolean) {
         val chapterKey = getCurrentChapter()?.chapter?.id?.toString() ?: return
+        if (enabled && inpaintModelMissing()) {
+            // The UI switch is bound to the pref; revert it so Auto stays off.
+            translationPreferences.autoTranslate().set(false)
+            Injekt.get<Application>().toast(ATMR.strings.reader_auto_inpaint_model_missing_toast)
+            return
+        }
         val hadAutomaticDemand = readerCoordinator.setAutoEnabled(chapterKey, enabled)
         if (enabled) {
             if (translationPreferences.translationEnabled().get()) {

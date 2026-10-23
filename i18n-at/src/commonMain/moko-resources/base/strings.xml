@@ -228,6 +228,8 @@
     <string name="translation_inpaint_model_missing_title">Inpainting model missing</string>
     <string name="translation_inpaint_model_missing_message">%1$s inpainting needs the %2$s model, which is not included in this build. Fast inpainting works without any model.</string>
     <string name="translation_inpaint_switch_fast">Switch to Fast &amp; continue</string>
+    <string name="reader_inpaint_model_missing_toast">%1$s inpainting needs the %2$s model, which is not in this build. Switch inpainting to Fast in settings.</string>
+    <string name="reader_auto_inpaint_model_missing_toast">Auto-translation needs an inpainting model missing from this build. Switch inpainting to Fast in settings.</string>
 
     <!-- Batch progress sheet (focus & details) -->
     <string name="batch_translation_title">Batch translation</string>
