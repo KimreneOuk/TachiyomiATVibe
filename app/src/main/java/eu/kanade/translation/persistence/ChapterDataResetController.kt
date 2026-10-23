@@ -3,10 +3,8 @@ package eu.kanade.translation.persistence
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.coordinator.BatchTranslationCoordinator
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterArtifactDeletionPlan
-import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterResetReceipt
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.TranslationFileProvider
@@ -160,124 +158,6 @@ internal class ChapterDataResetController(
         if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
         durableStatusResolver.clearDurableStatusCache()
         return ChapterResetReceipt.incomplete(failures)
-    }
-
-    suspend fun chapterResetPreflight(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-    ): ChapterResetPreflight {
-        val chapterId = chapter.id
-        val activeStore = chapterId?.let(activeStores::get)
-        if (activeStore != null) return activeStore.resetPreflight()
-
-        return openExistingChapterTranslationStore(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-        )?.resetPreflight() ?: ChapterResetPreflight(0, 0, 0, 0)
-    }
-
-    suspend fun resetChapterTranslationData(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-        preserveEdits: Boolean,
-    ): ChapterResetReceipt {
-        return resetChapterData(chapter, manga, source) { page ->
-            val blocks = page.blocks.map { block ->
-                if (preserveEdits && block.userEditedAt != null) {
-                    block
-                } else {
-                    block.copy(
-                        translation = "",
-                        textColor = 0xFF000000,
-                        strokeColor = 0xFFFFFFFF,
-                        strokeWidth = 0f,
-                    )
-                }
-            }.toMutableList()
-            page.copy(
-                blocks = blocks,
-                translationStatus = StageStatus.PENDING,
-                renderStatus = StageStatus.PENDING,
-            ).also {
-                it.translationError = null
-                it.renderError = null
-            }
-        }
-    }
-
-    suspend fun resetChapterInpaintData(chapter: Chapter, manga: Manga, source: Source): ChapterResetReceipt {
-        val receipt = resetChapterData(chapter, manga, source) { page ->
-            page.copy(
-                cleanedImageName = null,
-                cleanedImageContentHash = null,
-                inpaintStatus = StageStatus.PENDING,
-                renderStatus = StageStatus.PENDING,
-            ).also {
-                it.inpaintError = null
-                it.renderError = null
-            }
-        }
-        retireChapterCompanionImages(manga, chapter, source)
-        return receipt
-    }
-
-    suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source): ChapterResetReceipt =
-        deleteTranslation(chapter, manga, source)
-
-    private suspend fun resetChapterData(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-        transform: (PageTranslation) -> PageTranslation,
-    ): ChapterResetReceipt {
-        val chapterId = chapter.id ?: return ChapterResetReceipt.COMPLETE
-        durableStatusResolver.clearDurableStatusCache()
-        cancelPageTranslations(chapterId)
-        removeFromTranslationQueue(chapter)
-        translator.cancelTranslatorJobAndJoin()
-        streamRegistry.clearChapter(source.id, manga.id, chapterId)
-        val failures = mutableListOf<String>()
-
-        val activeStore = activeStores.get(chapterId)
-        if (activeStore != null) {
-            resetStoreData(activeStore, transform, failures, "chapter data reset")
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { store ->
-                resetStoreData(store, transform, failures, "chapter data reset")
-            }
-        }
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
-        return ChapterResetReceipt.incomplete(failures)
-    }
-
-    /**
-     * Applies one reset transform across a store's pages, demotes every
-     * committed display pointer, and flushes the resulting state.
-     */
-    private suspend fun resetStoreData(
-        store: ChapterTranslationStore,
-        transform: (PageTranslation) -> PageTranslation,
-        failures: MutableList<String>,
-        reason: String,
-    ) {
-        store.state.value.keys.forEach { pageKey ->
-            store.updatePageFromCurrentSnapshot(pageKey, reason) { page -> page?.let(transform) ?: PageTranslation.EMPTY }
-            // An explicit user reset drops the committed display
-            // pointer too, so the reader stops showing the cleared bundle.
-            store.demoteCommittedDisplay(pageKey, reason)?.let { failures += "$pageKey: $it" }
-        }
-        store.flush()
     }
 
     suspend fun resetTranslationData(

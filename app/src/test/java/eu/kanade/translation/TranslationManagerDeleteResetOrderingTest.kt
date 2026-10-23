@@ -63,16 +63,6 @@ class TranslationManagerDeleteResetOrderingTest {
             mapOf(pageKey to PageTranslation(cleanedImageName = "old.jpg")),
         )
         coEvery { store.markDefunct() } coAnswers { log("markDefunct") }
-        coEvery { store.updatePageFromCurrentSnapshot(any(), any(), any()) } answers {
-            log("updatePageFromCurrentSnapshot")
-            ChapterTranslationStore.PatchResult.Accepted(
-                mockk<ChapterTranslationStore.PageSnapshot>(relaxed = true),
-            )
-        }
-        coEvery { store.demoteCommittedDisplay(any(), any()) } coAnswers {
-            log("demoteCommittedDisplay")
-            null
-        }
         coEvery { store.deletePage(any()) } answers {
             log("deletePage")
             null
@@ -221,64 +211,6 @@ class TranslationManagerDeleteResetOrderingTest {
                 "clearDurableStatusCache",
             ),
             "deleteTranslation ordering changed: $events",
-        )
-    }
-
-    @Test
-    fun `resetChapterTranslationData invalidates cache, cancels, mutates, demotes, flushes twice`() = runBlocking<Unit> {
-        val source = mockk<HttpSource>(relaxed = true)
-        val manga = mockk<Manga>(relaxed = true)
-        val chapter = mockk<Chapter>(relaxed = true)
-        every { chapter.id } returns 42L
-        val manager = newManager(
-            store = storeWithPage("p1"),
-            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
-        )
-        events.clear()
-
-        val receipt = manager.resetChapterTranslationData(chapter, manga, source, preserveEdits = false)
-
-        assertTrue(receipt.completed, "a clean reset must report a complete receipt: ${receipt.failures}")
-        assertTrue(
-            events == listOf(
-                "clearDurableStatusCache",
-                "cancelPageTranslations",
-                "removeFromQueue",
-                "cancelTranslatorJobAndJoin",
-                "clearChapter",
-                "updatePageFromCurrentSnapshot",
-                "demoteCommittedDisplay",
-                "storeFlush",
-                // reconcileBatchProgress flushes the active store again.
-                "storeFlush",
-            ),
-            "resetChapterData ordering changed: $events",
-        )
-    }
-
-    @Test
-    fun `an unverified destructive backup surfaces as typed incomplete reset`() = runBlocking<Unit> {
-        val source = mockk<HttpSource>(relaxed = true)
-        val manga = mockk<Manga>(relaxed = true)
-        val chapter = mockk<Chapter>(relaxed = true)
-        every { chapter.id } returns 42L
-        val store = storeWithPage("p1")
-        coEvery { store.demoteCommittedDisplay(any(), any()) } answers {
-            log("demoteCommittedDisplay")
-            "unverified backup after demotion: backup copy failed write/readback"
-        }
-        val manager = newManager(
-            store = store,
-            queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
-        )
-        events.clear()
-
-        val receipt = manager.resetChapterTranslationData(chapter, manga, source, preserveEdits = false)
-
-        assertTrue(!receipt.completed, "an unverified backup must never read as a clean reset")
-        assertTrue(
-            receipt.failures.single().contains("unverified backup after demotion"),
-            "the typed destructive reason must survive the receipt: ${receipt.failures}",
         )
     }
 

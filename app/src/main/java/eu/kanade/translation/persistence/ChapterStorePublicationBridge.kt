@@ -332,11 +332,9 @@ internal class ChapterStorePublicationBridge(private val store: ChapterTranslati
             )
             manifest = when (opened) {
                 is ChapterArtifactEngine.TransactionOutcome.Committed -> {
-                    store.reportCandidateReuse(opened.candidateOpenState)
                     opened.manifest
                 }
                 is ChapterArtifactEngine.TransactionOutcome.Rejected -> {
-                    store.reportCandidateReuse(opened.candidateOpenState)
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT artifact candidate open rejected: pageKey=$pageKey reason=${opened.reason}"
                     }

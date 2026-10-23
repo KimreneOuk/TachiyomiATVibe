@@ -23,13 +23,11 @@ import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterDataResetController
-import eu.kanade.translation.persistence.ChapterResetPreflight
 import eu.kanade.translation.persistence.ChapterTranslationAccessController
 import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.CleanedImageLifecycleController
 import eu.kanade.translation.persistence.DurableChapterStatusResolver
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.persistence.chapterResetPreflight
 import eu.kanade.translation.processing.TranslationProcessor
 import eu.kanade.translation.processing.batch.progress.TranslationBatchTrackerRegistry
 import eu.kanade.translation.processing.execution.TranslationStreamRegistry
@@ -497,25 +495,6 @@ class TranslationManager private constructor(
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
         chapterDataReset.deleteTranslation(chapter, manga, source)
-
-    suspend fun chapterResetPreflight(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-    ): ChapterResetPreflight = chapterDataReset.chapterResetPreflight(chapter, manga, source)
-
-    suspend fun resetChapterTranslationData(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-        preserveEdits: Boolean,
-    ) = chapterDataReset.resetChapterTranslationData(chapter, manga, source, preserveEdits)
-
-    suspend fun resetChapterInpaintData(chapter: Chapter, manga: Manga, source: Source) =
-        chapterDataReset.resetChapterInpaintData(chapter, manga, source)
-
-    suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source) =
-        chapterDataReset.resetChapterOcrData(chapter, manga, source)
 
     suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) =
         chapterDataReset.resetTranslationData(chapter, manga, source, pageKey, preserveEdits)

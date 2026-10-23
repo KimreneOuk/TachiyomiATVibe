@@ -26,7 +26,6 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
@@ -83,26 +82,6 @@ class ChapterTranslationStore internal constructor(
      */
     internal val testSeams = ChapterStoreTestSeams(this)
 
-    private val candidateReuseObservers = CopyOnWriteArrayList<
-        (ChapterCandidateTransactions.CandidateOpenState.Reused) -> Unit,
-        >()
-
-    /** Observe typed artifact reuse outcomes without coupling storage to batch diagnostics. */
-    internal fun observeCandidateReuse(
-        observer: (ChapterCandidateTransactions.CandidateOpenState.Reused) -> Unit,
-    ): AutoCloseable {
-        candidateReuseObservers.add(observer)
-        return AutoCloseable { candidateReuseObservers.remove(observer) }
-    }
-
-    internal fun reportCandidateReuse(state: ChapterCandidateTransactions.CandidateOpenState?) {
-        val reused = state as? ChapterCandidateTransactions.CandidateOpenState.Reused ?: return
-        candidateReuseObservers.forEach { observer ->
-            // Diagnostics must not change whether an artifact transaction is accepted.
-            runCatching { observer(reused) }
-        }
-    }
-
     internal val chapterKey: String?
         get() = artifactEngine?.layout?.chapterKey ?: artifactFileName?.substringBeforeLast('.')
 
@@ -115,9 +94,6 @@ class ChapterTranslationStore internal constructor(
 
     /** Read-only manifest projection for context/status consumers. */
     internal fun readArtifactManifest(): ChapterArtifactManifest? = artifactEngine?.readManifest()
-
-    /** Read-only chapter key projection without exposing the engine. */
-    internal fun artifactChapterKey(): String? = artifactEngine?.layout?.chapterKey
 
     @Volatile
     internal var pages: PersistentMap<String, PublishedPageTranslation> = persistentMapOf()
@@ -190,8 +166,6 @@ class ChapterTranslationStore internal constructor(
         val displayFingerprint: String,
         val promotedAtEpochMs: Long,
     )
-
-    fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
 
     data class PageSnapshot(
         val page: PageTranslation?,
@@ -353,8 +327,6 @@ class ChapterTranslationStore internal constructor(
         lazyPersistenceEnabled = true
     }
 
-    internal fun isLazyPersistenceEnabled(): Boolean = lazyPersistenceEnabled
-
     internal fun isLazyGenerationCurrent(expectedGeneration: Long): Boolean =
         !defunct && generation == expectedGeneration
 
@@ -499,12 +471,6 @@ class ChapterTranslationStore internal constructor(
         pageStageLeaseTable.releaseAllPageLeases(origin)
 
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
-
-    /** Whether [pageKey] currently holds a BATCH page-stage lease. */
-    fun hasActiveBatchStageLease(pageKey: String): Boolean =
-        pageStageLeaseTable.pageLeaseOwner(pageKey) == PageWriteOrigin.BATCH
-
-    suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
 
     suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
         withContext(GenerationContext(this, generation)) { block() }
