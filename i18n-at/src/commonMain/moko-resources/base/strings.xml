@@ -342,6 +342,8 @@
     <string name="batch_view_page_progress">View Page Progress</string>
     <string name="batch_pages_optional">%1$d pages • Optional</string>
     <string name="batch_background_progress">Background progress</string>
+    <string name="translation_reset_chapter">Reset Chapter</string>
+    <string name="translation_reset_chapter_summary">Deletes all OCR data, cleaned images and translations for this chapter. Manual edits are removed.</string>
     <string name="pref_show_translations_summary">Display rendered translated text on pages</string>
     <string name="reader_sheet_subtitle">Reading mode &amp; display</string>
     <string name="reader_section_navigation_feel">Navigation &amp; feel</string>
@@ -367,4 +369,15 @@
     <string name="reader_translation_ocr_mlkit_summary">Universal Latin/CJK</string>
     <string name="reader_translation_deepl_api_key">DeepL API key</string>
     <string name="reader_translation_reset_summary">Purges cached artifacts for this chapter</string>
+    <string name="batch_start_cta">Start batch (%1$d)</string>
+    <string name="batch_translation_title">Batch translation</string>
+    <string name="batch_tab_focus">Focus</string>
+    <string name="batch_tab_details">Details</string>
+    <string name="batch_section_queue">Queue</string>
+    <string name="batch_section_pipeline">Pipeline</string>
+    <string name="batch_section_pages">Pages</string>
+    <string name="batch_queue_done">Done</string>
+    <string name="batch_queue_queued">Queued</string>
+    <string name="batch_queue_retry">Retry</string>
+    <string name="batch_live_status">Live status</string>
 </resources>

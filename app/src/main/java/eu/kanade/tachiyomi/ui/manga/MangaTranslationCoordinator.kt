@@ -4,19 +4,16 @@ import android.app.Application
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.Dialog
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel.State
-import tachiyomi.core.common.util.lang.launchNonCancellable
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.persistence.ChapterResetReceipt
-import eu.kanade.translation.presentation.snapshotTranslationSummary
 import eu.kanade.translation.processing.batch.BatchAdmissionDecision
 import eu.kanade.translation.processing.batch.BatchAdmissionProbe
 import kotlinx.coroutines.CoroutineScope
@@ -24,12 +21,14 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
-import eu.kanade.tachiyomi.util.system.activeNetworkState
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -123,26 +122,10 @@ internal class MangaTranslationCoordinator(
     }
 
     fun showChapterResetDialog(item: ChapterList.Item) {
-        val state = getSuccessState() ?: return
-        scope.launch {
-            val preflight = translationManager.chapterResetPreflight(item.chapter, state.manga, state.source)
-            updateSuccessState { it.copy(dialog = Dialog.ChapterReset(item, preflight)) }
-        }
+        updateSuccessState { it.copy(dialog = Dialog.ChapterReset(item)) }
     }
 
-    fun resetChapterTranslation(item: ChapterList.Item, preserveEdits: Boolean) = runChapterReset(item) {
-        resetChapterTranslationData(item.chapter, it.manga, it.source, preserveEdits)
-    }
-
-    fun resetChapterInpaint(item: ChapterList.Item) = runChapterReset(item) {
-        resetChapterInpaintData(item.chapter, it.manga, it.source)
-    }
-
-    fun resetChapterOcr(item: ChapterList.Item) = runChapterReset(item) {
-        resetChapterOcrData(item.chapter, it.manga, it.source)
-    }
-
-    fun deleteChapterTranslation(item: ChapterList.Item) = runChapterReset(item) {
+    fun resetChapter(item: ChapterList.Item) = runChapterReset(item) {
         deleteTranslation(item.chapter, it.manga, it.source)
     }
 
@@ -175,10 +158,9 @@ internal class MangaTranslationCoordinator(
     }
 
     fun showConfirmTranslationDialog(items: List<ChapterList.Item>) {
-        val summary = translationPreferences.snapshotTranslationSummary()
         val primary = items.first()
         updateSuccessState {
-            it.copy(dialog = Dialog.ConfirmTranslation(primary, summary, items))
+            it.copy(dialog = Dialog.ConfirmTranslation(primary, items))
         }
     }
 

@@ -22,17 +22,13 @@ import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.coordinator.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.presentation.TranslationSettingsSummary
-import eu.kanade.translation.presentation.snapshotTranslationSummary
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
 import io.mockk.slot
-import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -218,11 +214,6 @@ class MangaScreenModelMultiSelectBatchTest {
         evictCachedScreenModelScope()
 
         every { translationPreferences.translationConfirmPretranslate() } returns confirmPref
-        // snapshotTranslationSummary is a top-level extension that reads real
-        // preference values; static-mock it so the dialog test runs on the JVM.
-        mockkStatic("eu.kanade.translation.presentation.TranslationSettingsSummaryKt")
-        every { translationPreferences.snapshotTranslationSummary() } returns
-            mockk<TranslationSettingsSummary>(relaxed = true)
 
         evictCachedScreenModelScope()
 
@@ -303,14 +294,10 @@ class MangaScreenModelMultiSelectBatchTest {
                 }
             }
         } finally {
-            try {
-                unmockkStatic("eu.kanade.translation.presentation.TranslationSettingsSummaryKt")
-            } finally {
-                evictCachedScreenModelScope()
-                ArchTaskExecutor.getInstance().setDelegate(null)
-                Dispatchers.resetMain()
-                mainThreadSurrogate.close()
-            }
+            evictCachedScreenModelScope()
+            ArchTaskExecutor.getInstance().setDelegate(null)
+            Dispatchers.resetMain()
+            mainThreadSurrogate.close()
         }
     }
 

@@ -49,8 +49,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -59,11 +57,6 @@ data class SelectorOption<out T>(
     val label: String,
     val subtitle: String? = null,
 )
-
-sealed interface TranslatorChoice {
-    data class Standard(val engine: StandardEngine) : TranslatorChoice
-    data class Ai(val engine: AiEngine) : TranslatorChoice
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -259,7 +252,9 @@ fun <T> SearchableConfigSelectorBox(
                                     modifier = Modifier.size(18.dp),
                                 )
                             }
-                        } else null,
+                        } else {
+                            null
+                        },
                         onClick = {
                             onSelect(option.value)
                             expanded = false

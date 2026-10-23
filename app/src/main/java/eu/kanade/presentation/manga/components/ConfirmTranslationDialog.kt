@@ -1,6 +1,12 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,15 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Bolt
-import androidx.compose.material.icons.outlined.Power
-import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,32 +36,27 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.components.SearchableConfigSelectorBox
 import eu.kanade.presentation.components.SelectorOption
-import eu.kanade.presentation.components.TranslatorChoice
-import eu.kanade.presentation.components.vortex.VortexLanguagePairSelector
-import eu.kanade.presentation.components.vortex.VortexPreset
-import eu.kanade.presentation.components.vortex.VortexPresetHeroBar
-import eu.kanade.presentation.components.vortex.VortexSectionHeading
-import eu.kanade.presentation.components.vortex.VortexSelectionTile
-import eu.kanade.presentation.components.vortex.VortexSheetHeader
-import eu.kanade.presentation.components.vortex.VortexSwitchSlate
-import eu.kanade.presentation.components.vortex.VortexTokens
-import eu.kanade.presentation.components.vortex.resolveActivePreset
+import eu.kanade.presentation.components.designsystem.DesignTokens
+import eu.kanade.presentation.components.designsystem.LanguagePairSelector
+import eu.kanade.presentation.components.designsystem.SectionHeading
+import eu.kanade.presentation.components.designsystem.SegmentedPillBar
+import eu.kanade.presentation.components.designsystem.SelectionTile
+import eu.kanade.presentation.components.designsystem.SheetHeader
+import eu.kanade.presentation.translation.aiProviderOptions
+import eu.kanade.presentation.translation.neuralInpaintOptions
+import eu.kanade.presentation.translation.ocrModelOptions
+import eu.kanade.presentation.translation.standardEngineOptions
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
-import eu.kanade.translation.model.BatchExecutionMode
 import eu.kanade.translation.model.TextRecognizerLanguage
 import eu.kanade.translation.model.TextTranslatorLanguage
-import eu.kanade.translation.presentation.TranslationSettingsSummary
-import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.NeuralInpaintModel
-import tachiyomi.domain.translation.OcrModel
-import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
@@ -70,13 +67,12 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * Vortex-styled interactive pre-configuration sheet for batch translation.
- * Features 3-tier master presets, fluid language pair selector, and live feedback.
+ * Interactive pre-configuration sheet for batch translation, mirroring the
+ * reader sheet sections: languages, translator, vision and inpainting.
  */
 @Composable
 fun ConfirmTranslationDialog(
     chapterNames: List<String>,
-    summary: TranslationSettingsSummary,
     showAgain: Boolean,
     onShowAgainChange: (Boolean) -> Unit,
     onOpenSettings: () -> Unit,
@@ -92,13 +88,6 @@ fun ConfirmTranslationDialog(
         mutableStateOf(translationPreferences.translateToLanguage().get())
     }
 
-    var ocrModel by rememberSaveable {
-        mutableStateOf(translationPreferences.translationOcrModel(selectedFromLangName).get())
-    }
-    var inpaintModel by rememberSaveable {
-        mutableStateOf(translationPreferences.translationInpaintingNeuralModel().get())
-    }
-
     var engineCategory by rememberSaveable {
         mutableStateOf(translationPreferences.translationEngineCategory().get())
     }
@@ -108,40 +97,14 @@ fun ConfirmTranslationDialog(
     var aiEngine by rememberSaveable {
         mutableStateOf(translationPreferences.translationAiEngine().get())
     }
-
-    var executionMode by rememberSaveable {
-        mutableStateOf(
-            if (translationPreferences.translationRequireCharging().get()) {
-                BatchExecutionMode.ONLY_WHILE_CHARGING
-            } else {
-                BatchExecutionMode.STANDARD
-            },
-        )
+    var ocrModel by remember(selectedFromLangName) {
+        mutableStateOf(translationPreferences.translationOcrModel(selectedFromLangName).get())
     }
-    var continueInBackground by rememberSaveable {
-        mutableStateOf(translationPreferences.translationContinueInBackground().get())
+    var inpaintingMode by rememberSaveable {
+        mutableStateOf(translationPreferences.translationInpaintingMode().get())
     }
-
-    val activePreset = remember(ocrModel, inpaintModel) {
-        resolveActivePreset(ocrModel, inpaintModel)
-    }
-
-    val currentTranslatorLabel = remember(engineCategory, standardEngine, aiEngine) {
-        when (engineCategory) {
-            TranslationEngineCategory.STANDARD -> StandardTranslatorKind.entries
-                .firstOrNull { it.name == standardEngine.name }?.label ?: standardEngine.name
-            TranslationEngineCategory.AI_MODEL -> AiTranslatorKind.entries
-                .firstOrNull { it.engine == aiEngine }?.label ?: aiEngine.name
-        }
-    }
-
-    val currentModelSubtitle = remember(engineCategory, aiEngine) {
-        if (engineCategory == TranslationEngineCategory.AI_MODEL) {
-            val model = translationPreferences.translationAiModel(aiEngine).get()
-            if (model.isNotBlank()) "Model: $model" else null
-        } else {
-            null
-        }
+    var neuralModel by rememberSaveable {
+        mutableStateOf(translationPreferences.translationInpaintingNeuralModel().get())
     }
 
     val fromOptions = remember {
@@ -160,30 +123,31 @@ fun ConfirmTranslationDialog(
             )
         }
     }
-    val standardSubtitle = stringResource(ATMR.strings.pref_translation_type_standard)
-    val aiSubtitle = stringResource(ATMR.strings.pref_translation_type_ai)
-    val translatorOptions = remember(standardSubtitle, aiSubtitle) {
-        val standard: List<SelectorOption<TranslatorChoice>> = StandardTranslatorKind.entries.map { kind ->
-            SelectorOption(
-                value = TranslatorChoice.Standard(StandardEngine.valueOf(kind.name)),
-                label = kind.label,
-                subtitle = standardSubtitle,
-            )
-        }
-        val ai: List<SelectorOption<TranslatorChoice>> = AiTranslatorKind.entries.map { kind ->
-            SelectorOption(
-                value = TranslatorChoice.Ai(kind.engine),
-                label = kind.label,
-                subtitle = aiSubtitle,
-            )
-        }
-        standard + ai
+
+    val standardEngineLabel = remember(standardEngine) {
+        StandardTranslatorKind.entries.firstOrNull { it.name == standardEngine.name }?.label
+            ?: standardEngine.name
     }
+    val aiEngineLabel = remember(aiEngine) {
+        AiTranslatorKind.entries.firstOrNull { it.engine == aiEngine }?.label ?: aiEngine.name
+    }
+    val aiModelSubtitle = remember(engineCategory, aiEngine) {
+        if (engineCategory == TranslationEngineCategory.AI_MODEL) {
+            translationPreferences.translationAiModel(aiEngine).get().takeIf { it.isNotBlank() }
+                ?.let { "Model: $it" }
+        } else {
+            null
+        }
+    }
+
+    val ocrOptions = ocrModelOptions()
+    val neuralOptions = neuralInpaintOptions()
+    val currentInpaint = inpaintingMode.ifEmpty { "QUALITY" }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         Surface(
-            color = VortexTokens.SheetBackground,
-            shape = VortexTokens.ShapeSheet,
+            color = DesignTokens.SheetBackground,
+            shape = DesignTokens.ShapeSheet,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
@@ -192,8 +156,7 @@ fun ConfirmTranslationDialog(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
             ) {
-                // Header Row
-                VortexSheetHeader(
+                SheetHeader(
                     icon = Icons.Outlined.Translate,
                     title = stringResource(ATMR.strings.batch_translate_chapters),
                     subtitle = if (chapterNames.size == 1) {
@@ -204,37 +167,10 @@ fun ConfirmTranslationDialog(
                     onClose = onDismissRequest,
                 )
 
-                // Master Quick Presets
-                VortexSectionHeading(title = "Master Presets")
-                VortexPresetHeroBar(
-                    currentPreset = activePreset,
-                    onApplyPreset = { preset ->
-                        when (preset) {
-                            VortexPreset.SPEED -> {
-                                ocrModel = OcrModel.PADDLEOCR_V6_SMALL
-                                inpaintModel = NeuralInpaintModel.AOT_GAN
-                            }
-                            VortexPreset.BALANCED -> {
-                                ocrModel = OcrModel.PADDLEOCR_V6_SMALL
-                                inpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU
-                            }
-                            VortexPreset.QUALITY -> {
-                                ocrModel = OcrModel.MANGAOCR
-                                inpaintModel = NeuralInpaintModel.LAMA_LITERT_GPU
-                            }
-                            VortexPreset.CUSTOM -> {}
-                        }
-                        translationPreferences.translationOcrModel(selectedFromLangName).set(ocrModel)
-                        translationPreferences.translationInpaintingNeuralModel().set(inpaintModel)
-                    },
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Language Pair Section
-                VortexSectionHeading(title = stringResource(ATMR.strings.translation_section_languages))
-                VortexLanguagePairSelector(
+                SectionHeading(title = stringResource(ATMR.strings.translation_section_languages))
+                LanguagePairSelector(
                     fromLanguage = selectedFromLangName,
                     toLanguage = selectedToLangName,
                     onFromLanguageChange = { lang ->
@@ -252,94 +188,154 @@ fun ConfirmTranslationDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Translator Engine Section
-                VortexSectionHeading(title = stringResource(ATMR.strings.translation_section_translator))
+                SectionHeading(title = stringResource(ATMR.strings.translation_section_translator))
+                SegmentedPillBar(
+                    tabs = listOf(
+                        stringResource(ATMR.strings.reader_translation_engine_standard),
+                        stringResource(ATMR.strings.reader_translation_engine_ai),
+                    ),
+                    selectedIndex = if (engineCategory == TranslationEngineCategory.AI_MODEL) 1 else 0,
+                    onTabSelected = { index ->
+                        val category =
+                            if (index == 1) TranslationEngineCategory.AI_MODEL else TranslationEngineCategory.STANDARD
+                        if (category != engineCategory) {
+                            engineCategory = category
+                            translationPreferences.translationEngineCategory().set(category)
+                        }
+                    },
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 20.dp)
+                        .clip(DesignTokens.ShapeCard)
+                        .background(DesignTokens.CardFill)
+                        .border(1.dp, DesignTokens.CardBorder, DesignTokens.ShapeCard)
+                        .padding(14.dp),
                 ) {
-                    SearchableConfigSelectorBox(
-                        selectedLabel = currentTranslatorLabel,
-                        options = translatorOptions,
-                        onSelect = { choice ->
-                            when (choice) {
-                                is TranslatorChoice.Standard -> {
-                                    engineCategory = TranslationEngineCategory.STANDARD
-                                    standardEngine = choice.engine
-                                    translationPreferences.translationEngineCategory().set(engineCategory)
-                                    translationPreferences.translationStandardEngine().set(standardEngine)
-                                }
-                                is TranslatorChoice.Ai -> {
-                                    engineCategory = TranslationEngineCategory.AI_MODEL
-                                    aiEngine = choice.engine
-                                    translationPreferences.translationEngineCategory().set(engineCategory)
-                                    translationPreferences.translationAiEngine().set(aiEngine)
-                                }
-                            }
-                        },
-                        placeholder = stringResource(ATMR.strings.translation_section_translator),
-                        matchAnchorWidth = true,
-                    )
-                    currentModelSubtitle?.let { modelSubtitle ->
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = modelSubtitle,
-                            fontSize = 11.sp,
-                            color = VortexTokens.TextMuted,
-                            modifier = Modifier.padding(start = 4.dp),
+                    if (engineCategory == TranslationEngineCategory.STANDARD) {
+                        SearchableConfigSelectorBox(
+                            selectedLabel = standardEngineLabel,
+                            options = standardEngineOptions,
+                            onSelect = { engine ->
+                                standardEngine = engine
+                                translationPreferences.translationStandardEngine().set(engine)
+                            },
+                            placeholder = stringResource(ATMR.strings.translation_section_translator),
+                            matchAnchorWidth = true,
                         )
+                    } else {
+                        SearchableConfigSelectorBox(
+                            selectedLabel = aiEngineLabel,
+                            options = aiProviderOptions,
+                            onSelect = { engine ->
+                                aiEngine = engine
+                                translationPreferences.translationAiEngine().set(engine)
+                            },
+                            placeholder = stringResource(ATMR.strings.translation_section_translator),
+                            matchAnchorWidth = true,
+                        )
+                        aiModelSubtitle?.let { modelSubtitle ->
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = modelSubtitle,
+                                fontSize = 11.sp,
+                                color = DesignTokens.TextMuted,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Execution Policy
-                VortexSectionHeading(title = stringResource(ATMR.strings.batch_execution_section))
+                SectionHeading(title = stringResource(ATMR.strings.reader_translation_section_vision))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .clip(DesignTokens.ShapeCard)
+                        .background(DesignTokens.CardFill)
+                        .border(1.dp, DesignTokens.CardBorder, DesignTokens.ShapeCard)
+                        .padding(14.dp),
+                ) {
+                    SearchableConfigSelectorBox(
+                        selectedLabel = ocrOptions.firstOrNull { it.value == ocrModel }?.label
+                            ?: ocrModel.name,
+                        options = ocrOptions,
+                        onSelect = { model ->
+                            ocrModel = model
+                            translationPreferences.translationOcrModel(selectedFromLangName).set(model)
+                        },
+                        placeholder = stringResource(ATMR.strings.pref_ocr_model),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                SectionHeading(title = stringResource(ATMR.strings.reader_translation_section_inpainting))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    VortexSelectionTile(
-                        selected = executionMode == BatchExecutionMode.STANDARD,
+                    SelectionTile(
+                        selected = currentInpaint.equals("FAST", ignoreCase = true),
                         onClick = {
-                            executionMode = BatchExecutionMode.STANDARD
-                            translationPreferences.translationRequireCharging().set(false)
+                            inpaintingMode = "FAST"
+                            translationPreferences.translationInpaintingMode().set("FAST")
                         },
-                        title = stringResource(ATMR.strings.batch_execution_standard),
-                        icon = Icons.Outlined.Bolt,
+                        title = "FAST",
                         modifier = Modifier.weight(1f),
                     )
-                    VortexSelectionTile(
-                        selected = executionMode == BatchExecutionMode.ONLY_WHILE_CHARGING,
+                    SelectionTile(
+                        selected = currentInpaint.equals("BALANCE", ignoreCase = true),
                         onClick = {
-                            executionMode = BatchExecutionMode.ONLY_WHILE_CHARGING
-                            translationPreferences.translationRequireCharging().set(true)
+                            inpaintingMode = "BALANCE"
+                            translationPreferences.translationInpaintingMode().set("BALANCE")
                         },
-                        title = stringResource(ATMR.strings.batch_execution_charging_only),
-                        icon = Icons.Outlined.Power,
+                        title = "BALANCE",
+                        modifier = Modifier.weight(1f),
+                    )
+                    SelectionTile(
+                        selected = currentInpaint.equals("QUALITY", ignoreCase = true),
+                        onClick = {
+                            inpaintingMode = "QUALITY"
+                            translationPreferences.translationInpaintingMode().set("QUALITY")
+                        },
+                        title = "QUALITY",
                         modifier = Modifier.weight(1f),
                     )
                 }
+                AnimatedVisibility(
+                    visible = !currentInpaint.equals("FAST", ignoreCase = true),
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(DesignTokens.ShapeCard)
+                            .background(DesignTokens.CardFill)
+                            .border(1.dp, DesignTokens.CardBorder, DesignTokens.ShapeCard)
+                            .padding(14.dp),
+                    ) {
+                        SearchableConfigSelectorBox(
+                            selectedLabel = neuralOptions.firstOrNull { it.value == neuralModel }?.label
+                                ?: neuralModel.name,
+                            options = neuralOptions,
+                            onSelect = { model ->
+                                neuralModel = model
+                                translationPreferences.translationInpaintingNeuralModel().set(model)
+                            },
+                            placeholder = "Select Neural Model",
+                        )
+                    }
+                }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Background Execution Switch Slate
-                VortexSwitchSlate(
-                    icon = Icons.Outlined.Sync,
-                    title = stringResource(ATMR.strings.batch_continue_background),
-                    subtitle = stringResource(ATMR.strings.batch_background_progress_summary),
-                    checked = continueInBackground,
-                    onCheckedChange = { checked ->
-                        continueInBackground = checked
-                        translationPreferences.translationContinueInBackground().set(checked)
-                    },
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Advanced link & Don't show again
                 Row(
@@ -353,13 +349,13 @@ fun ConfirmTranslationDialog(
                         Icon(
                             imageVector = Icons.Outlined.Tune,
                             contentDescription = null,
-                            tint = VortexTokens.AccentPrimary,
+                            tint = DesignTokens.AccentPrimary,
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
                             text = stringResource(ATMR.strings.translation_section_advanced),
-                            color = VortexTokens.AccentPrimary,
+                            color = DesignTokens.AccentPrimary,
                             fontSize = 12.sp,
                         )
                     }
@@ -381,12 +377,12 @@ fun ConfirmTranslationDialog(
                 ) {
                     OutlinedButton(
                         onClick = onDismissRequest,
-                        shape = VortexTokens.ShapeSquircle,
+                        shape = DesignTokens.ShapeSquircle,
                         modifier = Modifier.height(48.dp),
                     ) {
                         Text(
                             text = stringResource(MR.strings.action_cancel),
-                            color = VortexTokens.TextMuted,
+                            color = DesignTokens.TextMuted,
                         )
                     }
                     Button(
@@ -395,20 +391,16 @@ fun ConfirmTranslationDialog(
                             onConfirm()
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = VortexTokens.AccentPrimary,
-                            contentColor = VortexTokens.TextOnAccent,
+                            containerColor = DesignTokens.AccentPrimary,
+                            contentColor = DesignTokens.TextOnAccent,
                         ),
-                        shape = VortexTokens.ShapeSquircle,
+                        shape = DesignTokens.ShapeSquircle,
                         modifier = Modifier
                             .weight(1f)
                             .height(48.dp),
                     ) {
                         Text(
-                            text = if (chapterNames.size == 1) {
-                                stringResource(ATMR.strings.manga_translate)
-                            } else {
-                                "Start Batch Translation (${chapterNames.size})"
-                            },
+                            text = stringResource(ATMR.strings.batch_start_cta, chapterNames.size),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                         )

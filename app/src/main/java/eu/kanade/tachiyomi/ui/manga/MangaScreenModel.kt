@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.ui.manga
 
-import android.app.Application
 import android.content.Context
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -48,10 +47,7 @@ import eu.kanade.translation.coordinator.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestState
-import eu.kanade.translation.persistence.ChapterResetReceipt
-import eu.kanade.translation.presentation.TranslationSettingsSummary
 import eu.kanade.translation.presentation.TranslationUiProjection
-import eu.kanade.translation.presentation.snapshotTranslationSummary
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -96,7 +92,6 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
-import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -857,10 +852,6 @@ class MangaScreenModel(
         }
     }
 
-    /** Read-only view of downloader queue for the batch drawer's download phase. */
-    fun activeDownloadFor(chapterId: Long): Download? =
-        downloadManager.getQueuedDownloadOrNull(chapterId)
-
     // TachiyomiAT
     fun runChapterTranslationActions(
         item: ChapterList.Item,
@@ -878,17 +869,8 @@ class MangaScreenModel(
     fun showChapterResetDialog(item: ChapterList.Item) =
         translationCoordinator.showChapterResetDialog(item)
 
-    fun resetChapterTranslation(item: ChapterList.Item, preserveEdits: Boolean) =
-        translationCoordinator.resetChapterTranslation(item, preserveEdits)
-
-    fun resetChapterInpaint(item: ChapterList.Item) =
-        translationCoordinator.resetChapterInpaint(item)
-
-    fun resetChapterOcr(item: ChapterList.Item) =
-        translationCoordinator.resetChapterOcr(item)
-
-    fun deleteChapterTranslation(item: ChapterList.Item) =
-        translationCoordinator.deleteChapterTranslation(item)
+    fun resetChapter(item: ChapterList.Item) =
+        translationCoordinator.resetChapter(item)
 
     fun showConfirmTranslationDialog(item: ChapterList.Item) =
         translationCoordinator.showConfirmTranslationDialog(item)
@@ -1278,11 +1260,9 @@ class MangaScreenModel(
         data class TranslationProgress(val chapterId: Long) : Dialog
         data class ChapterReset(
             val item: ChapterList.Item,
-            val preflight: eu.kanade.translation.persistence.ChapterResetPreflight,
         ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,
-            val summary: TranslationSettingsSummary,
             //  slice 2 (R6): the confirmation represents the whole
             // selection; empty means the single [item] (legacy shape).
             val group: List<ChapterList.Item> = emptyList(),

@@ -36,7 +36,7 @@ import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.manga.EditCoverAction
 import eu.kanade.presentation.manga.MangaScreen
-import eu.kanade.presentation.manga.components.ChapterResetSheet
+import eu.kanade.presentation.manga.components.BatchChapterStatus
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.presentation.manga.components.ConfirmTranslationDialog
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
@@ -296,17 +296,32 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
-                // TachiyomiAT  slice 1: read-only download join from the same
-                // chapter-row download state; the downloader never owns
-                // translation state, the drawer only displays it.
-                val activeDownload = screenModel.activeDownloadFor(dialog.chapterId)
+                // Queue rows: this chapter plus everything in active or
+                // retryable translation work, in chapter order.
+                val queueStatuses = successState.chapters
+                    .filter { chapterItem ->
+                        val state = chapterItem.translationState
+                        chapterItem.id == dialog.chapterId ||
+                            state == eu.kanade.translation.model.Translation.State.QUEUE ||
+                            state == eu.kanade.translation.model.Translation.State.TRANSLATING ||
+                            state == eu.kanade.translation.model.Translation.State.PAUSED ||
+                            state == eu.kanade.translation.model.Translation.State.ERROR ||
+                            state == eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS
+                    }
+                    .map { chapterItem ->
+                        BatchChapterStatus(
+                            chapterId = chapterItem.id,
+                            title = chapterItem.chapter.name,
+                            state = chapterItem.translationState,
+                            donePages = chapterItem.translationProgress?.donePages,
+                            totalPages = chapterItem.translationProgress?.totalPages,
+                            failureReason = chapterItem.translationProgress?.abortedReason
+                                ?: chapterItem.translationProgress?.requestState?.reason?.takeIf { it.isNotBlank() },
+                        )
+                    }
                 TranslationProgressSheet(
-                    chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
-                    downloadState = item?.downloadState,
-                    downloadProgress = item?.downloadProgress ?: 0,
-                    downloadedPages = activeDownload?.downloadedImages?.takeIf { it > 0 },
-                    totalDownloadPages = activeDownload?.pages?.size?.takeIf { it > 0 },
+                    queue = queueStatuses,
                     onDismissRequest = onDismissRequest,
                     onResume = {
                         if (item != null) {
@@ -335,32 +350,36 @@ class MangaScreen(
                     // TachiyomiAT  a cancelled/terminal-failed batch gets a
                     // working restart from the sheet (the aborted banner alone
                     // dead-ended; the indicator routed every tap here).
-                    onRetry = {
-                        screenModel.retryBatchTranslation(dialog.chapterId)
+                    onRetryChapter = { chapterId ->
+                        screenModel.retryBatchTranslation(chapterId)
                     },
                 )
             }
 
             is MangaScreenModel.Dialog.ChapterReset -> {
-                ChapterResetSheet(
-                    preflight = dialog.preflight,
-                    onResetTranslation = { preserveEdits ->
-                        screenModel.dismissDialog()
-                        screenModel.resetChapterTranslation(dialog.item, preserveEdits)
-                    },
-                    onResetInpaint = {
-                        screenModel.dismissDialog()
-                        screenModel.resetChapterInpaint(dialog.item)
-                    },
-                    onResetOcr = {
-                        screenModel.dismissDialog()
-                        screenModel.resetChapterOcr(dialog.item)
-                    },
-                    onDeleteEverything = {
-                        screenModel.dismissDialog()
-                        screenModel.deleteChapterTranslation(dialog.item)
-                    },
+                AlertDialog(
                     onDismissRequest = onDismissRequest,
+                    title = {
+                        Text(text = stringResource(ATMR.strings.translation_reset_chapter))
+                    },
+                    text = {
+                        Text(text = stringResource(ATMR.strings.translation_reset_chapter_summary))
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                screenModel.dismissDialog()
+                                screenModel.resetChapter(dialog.item)
+                            },
+                        ) {
+                            Text(text = stringResource(ATMR.strings.translation_reset_chapter))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismissRequest) {
+                            Text(text = stringResource(MR.strings.action_cancel))
+                        }
+                    },
                 )
             }
 
@@ -369,7 +388,6 @@ class MangaScreen(
                     chapterNames = dialog.group
                         .ifEmpty { listOf(dialog.item) }
                         .map { it.chapter.name },
-                    summary = dialog.summary,
                     showAgain = screenModel.translationConfirmPretranslate(),
                     onShowAgainChange = screenModel::setConfirmPretranslate,
                     onOpenSettings = {
