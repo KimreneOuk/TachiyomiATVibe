@@ -11,8 +11,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,12 +47,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tachiyomi.i18n.at.ATMR
@@ -64,6 +69,10 @@ import kotlin.math.roundToInt
 private const val IDLE_DELAY_MS = 2500L
 private const val IDLE_ALPHA = 0.38f
 
+// Press-hold peek: holding the handle this long flips the page to its original
+// image until release; a tap toggles the menu instead.
+private const val PEEK_HOLD_MS = 320L
+
 // Shared by every position animation so an interrupted snap restarts with the
 // same easing instead of fighting another spec.
 private val DockSnapSpring = spring<Float>(stiffness = 380f)
@@ -71,6 +80,10 @@ private val DockSnapSpring = spring<Float>(stiffness = 380f)
 /**
  * Draggable translator floater (chat-head style) for quick original/translated
  * comparison on the CURRENT page.
+ *
+ * Gestures on the handle: tap toggles the menu, a [PEEK_HOLD_MS] hold peeks at
+ * the original image until release (via [onPeekChange]), and movement past
+ * touch slop drags the handle (peek is cancelled in favor of the drag).
  *
  * The two [Animatable] fractions are the single source of truth: drag deltas
  * are applied with ordered [Animatable.snapTo] calls and release snaps with
@@ -91,6 +104,7 @@ fun TranslationCompareHandle(
     onSelectTranslated: () -> Unit,
     onToggleAutoTranslate: () -> Unit,
     onOpenSettings: () -> Unit,
+    onPeekChange: (Boolean) -> Unit,
     idleFadeEnabled: Boolean,
     dockEnd: Boolean,
     onDockChange: (Boolean) -> Unit,
@@ -102,6 +116,7 @@ fun TranslationCompareHandle(
     if (!visible) return
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
 
     var containerWidthPx by remember { mutableIntStateOf(0) }
     var containerHeightPx by remember { mutableIntStateOf(0) }
@@ -172,37 +187,72 @@ fun TranslationCompareHandle(
                 }
                 .alpha(handleAlpha),
         ) {
-            HandleButton(
-                expanded = expanded,
-                onClick = {
-                    expanded = !expanded
-                    isIdle = false
-                },
+            // Single gesture owner for the handle: tap → menu, hold → peek,
+            // move past slop → drag. All events on the pressed pointer are
+            // consumed so the reader underneath never reacts to them.
+            Box(
                 modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
+                        shape = RoundedCornerShape(percent = 50),
+                    )
                     .pointerInput(usableWidth, usableHeight) {
-                        // Gesture-local truth for end-of-gesture decisions; the
-                        // animatables catch up via ordered snapTo launches.
-                        var lastX = xFraction.value
-                        var lastY = yFraction.value
-                        detectDragGestures(
-                            onDragStart = {
-                                dragging = true
-                                isIdle = false
-                                lastX = xFraction.value
-                                lastY = yFraction.value
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                lastX = (lastX + dragAmount.x / usableWidth).coerceIn(0f, 1f)
-                                lastY = (lastY + dragAmount.y / usableHeight).coerceIn(0f, 1f)
-                                val x = lastX
-                                val y = lastY
-                                scope.launch {
-                                    xFraction.snapTo(x)
-                                    yFraction.snapTo(y)
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            down.consume()
+                            isIdle = false
+                            var isDrag = false
+                            var peeking = false
+                            var totalMove = 0f
+                            // Gesture-local truth for end-of-gesture decisions; the
+                            // animatables catch up via ordered snapTo launches.
+                            var lastX = xFraction.value
+                            var lastY = yFraction.value
+
+                            val holdJob: Job = scope.launch {
+                                delay(PEEK_HOLD_MS)
+                                if (!isDrag) {
+                                    peeking = true
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onPeekChange(true)
                                 }
-                            },
-                            onDragEnd = {
+                            }
+
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id }
+                                if (change == null) {
+                                    if (event.changes.none { it.pressed }) break else continue
+                                }
+                                change.consume()
+                                if (change.changedToUpIgnoreConsumed()) break
+                                if (!isDrag) {
+                                    totalMove += change.positionChange().getDistance()
+                                    if (totalMove > viewConfiguration.touchSlop) {
+                                        isDrag = true
+                                        dragging = true
+                                        holdJob.cancel()
+                                        if (peeking) {
+                                            peeking = false
+                                            onPeekChange(false)
+                                        }
+                                    }
+                                }
+                                if (isDrag) {
+                                    lastX = (lastX + change.positionChange().x / usableWidth).coerceIn(0f, 1f)
+                                    lastY = (lastY + change.positionChange().y / usableHeight).coerceIn(0f, 1f)
+                                    val x = lastX
+                                    val y = lastY
+                                    scope.launch {
+                                        xFraction.snapTo(x)
+                                        yFraction.snapTo(y)
+                                    }
+                                }
+                            }
+                            holdJob.cancel()
+                            if (peeking) onPeekChange(false)
+                            if (isDrag) {
                                 dragging = false
                                 val endSide = lastX > 0.5f
                                 if (endSide != dockEnd) onDockChange(endSide)
@@ -212,16 +262,19 @@ fun TranslationCompareHandle(
                                 scope.launch {
                                     xFraction.animateTo(if (endSide) 1f else 0f, DockSnapSpring)
                                 }
-                            },
-                            onDragCancel = {
-                                dragging = false
-                                scope.launch {
-                                    xFraction.animateTo(if (dockEnd) 1f else 0f, DockSnapSpring)
-                                }
-                            },
-                        )
+                            } else {
+                                expanded = !expanded
+                            }
+                        }
                     },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.CompareArrows,
+                    contentDescription = stringResource(ATMR.strings.reader_compare_handle),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
 
             FloaterMenu(
                 hasTranslation = hasTranslation,
@@ -266,34 +319,6 @@ fun TranslationCompareHandle(
                 },
             )
         }
-    }
-}
-
-@Composable
-private fun HandleButton(
-    expanded: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .size(40.dp)
-            .background(
-                color = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp),
-                shape = RoundedCornerShape(percent = 50),
-            )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Outlined.CompareArrows,
-            contentDescription = stringResource(ATMR.strings.reader_compare_handle),
-            tint = MaterialTheme.colorScheme.onSurface,
-        )
     }
 }
 

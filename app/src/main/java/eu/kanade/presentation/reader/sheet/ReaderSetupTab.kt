@@ -2,20 +2,21 @@ package eu.kanade.presentation.reader.sheet
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.BrightnessMedium
 import androidx.compose.material.icons.outlined.FilterBAndW
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Navigation
-import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.Tag
+import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -23,6 +24,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.presentation.components.designsystem.SectionHeading
+import eu.kanade.presentation.components.designsystem.SelectionTile
+import eu.kanade.presentation.components.designsystem.SliderCard
+import eu.kanade.presentation.components.designsystem.SwitchCard
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.i18n.MR
@@ -30,12 +35,14 @@ import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * Reader settings sheet body: reading mode (Manga paged LTR / Webtoon long
+ * strip), display adjustments and navigation feel. Translation-facing toggles
+ * live in the translation sheet instead.
+ */
 @Composable
 fun ReaderSetupTab(
     screenModel: ReaderSettingsScreenModel,
-    translateButtonWithControls: Boolean,
-    onTranslateButtonWithControlsChange: (Boolean) -> Unit,
     onInteractingWithVisuals: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -48,57 +55,63 @@ fun ReaderSetupTab(
     val customBrightnessValue by screenModel.preferences.customBrightnessValue().collectAsState()
     val grayscale by screenModel.preferences.grayscale().collectAsState()
     val invertedColors by screenModel.preferences.invertedColors().collectAsState()
-    val showTranslations by screenModel.preferences.showTranslations().collectAsState()
+    val pageTransitions by screenModel.preferences.pageTransitions().collectAsState()
+    val volumeKeys by screenModel.preferences.readWithVolumeKeys().collectAsState()
+    val showPageNumber by screenModel.preferences.showPageNumber().collectAsState()
+    val keepScreenOn by screenModel.preferences.keepScreenOn().collectAsState()
 
     Column(modifier = modifier.fillMaxWidth()) {
-        ReaderSectionHeading(title = stringResource(tachiyomi.i18n.MR.strings.pref_category_reading_mode))
-        FlowRow(
+        SectionHeading(title = stringResource(MR.strings.pref_category_reading_mode))
+
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf(
-                ReadingMode.DEFAULT to "Default",
-                ReadingMode.RIGHT_TO_LEFT to "Manga (RTL)",
-                ReadingMode.LEFT_TO_RIGHT to "Manga (LTR)",
-                ReadingMode.WEBTOON to "Webtoon",
-            ).forEach { (mode, label) ->
-                ReaderSelectionTile(
-                    selected = currentReadingMode == mode,
-                    onClick = { screenModel.onChangeReadingMode(mode) },
-                    title = label,
-                    icon = Icons.Outlined.MenuBook,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-            }
+            SelectionTile(
+                selected = currentReadingMode == ReadingMode.LEFT_TO_RIGHT || currentReadingMode == ReadingMode.DEFAULT,
+                onClick = { screenModel.onChangeReadingMode(ReadingMode.LEFT_TO_RIGHT) },
+                title = stringResource(ATMR.strings.reader_mode_manga),
+                subtitle = stringResource(ATMR.strings.reader_mode_manga_summary),
+                icon = Icons.Outlined.MenuBook,
+                modifier = Modifier.weight(1f),
+            )
+            SelectionTile(
+                selected = currentReadingMode == ReadingMode.WEBTOON,
+                onClick = { screenModel.onChangeReadingMode(ReadingMode.WEBTOON) },
+                title = stringResource(ATMR.strings.reader_mode_webtoon),
+                subtitle = stringResource(ATMR.strings.reader_mode_webtoon_summary),
+                icon = Icons.Outlined.ViewAgenda,
+                modifier = Modifier.weight(1f),
+            )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        ReaderSectionHeading(title = stringResource(ATMR.strings.reader_section_display_adjustment))
+        SectionHeading(title = stringResource(ATMR.strings.reader_section_display_adjustment))
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ReaderSwitchSlate(
+            SwitchCard(
                 icon = Icons.Outlined.BrightnessMedium,
                 title = stringResource(MR.strings.pref_custom_brightness),
-                subtitle = "Override system brightness for comfortable reading",
+                subtitle = stringResource(ATMR.strings.reader_custom_brightness_summary),
                 checked = customBrightness,
                 onCheckedChange = { screenModel.preferences.customBrightness().set(it) },
             )
 
             if (customBrightness) {
-                ReaderSliderSlate(
+                SliderCard(
                     icon = Icons.Outlined.BrightnessMedium,
-                    label = "Brightness Level",
+                    label = stringResource(ATMR.strings.reader_brightness_level),
                     value = customBrightnessValue.toFloat(),
                     valueRange = -75f..100f,
-                    valueDisplay = "${customBrightnessValue}%",
+                    valueDisplay = "$customBrightnessValue%",
                     onValueChange = {
                         onInteractingWithVisuals(true)
                         screenModel.preferences.customBrightnessValue().set(it.toInt())
@@ -109,14 +122,14 @@ fun ReaderSetupTab(
                 )
             }
 
-            ReaderSwitchSlate(
+            SwitchCard(
                 icon = Icons.Outlined.FilterBAndW,
                 title = stringResource(MR.strings.pref_grayscale),
                 checked = grayscale,
                 onCheckedChange = { screenModel.preferences.grayscale().set(it) },
             )
 
-            ReaderSwitchSlate(
+            SwitchCard(
                 icon = Icons.Outlined.InvertColors,
                 title = stringResource(MR.strings.pref_inverted_colors),
                 checked = invertedColors,
@@ -124,38 +137,39 @@ fun ReaderSetupTab(
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        ReaderSectionHeading(title = stringResource(ATMR.strings.reader_section_floating_controls))
+        SectionHeading(title = stringResource(ATMR.strings.reader_section_navigation_feel))
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val floaterEnabled by screenModel.preferences.translationFloaterEnabled().collectAsState()
-            ReaderSwitchSlate(
-                icon = Icons.Outlined.Navigation,
-                title = stringResource(ATMR.strings.pref_floater_show),
-                subtitle = stringResource(ATMR.strings.pref_floater_show_summary),
-                checked = floaterEnabled,
-                onCheckedChange = { screenModel.preferences.translationFloaterEnabled().set(it) },
+            SwitchCard(
+                icon = Icons.Outlined.Animation,
+                title = stringResource(MR.strings.pref_page_transitions),
+                checked = pageTransitions,
+                onCheckedChange = { screenModel.preferences.pageTransitions().set(it) },
             )
-
-            ReaderSwitchSlate(
-                icon = Icons.Outlined.Translate,
-                title = stringResource(ATMR.strings.pref_show_translations),
-                subtitle = "Toggle visibility of rendered translated text",
-                checked = showTranslations,
-                onCheckedChange = { screenModel.preferences.showTranslations().set(it) },
+            SwitchCard(
+                icon = Icons.Outlined.VolumeUp,
+                title = stringResource(MR.strings.pref_read_with_volume_keys),
+                checked = volumeKeys,
+                onCheckedChange = { screenModel.preferences.readWithVolumeKeys().set(it) },
             )
-
-            ReaderSwitchSlate(
-                icon = Icons.Outlined.Image,
-                title = stringResource(ATMR.strings.pref_reader_translate_button_mode),
-                subtitle = "Show manual translate button on top-left of pages with controls",
-                checked = translateButtonWithControls,
-                onCheckedChange = onTranslateButtonWithControlsChange,
+            SwitchCard(
+                icon = Icons.Outlined.Tag,
+                title = stringResource(MR.strings.pref_show_page_number),
+                checked = showPageNumber,
+                onCheckedChange = { screenModel.preferences.showPageNumber().set(it) },
+            )
+            SwitchCard(
+                icon = Icons.Outlined.Bolt,
+                title = stringResource(MR.strings.pref_keep_screen_on),
+                checked = keepScreenOn,
+                onCheckedChange = { screenModel.preferences.keepScreenOn().set(it) },
             )
         }
     }

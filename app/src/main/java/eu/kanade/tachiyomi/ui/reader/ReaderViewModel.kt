@@ -186,10 +186,16 @@ class ReaderViewModel @JvmOverloads constructor(
                 AiSubPrefs(apiKey, baseUrl, model, recentRaw)
             }
         },
-    ) { part1, part2, ocrInfo, aiSubPrefs ->
+        combine(
+            readerPreferences.showTranslations().changes(),
+            readerPreferences.translationFloaterEnabled().changes(),
+            readerPreferences.translationFloaterIdleFade().changes(),
+        ) { show, floater, idleFade -> Triple(show, floater, idleFade) },
+    ) { part1, part2, ocrInfo, aiSubPrefs, readerFlags ->
         val (q1, q2) = part1
         val (q3, fetchState) = part2
         val (ocrModel, ocrModelEntries) = ocrInfo
+        val (showTranslatedText, floaterEnabled, floaterIdleFade) = readerFlags
 
         val recentLangsFrom = TranslationPreferences.decodeRecentLanguages(q2.a).toImmutableList()
         val recentLangsTo = TranslationPreferences.decodeRecentLanguages(q2.c).toImmutableList()
@@ -200,6 +206,9 @@ class ReaderViewModel @JvmOverloads constructor(
             autoTranslate = q1.b,
             translateFromLanguage = q1.c,
             translateButtonWithControls = q1.d,
+            floaterEnabled = floaterEnabled,
+            floaterIdleFade = floaterIdleFade,
+            showTranslatedText = showTranslatedText,
             translateToLanguage = q2.b,
             translationRecentLanguagesFrom = recentLangsFrom,
             translationRecentLanguagesTo = recentLangsTo,
@@ -661,6 +670,49 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
     }
 
+    // TachiyomiAT: press-and-hold peek state. The page reference is held so a
+    // page change during the hold can never restore another page's flags.
+    private var peekPage: ReaderPage? = null
+    private var peekRestoreToggled: Boolean = false
+    private var peekRestoreShow: Boolean = false
+
+    /**
+     * TachiyomiAT: transient original-page preview for the floater's hold
+     * gesture. Pins the page to its original image for the duration of the
+     * hold, then restores the exact prior flags on release — on the held page,
+     * wherever the reader happens to be by then. No-op without a translation.
+     */
+    fun setPeekOriginal(peeking: Boolean) {
+        if (peeking) {
+            val page = currentPageReaderPage() ?: return
+            if (page.translatedStream == null && page.translation?.shouldShowTranslationOverlay != true) return
+            if (peekPage === page) return
+            endPeek()
+            peekPage = page
+            peekRestoreToggled = page.translationToggled
+            peekRestoreShow = page.showTranslatedImage
+            page.translationToggled = true
+            page.showTranslatedImage = false
+            refreshPeek(page)
+        } else {
+            val page = peekPage ?: return
+            endPeek()
+            refreshPeek(page)
+        }
+    }
+
+    private fun endPeek() {
+        val page = peekPage ?: return
+        peekPage = null
+        page.translationToggled = peekRestoreToggled
+        page.showTranslatedImage = peekRestoreShow
+    }
+
+    private fun refreshPeek(page: ReaderPage) {
+        eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+    }
+
     internal fun updateTranslationWorkingSet(
         chapter: ReaderChapter,
         currentIndex: Int,
@@ -862,6 +914,18 @@ class ReaderViewModel @JvmOverloads constructor(
     /** TachiyomiAT: translate button presentation (adaptive ghost vs. with-controls). */
     fun setTranslateButtonWithControls(withControls: Boolean) =
         translationController.setTranslateButtonWithControls(withControls)
+
+    /** TachiyomiAT: floater & translated-text visibility, surfaced in the translation sheet. */
+    fun setFloaterEnabled(enabled: Boolean) = readerPreferences.translationFloaterEnabled().set(enabled)
+
+    fun setFloaterIdleFade(fade: Boolean) = readerPreferences.translationFloaterIdleFade().set(fade)
+
+    fun setShowTranslatedText(show: Boolean) = readerPreferences.showTranslations().set(show)
+
+    fun resetFloaterPosition() {
+        readerPreferences.translationFloaterDockEnd().set(false)
+        readerPreferences.translationFloaterVerticalFraction().set(0.5f)
+    }
 
     fun setTranslateFromLanguage(language: String) =
         translationController.setTranslateFromLanguage(language)

@@ -61,7 +61,6 @@ import eu.kanade.presentation.reader.PageIndicatorText
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
-import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.TranslationCompareHandle
 import eu.kanade.presentation.reader.components.ZoomResetAffordance
@@ -553,6 +552,7 @@ class ReaderActivity : BaseActivity() {
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
                     onToggleAutoTranslate = { viewModel.setAutoTranslate(!autoTranslate) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
+                    onPeekChange = { viewModel.setPeekOriginal(it) },
                     idleFadeEnabled = floaterIdleFade,
                     dockEnd = floaterDockEnd,
                     onDockChange = { readerPreferences.translationFloaterDockEnd().set(it) },
@@ -642,8 +642,6 @@ class ReaderActivity : BaseActivity() {
                 is ReaderViewModel.Dialog.Settings -> {
                     ReaderSettingsSheet(
                         screenModel = settingsScreenModel,
-                        translateButtonWithControls = translationSettingsState.translateButtonWithControls,
-                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
                         onDismissRequest = onDismissRequest,
                         onShowMenus = { setMenuVisibility(true) },
                         onHideMenus = { setMenuVisibility(false) },
@@ -657,6 +655,11 @@ class ReaderActivity : BaseActivity() {
                         onHideMenus = { setMenuVisibility(false) },
                         onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
                         onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
+                        onFloaterEnabledChange = { viewModel.setFloaterEnabled(it) },
+                        onFloaterIdleFadeChange = { viewModel.setFloaterIdleFade(it) },
+                        onShowTranslatedTextChange = { viewModel.setShowTranslatedText(it) },
+                        onTranslateButtonWithControlsChange = { viewModel.setTranslateButtonWithControls(it) },
+                        onResetFloaterPosition = { viewModel.resetFloaterPosition() },
                         onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
                         onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
                         onOcrModelChange = { viewModel.setOcrModel(it) },
@@ -664,6 +667,7 @@ class ReaderActivity : BaseActivity() {
                         onTranslationInpaintingNeuralModelChange = { viewModel.setTranslationInpaintingNeuralModel(it) },
                         onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
                         onTranslationStandardEngineChange = { viewModel.setTranslationStandardEngine(it) },
+                        onTranslationDeeplApiKeyChange = { viewModel.setTranslationDeeplApiKey(it) },
                         onTranslationAiEngineChange = { viewModel.setTranslationAiEngine(it) },
                         onTranslationAiApiKeyChange = { viewModel.setTranslationAiApiKey(it) },
                         onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
