@@ -23,8 +23,9 @@ import java.nio.FloatBuffer
  * `leoxs22/manga-panel-detector-yolo26n` for ONNX inference)
  * and returns the page's panel bounding boxes in original-image coordinates.
  *
- * The model is a YOLO detector with output `[1, N, 4+nc]` (decoded xyxy + per-class
- * confidence). Unlike [OnnxPageTextDetector] (RT-DETR), it does NOT take an
+ * The model is a YOLO detector with output `[1, N, 4+nc]` where each row is
+ * `(cx, cy, w, h, conf0, conf1, ...)` in the 640x640 letterbox space. Unlike
+ * [OnnxPageTextDetector] (RT-DETR), it does NOT take an
  * `orig_target_sizes` input, so:
  *  - input must be LETTERBOXED to 640x640 (preserve aspect, pad with 114 grey),
  *    not stretched. A stretch resize silently shifts every box off-target.
@@ -151,15 +152,12 @@ class OnnxPanelDetector {
                 return emptyList()
             }
 
-            // Row layout [x1, y1, x2, y2, cls0_conf, cls1_conf, ...]; keep class-0
+            // Row layout (cx, cy, w, h, conf0, conf1, ...); keep class-0
             // (panel) candidates above threshold.
             val candidates = ArrayList<Box>(n)
             for (i in 0 until n) {
-                val row = raw[i]
-                val conf = row[4]
-                if (conf.isNaN() || conf < CONF_THRESHOLD) continue
-                if (!PanelAssignment.isValidBox(row[0], row[1], row[2], row[3])) continue
-                candidates.add(Box(row[0], row[1], row[2], row[3], conf))
+                val decoded = decodePanelYoloRow(raw[i], CONF_THRESHOLD) ?: continue
+                candidates.add(Box(decoded[0], decoded[1], decoded[2], decoded[3], decoded[4]))
             }
 
             val kept = nms(candidates, IOU_THRESHOLD)
@@ -287,4 +285,21 @@ class OnnxPanelDetector {
         // Ultralytics' default letterbox pad colour (grey 114).
         const val PAD_COLOR = 0xFF727272.toInt()
     }
+}
+
+/**
+ * Decode one YOLO output row `(cx, cy, w, h, conf, ...)` into
+ * `[x1, y1, x2, y2, conf]` letterbox-space corners, or null when the row is
+ * below [confThreshold] or not a valid box. Pure; unit-tested.
+ */
+internal fun decodePanelYoloRow(row: FloatArray, confThreshold: Float): FloatArray? {
+    if (row.size < 5) return null
+    val conf = row[4]
+    if (conf.isNaN() || conf < confThreshold) return null
+    val x1 = row[0] - row[2] / 2f
+    val y1 = row[1] - row[3] / 2f
+    val x2 = row[0] + row[2] / 2f
+    val y2 = row[1] + row[3] / 2f
+    if (!PanelAssignment.isValidBox(x1, y1, x2, y2)) return null
+    return floatArrayOf(x1, y1, x2, y2, conf)
 }
