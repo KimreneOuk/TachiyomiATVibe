@@ -792,7 +792,7 @@ private fun QueueRow(chapter: BatchChapterStatus, onRetryChapter: ((Long) -> Uni
                     QueueBadge(text = "${(done.toFloat() / total * 100).toInt()}%", color = DesignTokens.AccentPrimary)
                 }
             }
-            Translation.State.ERROR -> onRetryChapter?.let { retry ->
+            Translation.State.ERROR, Translation.State.PAUSED -> onRetryChapter?.let { retry ->
                 OutlinedButton(
                     onClick = { retry(chapter.chapterId) },
                     shape = DesignTokens.ShapePill,
@@ -803,7 +803,11 @@ private fun QueueRow(chapter: BatchChapterStatus, onRetryChapter: ((Long) -> Uni
                         text = stringResource(ATMR.strings.batch_queue_retry),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error,
+                        color = if (chapter.state == Translation.State.ERROR) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            DesignTokens.AccentPrimary
+                        },
                     )
                 }
             }

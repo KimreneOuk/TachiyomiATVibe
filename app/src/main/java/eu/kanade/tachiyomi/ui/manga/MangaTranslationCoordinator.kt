@@ -120,10 +120,20 @@ internal class MangaTranslationCoordinator(
     }
 
     fun retryBatchTranslation(chapterId: Long) {
-        val manga = getSuccessState()?.manga ?: return
-        val item = getSuccessState()?.chapters?.firstOrNull { it.id == chapterId } ?: return
+        val manga = getSuccessState()?.manga
+        val item = getSuccessState()?.chapters?.firstOrNull { it.id == chapterId }
+        if (manga == null || item == null) {
+            logcat(LogPriority.WARN) { "TachiyomiAT batch retry aborted: chapter=$chapterId missing from screen state" }
+            return
+        }
         ensureInpaintModelAvailable {
             translationManager.translateChapter(manga, item.chapter)
+            // Retry used to be a silent no-op whenever admission or the queue
+            // rejected the chapter; surface the resulting queue state.
+            val queued = translationManager.getQueuedTranslationOrNull(chapterId)
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch retry chapter=${item.chapter.name} queueStatus=${queued?.status ?: "not-enqueued"}"
+            }
             translationManager.startTranslation()
         }
     }
@@ -288,7 +298,9 @@ internal class MangaTranslationCoordinator(
         val chapterId = item.chapter.id ?: return
         ensureInpaintModelAvailable {
             scope.launchIO {
-                if (translationManager.requeueTranslation(chapterId, force)) {
+                val requeued = translationManager.requeueTranslation(chapterId, force)
+                logcat(LogPriority.INFO) { "TachiyomiAT resume chapter=${item.chapter.name} requeue=$requeued" }
+                if (requeued) {
                     translationManager.startTranslation()
                 } else {
                     onTranslationResumePaused()

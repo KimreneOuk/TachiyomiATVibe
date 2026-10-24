@@ -126,12 +126,17 @@ internal class BatchTranslationCoordinator(
     fun rearmQueuedChapter(chapterId: Long): Boolean {
         synchronized(queueMutationLock) {
             val translation = _queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return false
-            if (translation.status == Translation.State.PAUSED || translation.status == Translation.State.ERROR) {
-                translation.status = Translation.State.QUEUE
-                isPaused = false
-                _queueState.update { it.toList() }
-                persistQueue()
+            // A crash can persist any status into the queue; leaving a stale
+            // terminal entry here wedges it out of selectChapterWave forever.
+            if (translation.status == Translation.State.QUEUE ||
+                translation.status == Translation.State.TRANSLATING
+            ) {
+                return true
             }
+            translation.status = Translation.State.QUEUE
+            isPaused = false
+            _queueState.update { it.toList() }
+            persistQueue()
             return true
         }
     }
@@ -389,10 +394,17 @@ internal class BatchTranslationCoordinator(
     }
 
     suspend fun requeueExisting(chapterId: Long, force: Boolean = false): Boolean {
-        val translation = queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return false
+        val translation = queueState.value.firstOrNull { it.chapter.id == chapterId }
+        if (translation == null) {
+            logcat(LogPriority.INFO) { "TachiyomiAT requeue: chapter $chapterId is not in the queue" }
+            return false
+        }
         val durable = durableQueueState(translation)
         val next = durable?.nextEligibleRetryAtEpochMs
-        if (!force && next != null && next > System.currentTimeMillis()) return false
+        if (!force && next != null && next > System.currentTimeMillis()) {
+            logcat(LogPriority.INFO) { "TachiyomiAT requeue: chapter $chapterId backoff until $next" }
+            return false
+        }
         val rearmed = synchronized(queueMutationLock) {
             val current = _queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return@synchronized false
             if (current.status != Translation.State.PAUSED && durable?.status != Translation.State.PAUSED) {
@@ -404,7 +416,12 @@ internal class BatchTranslationCoordinator(
             persistQueue()
             true
         }
-        if (!rearmed) return false
+        if (!rearmed) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT requeue: chapter $chapterId not rearmed (status=${translation.status})"
+            }
+            return false
+        }
         if (!isRunning) launchTranslatorJob()
         return true
     }
@@ -995,7 +1012,10 @@ internal class BatchTranslationCoordinator(
 
     /** Requeue a chapter only after the batch lane has acquired its session. */
     suspend fun requeueWithSessionAdmission(chapterId: Long, force: Boolean = false): Boolean {
-        if (sessionCoordinator?.requestBatchSession(setOf(chapterId)) == false) return false
+        if (sessionCoordinator?.requestBatchSession(setOf(chapterId)) == false) {
+            logcat(LogPriority.WARN) { "TachiyomiAT requeue: batch session rejected for chapter $chapterId" }
+            return false
+        }
         return requeueExisting(chapterId, force)
     }
 
