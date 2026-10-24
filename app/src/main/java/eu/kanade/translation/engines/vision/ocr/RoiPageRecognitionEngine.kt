@@ -292,8 +292,17 @@ class RoiPageRecognitionEngine(
                 }
                 paths.bubbleSegmenterModel?.let { bubbleModelFile ->
                     try {
-                        bubbleSegmenter = OnnxBubbleSegmenter().also { it.initialize(bubbleModelFile, requestedHardwareRoute = visionRoute) }
-                        logcat(LogPriority.INFO) { "ONNX init: bubble segmenter OK" }
+                        val segmenter = OnnxBubbleSegmenter()
+                        val liteRtBubble = liteRtVision?.bubbleSegmenter
+                        if (liteRtBubble != null) {
+                            segmenter.initializeLiteRt(liteRtBubble, preferGpu = true) {
+                                segmenter.initialize(bubbleModelFile, requestedHardwareRoute = visionRoute)
+                            }
+                        } else {
+                            segmenter.initialize(bubbleModelFile, requestedHardwareRoute = visionRoute)
+                        }
+                        bubbleSegmenter = segmenter
+                        logcat(LogPriority.INFO) { "ONNX init: bubble segmenter OK (provider=${segmenter.executionProviderLabel})" }
                     } catch (e: Exception) {
                         logcat(LogPriority.WARN, e) {
                             "ONNX init: bubble segmenter failed; falling back to heuristic masking"

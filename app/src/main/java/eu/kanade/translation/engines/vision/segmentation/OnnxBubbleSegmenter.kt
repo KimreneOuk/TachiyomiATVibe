@@ -7,6 +7,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import com.google.ai.edge.litert.Environment
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionLayouts
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionRunner
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
@@ -126,6 +129,45 @@ class OnnxBubbleSegmenter(
         }
     }
 
+    /**
+     * LiteRT fp32 adapter. The engine hands over the same plane-major CHW
+     * buffer as ORT; the NHWC flatbuffer receives the transposed copy inside
+     * [run]. GPU→CPU demotion lives inside the runner (it throws no
+     * OrtException), so the engine-level ORT recovery never fires for it.
+     */
+    private class LiteRtSegmenterHandle(
+        private val runner: LiteRtVisionRunner,
+        private val env: Environment,
+    ) : SegmenterSessionHandle {
+        override val inputNames = setOf("litert:images")
+        override val outputNames = setOf("litert:output0", "litert:output1")
+
+        private val plane = BubbleSegmentationDecoder.INPUT_SIZE * BubbleSegmentationDecoder.INPUT_SIZE
+        private val chwScratch = FloatArray(3 * plane)
+        private val nhwcScratch = FloatArray(3 * plane)
+
+        override fun run(input: FloatBuffer): Pair<FloatArray, FloatArray> {
+            input.get(chwScratch)
+            LiteRtVisionLayouts.chwToNhwc(chwScratch, nhwcScratch, plane)
+            var predictions: FloatArray? = null
+            var prototypes: FloatArray? = null
+            // Reads stay inside the retry closure: a GPU demotion swaps every
+            // buffer, so the outputs must come from the backend that ran.
+            runner.runWithCpuRetry {
+                runner.writeInputFloats(0, nhwcScratch)
+                runner.runInference()
+                predictions = runner.readOutputFloats(0)
+                prototypes = runner.readOutputFloats(1)
+            }
+            return requireNotNull(predictions) to requireNotNull(prototypes)
+        }
+
+        override fun close() {
+            runner.close()
+            runCatching { env.close() }
+        }
+    }
+
     private var session: SegmenterSessionHandle? = null
 
     // TachiyomiAT  §3.1: normalized model path retained so a failed
@@ -168,10 +210,58 @@ class OnnxBubbleSegmenter(
         }
     }
 
-    private fun validateContract(current: SegmenterSessionHandle) {
-        require(current.inputNames == setOf("images")) {
-            "Bubble segmenter input contract changed: ${current.inputNames}"
+    /**
+     * Initializes the LiteRT backend (GPU attempt + CPU demotion). On total
+     * failure, [fallbackToOnnx] runs instead of throwing so the caller keeps
+     * its ORT session; when null, the failure propagates. [modelPath] stays
+     * untouched — routing and ORT recovery remain ONNX-scoped.
+     */
+    fun initializeLiteRt(
+        modelFile: File,
+        preferGpu: Boolean = true,
+        numThreads: Int = 4,
+        fallbackToOnnx: (() -> Unit)? = null,
+    ) {
+        logcat(LogPriority.INFO) {
+            "Bubble segmenter LiteRT init: ${modelFile.name} (${modelFile.length()}B) preferGpu=$preferGpu"
         }
+        val env = try {
+            Environment.create()
+        } catch (failure: Throwable) {
+            runOrtFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+            return
+        }
+        try {
+            val runner = LiteRtVisionRunner(
+                modelFile = modelFile,
+                inputCount = 1,
+                outputCount = 2,
+                preferGpu = preferGpu,
+                numThreads = numThreads,
+                onGpuFallback = { executionProviderLabel = "litert_xnnpack" },
+                env = env,
+            )
+            val handle = LiteRtSegmenterHandle(runner, env)
+            session = handle
+            executionProviderLabel = runner.executionProviderLabel
+            validateContract(handle)
+            logcat(LogPriority.INFO) { "Bubble segmenter LiteRT initialized: provider=$executionProviderLabel" }
+        } catch (failure: Throwable) {
+            runCatching { env.close() }
+            runOrtFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+        }
+    }
+
+    private fun runOrtFallbackAfterLiteRtFailure(fallbackToOnnx: (() -> Unit)?, failure: Throwable) {
+        if (fallbackToOnnx == null) throw failure
+        logcat(LogPriority.WARN, failure) { "Bubble segmenter LiteRT init failed; using ORT session" }
+        fallbackToOnnx.invoke()
+    }
+
+    // Size-based rather than name-based: the LiteRT handle exposes the same
+    // one-input/two-output contract under flatbuffer tensor naming.
+    private fun validateContract(current: SegmenterSessionHandle) {
+        require(current.inputNames.size == 1) { "Bubble segmenter input contract changed: ${current.inputNames}" }
         require(current.outputNames.size == 2) { "Bubble segmenter expected two outputs, got ${current.outputNames}" }
     }
 
