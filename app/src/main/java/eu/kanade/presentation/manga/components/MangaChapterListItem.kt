@@ -57,7 +57,7 @@ fun MangaChapterListItem(
     read: Boolean,
     bookmark: Boolean,
     selected: Boolean,
-    downloadIndicatorEnabled: Boolean,
+    menuEnabled: Boolean,
     downloadStateProvider: () -> Download.State,
     // TachiyomiAT
     translationStateProvider: () -> Translation.State,
@@ -180,22 +180,24 @@ fun MangaChapterListItem(
                     }
                 }
             }
-            // TachiyomiAT
-            ChapterTranslationIndicator(
-                enabled = true,
-                modifier = Modifier.padding(start = 4.dp),
+            // TachiyomiAT: passive status replaces the two always-visible buttons
+            ChapterRowStatus(
                 translationStateProvider = translationStateProvider,
-                translationProgressProvider = translationProgressProvider,
                 translationRequestProvider = translationRequestProvider,
-                downloadedProvider = { downloadStateProvider() == Download.State.DOWNLOADED },
-                onClick = { onTranslationClick?.invoke(it) },
-            )
-            ChapterDownloadIndicator(
-                enabled = downloadIndicatorEnabled,
-                modifier = Modifier.padding(start = 4.dp),
+                translationProgressProvider = translationProgressProvider,
                 downloadStateProvider = downloadStateProvider,
                 downloadProgressProvider = downloadProgressProvider,
-                onClick = { onDownloadClick?.invoke(it) },
+                modifier = Modifier.padding(start = 4.dp),
+            )
+            ChapterRowOverflowMenu(
+                enabled = menuEnabled,
+                translationStateProvider = translationStateProvider,
+                translationRequestProvider = translationRequestProvider,
+                downloadedProvider = { downloadStateProvider() == Download.State.DOWNLOADED },
+                downloadStateProvider = downloadStateProvider,
+                onTranslationAction = onTranslationClick,
+                onDownloadAction = onDownloadClick,
+                modifier = Modifier.padding(start = 4.dp),
             )
         }
     }

@@ -126,6 +126,9 @@
     <string name="manga_batch_read_now">Read now</string>
 
     <string name="manga_translate_download_first">Translate (will download first)</string>
+    <string name="manga_translation_details">Translation details</string>
+    <string name="manga_translation_cancel">Cancel translation</string>
+    <string name="manga_chapter_reset_data">Reset data</string>
     <string name="manga_translate_multi">Translate</string>
     <!-- TachiyomiAT bug 3: another chapter of the same source is actively
          translating when the user starts a new batch; confirm before cancelling. -->
