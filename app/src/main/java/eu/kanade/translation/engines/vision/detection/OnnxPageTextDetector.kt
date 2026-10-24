@@ -2,6 +2,9 @@ package eu.kanade.translation.engines.vision.detection
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
+import com.google.ai.edge.litert.Environment
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionLayouts
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionRunner
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.vision.ocr.BoxGeometry
@@ -16,8 +19,10 @@ import java.nio.FloatBuffer
 class OnnxPageTextDetector {
 
     private var session: OrtSession? = null
+    private var liteRtRunner: LiteRtVisionRunner? = null
+    private var liteRtEnvironment: Environment? = null
 
-    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"/"litert_*"), for honest perf logging. */
     var executionProviderLabel: String = "uninitialized"
         private set
 
@@ -28,6 +33,10 @@ class OnnxPageTextDetector {
         bufferCapacityBytes = DETECTOR_INPUT_FLOATS * Float.SIZE_BYTES,
         maxPoolSize = 2,
     )
+
+    // interleaved NHWC scratch for the LiteRT path; allocated only when the
+    // LiteRT backend is initialized.
+    private var liteRtInputFloats: FloatArray? = null
 
     private val classNames = mapOf(
         0 to "bubble",
@@ -62,7 +71,59 @@ class OnnxPageTextDetector {
         }
     }
 
+    /**
+     * Initializes the LiteRT backend (GPU attempt + CPU demotion). On total
+     * failure, [fallbackToOnnx] runs instead of throwing so the caller keeps
+     * its ONNX session; when null, the failure propagates.
+     */
+    fun initializeLiteRt(
+        modelFile: File,
+        preferGpu: Boolean = true,
+        numThreads: Int = 4,
+        fallbackToOnnx: (() -> Unit)? = null,
+    ) {
+        logcat(LogPriority.INFO) {
+            "Detector LiteRT init: ${modelFile.name} (${modelFile.length()}B) preferGpu=$preferGpu"
+        }
+        val env = try {
+            Environment.create()
+        } catch (failure: Throwable) {
+            runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+            return
+        }
+        try {
+            val runner = LiteRtVisionRunner(
+                modelFile = modelFile,
+                inputCount = 2,
+                outputCount = 3,
+                preferGpu = preferGpu,
+                numThreads = numThreads,
+                onGpuFallback = { executionProviderLabel = "litert_xnnpack" },
+                env = env,
+            )
+            liteRtRunner = runner
+            liteRtEnvironment = env
+            liteRtInputFloats = FloatArray(DETECTOR_INPUT_FLOATS)
+            executionProviderLabel = runner.executionProviderLabel
+            logcat(LogPriority.INFO) { "Detector LiteRT ready: provider=$executionProviderLabel" }
+        } catch (failure: Throwable) {
+            runCatching { env.close() }
+            runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+        }
+    }
+
+    private fun runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx: (() -> Unit)?, failure: Throwable) {
+        if (fallbackToOnnx == null) throw failure
+        logcat(LogPriority.WARN, failure) { "Detector LiteRT init failed; using ONNX session" }
+        fallbackToOnnx.invoke()
+    }
+
     fun detect(bitmap: Bitmap): List<Detection> {
+        val runner = liteRtRunner
+        return if (runner != null) detectLiteRt(runner, bitmap) else detectOnnx(bitmap)
+    }
+
+    private fun detectOnnx(bitmap: Bitmap): List<Detection> {
         val localSession = session ?: throw IllegalStateException("Detector not initialized")
 
         val t0 = System.nanoTime()
@@ -97,8 +158,9 @@ class OnnxPageTextDetector {
             val boxesArray = (results[1].value as Array<Array<FloatArray>>)[0]
             val scoresArray = (results[2].value as Array<FloatArray>)[0]
 
-            val rawByLabel = labelsArray.map { it.toInt() }.groupingBy { it }.eachCount()
-            val detections = postprocess(labelsArray, boxesArray, scoresArray)
+            val labelInts = labelsArray.map { it.toInt() }.toIntArray()
+            val rawByLabel = labelInts.toList().groupingBy { it }.eachCount()
+            val detections = postprocess(labelInts, boxesArray, scoresArray)
             val filteredByLabel = detections.groupingBy { it.label }.eachCount()
             val deduplicated = deduplicateLabels(detections)
             val dedupedByLabel = deduplicated.groupingBy { it.label }.eachCount()
@@ -122,7 +184,75 @@ class OnnxPageTextDetector {
         }
     }
 
+    // LiteRT fp32 export: NHWC images [1,640,640,3] + int64 orig_target_sizes
+    // [1,2]; outputs in subgraph order labels INT32 [1,300], boxes FLOAT
+    // [1,300,4], scores FLOAT [1,300] (index order pinned by the sha256 stamp).
+    private fun detectLiteRt(runner: LiteRtVisionRunner, bitmap: Bitmap): List<Detection> {
+        val t0 = System.nanoTime()
+        val resized = BitmapPool.getARGB8888(640, 640)
+        try {
+            val canvas = android.graphics.Canvas(resized)
+            val paint = android.graphics.Paint().apply { isFilterBitmap = true }
+            canvas.drawBitmap(bitmap, null, android.graphics.RectF(0f, 0f, 640f, 640f), paint)
+            val pixels = IntArray(640 * 640)
+            resized.getPixels(pixels, 0, 640, 0, 0, 640, 640)
+            val inputFloats = requireNotNull(liteRtInputFloats) { "LiteRT detector input scratch is not allocated" }
+            val t1 = System.nanoTime()
+
+            // Reads stay inside the retry closure: a GPU demotion swaps every
+            // buffer, so the outputs must come from the backend that ran.
+            var labels: IntArray? = null
+            var boxes: FloatArray? = null
+            var scores: FloatArray? = null
+            runner.runWithCpuRetry {
+                for (i in pixels.indices) {
+                    LiteRtVisionLayouts.writeNhwcPixel(pixels[i], inputFloats, i)
+                }
+                runner.writeInputFloats(0, inputFloats)
+                runner.writeInputLongs(1, longArrayOf(bitmap.width.toLong(), bitmap.height.toLong()))
+                runner.runInference()
+                labels = runner.readOutputInts(0)
+                boxes = runner.readOutputFloats(1)
+                scores = runner.readOutputFloats(2)
+            }
+            val t2 = System.nanoTime()
+
+            val labelInts = requireNotNull(labels)
+            val boxRows = detectorBoxRows(requireNotNull(boxes), DETECTOR_QUERY_COUNT)
+            val scoreArray = requireNotNull(scores)
+            if (labelInts.size != DETECTOR_QUERY_COUNT || scoreArray.size != DETECTOR_QUERY_COUNT) {
+                logcat(LogPriority.WARN) {
+                    "Detector LiteRT: unexpected output sizes labels=${labelInts.size} scores=${scoreArray.size}; returning no detections"
+                }
+                return emptyList()
+            }
+            val rawByLabel = labelInts.toList().groupingBy { it }.eachCount()
+            val detections = postprocess(labelInts, boxRows, scoreArray)
+            val filteredByLabel = detections.groupingBy { it.label }.eachCount()
+            val deduplicated = deduplicateLabels(detections)
+            val dedupedByLabel = deduplicated.groupingBy { it.label }.eachCount()
+            val t3 = System.nanoTime()
+
+            logcat(LogPriority.INFO) {
+                "[detection_perf] model=detector provider=${runner.executionProviderLabel} total=${(t3 - t0) / 1_000_000.0}ms " +
+                    "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
+                    "inference=${(t2 - t1) / 1_000_000.0}ms " +
+                    "postprocess=${(t3 - t2) / 1_000_000.0}ms " +
+                    "rawLabels=$rawByLabel filteredLabels=$filteredByLabel dedupedLabels=$dedupedByLabel " +
+                    "found=${deduplicated.size}"
+            }
+            return deduplicated
+        } finally {
+            BitmapPool.putARGB8888(resized)
+        }
+    }
+
     fun close() {
+        liteRtRunner?.close()
+        liteRtRunner = null
+        liteRtEnvironment?.close()
+        liteRtEnvironment = null
+        liteRtInputFloats = null
         session?.close()
         session = null
         inputBufferPool.clear()
@@ -176,7 +306,7 @@ class OnnxPageTextDetector {
     }
 
     private fun postprocess(
-        labels: LongArray,
+        labels: IntArray,
         boxes: Array<FloatArray>,
         scores: FloatArray,
     ): List<Detection> {
@@ -194,9 +324,9 @@ class OnnxPageTextDetector {
                         box[2].toInt(),
                         box[3].toInt(),
                     ),
-                    label = labels[i].toInt(),
+                    label = labels[i],
                     score = (Math.round(scoreValue * 10000.0) / 10000.0).toFloat(),
-                    className = classNames[labels[i].toInt()] ?: "class_${labels[i]}",
+                    className = classNames[labels[i]] ?: "class_${labels[i]}",
                 ),
             )
         }
@@ -234,6 +364,9 @@ class OnnxPageTextDetector {
 
         private const val DETECTOR_INPUT_FLOATS = 3 * 640 * 640
 
+        // RT-DETR fixed query count: labels/scores [1,300], boxes [1,300,4].
+        private const val DETECTOR_QUERY_COUNT = 300
+
         /**
          * Tuned thresholds for the detector-stage geometric dedupe. The
          * algorithm lives in [BoxGeometry]; only the constants are stage-specific.
@@ -245,4 +378,12 @@ class OnnxPageTextDetector {
             size = 0.18f,
         )
     }
+}
+
+/**
+ * Splits the flat `[1, queries, 4]` XYXY box tensor into per-query rows.
+ * Pure; unit-tested.
+ */
+internal fun detectorBoxRows(flat: FloatArray, queries: Int): Array<FloatArray> = Array(queries) { i ->
+    floatArrayOf(flat[4 * i], flat[4 * i + 1], flat[4 * i + 2], flat[4 * i + 3])
 }

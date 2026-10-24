@@ -258,8 +258,17 @@ class RoiPageRecognitionEngine(
                     null
                 }
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization (visionRoute=$visionRoute)" }
-                detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute) }
-                logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
+                val pageTextDetector = OnnxPageTextDetector()
+                val liteRtPageText = liteRtVision?.pageTextDetector
+                if (liteRtPageText != null) {
+                    pageTextDetector.initializeLiteRt(liteRtPageText, preferGpu = true) {
+                        pageTextDetector.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute)
+                    }
+                } else {
+                    pageTextDetector.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute)
+                }
+                detector = pageTextDetector
+                logcat(LogPriority.INFO) { "ONNX init: detector OK (provider=${pageTextDetector.executionProviderLabel}), starting OCR initialization (language=$language, model=$ocrModel)" }
                 // panel detector is optional context; best-effort
                 // init mirrors paddleDet (missing asset -> null, never blocks OCR).
                 paths.panelDetectorModel?.let { panelModelFile ->
