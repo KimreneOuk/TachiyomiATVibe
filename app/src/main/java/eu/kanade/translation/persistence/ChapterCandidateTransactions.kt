@@ -622,4 +622,61 @@ class ChapterCandidateTransactions internal constructor(
         ArtifactStage.TRANSLATION -> copy(translation = record)
         ArtifactStage.LAYOUT -> copy(layout = record)
     }
+
+    /**
+     * Process-death candidate sweep (lifecycle contract §13): a candidate
+     * opened before this process started can have no live owner, and leaving
+     * its marker projects the chapter as in-flight forever. Committed bundles
+     * are untouched; candidate-owned stage records drop with the marker.
+     */
+    internal fun closeOrphanedCandidates(
+        manifest: ChapterArtifactManifest,
+        processStartEpochMs: Long,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): ChapterArtifactManifest {
+        var changed = false
+        val closedGenerationIds = mutableSetOf<String>()
+        val pages = manifest.pages.mapValues { (_, page) ->
+            val candidate = page.candidate
+            if (candidate == null || candidate.createdAtEpochMs >= processStartEpochMs) return@mapValues page
+            changed = true
+            closedGenerationIds += candidate.generationId
+            var updated = page.copy(candidate = null)
+            ArtifactStage.entries.forEach { stage ->
+                val record = updated.stage(stage)
+                if (record?.generationId == candidate.generationId) {
+                    updated = updated.withStage(stage, null)
+                }
+            }
+            updated.copy(
+                displayState = when {
+                    updated.committed != null -> updated.displayState
+                    updated.displayState == PageDisplayState.CANDIDATE_RUNNING ->
+                        candidate.priorDisplayState
+                            ?.takeIf { it != PageDisplayState.CANDIDATE_RUNNING }
+                            ?: PageDisplayState.ORIGINAL_ONLY
+                    else -> updated.displayState
+                },
+                pageVersion = updated.pageVersion + 1,
+            )
+        }
+        if (!changed) return manifest
+        val reconciled = manifest.copy(
+            pages = pages,
+            activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - closedGenerationIds,
+            updatedAtEpochMs = nowEpochMs,
+        )
+        if (!engine.publishManifestInternal(reconciled)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT orphaned-candidate sweep publish failed; prior manifest retained: " +
+                    "chapter=${layout.chapterKey}"
+            }
+            return manifest
+        }
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT closed ${closedGenerationIds.size} orphaned candidate(s) from a dead run: " +
+                "chapter=${layout.chapterKey}"
+        }
+        return reconciled
+    }
 }

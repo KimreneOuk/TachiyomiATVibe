@@ -181,7 +181,9 @@ internal class ChapterTranslationAccessController(
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
         val fileName = document?.fileName ?: provider.getTranslationFileName(chapterName, scanlator)
         val manifestProbe = document?.let { ChapterTranslationStore.probeArtifactManifest(it.parent, it.fileName) }
+        var freshlyCreated = false
         val registered = activeStores.getOrCreate(chapterId, document?.registryKey) {
+            freshlyCreated = true
             if (manifestProbe?.exists == true) {
                 ChapterTranslationStore.openArtifactSuspend(document.parent, fileName)
             } else {
@@ -193,6 +195,11 @@ internal class ChapterTranslationAccessController(
             }
         } ?: return null
         registered.enableLazyPersistence()
+        if (freshlyCreated) {
+            // The fresh open's orphaned-candidate sweep may have rewritten the
+            // manifest; cached durable statuses must not outlive that repair.
+            durableStatusResolver.clearDurableStatusCache()
+        }
         scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
         return registered
     }

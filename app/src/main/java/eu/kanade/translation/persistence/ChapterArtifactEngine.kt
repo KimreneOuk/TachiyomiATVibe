@@ -50,6 +50,15 @@ class ChapterArtifactEngine(
 
     val candidates: ChapterCandidateTransactions = ChapterCandidateTransactions(documents, layout, this)
 
+    internal companion object {
+        /**
+         * Captured at first engine use in this process: any candidate written
+         * later necessarily belongs to a live in-process run, while candidates
+         * stamped earlier predate the process and can only be crash debris.
+         */
+        val processStartEpochMs: Long = System.currentTimeMillis()
+    }
+
     fun load(): LoadResult {
         val readManifestStage = ReaderEntryTrace.begin("store.readManifest", null)
         val primary = readManifestDocument(layout.manifestFileName)
@@ -93,6 +102,7 @@ class ChapterArtifactEngine(
             }
             val recoverInterruptedStage = ReaderEntryTrace.begin("store.recoverInterrupted", null)
             val recovered = candidates.recoverInterruptedStages(existing)
+            val reconciled = candidates.closeOrphanedCandidates(recovered, processStartEpochMs)
             recoverInterruptedStage.end()
             // P3A: the open-time backup deletion was removed. The retained
             // `.bak` is the chapter's crash-recovery copy and repair/retry
@@ -100,7 +110,7 @@ class ChapterArtifactEngine(
             // chapter teardown remains the only other remover. Interrupted-
             // stage recovery (when it published) already rotated a fresh
             // backup into place.
-            return LoadResult(recovered)
+            return LoadResult(reconciled)
         }
 
         val created = ChapterArtifactManifest(

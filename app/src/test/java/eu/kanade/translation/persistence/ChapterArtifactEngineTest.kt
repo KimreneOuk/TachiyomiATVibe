@@ -270,7 +270,7 @@ class ChapterArtifactEngineTest {
             ArtifactOrigin.BATCH,
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
-            nowEpochMs = 500L,
+            nowEpochMs = ChapterArtifactEngine.processStartEpochMs,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val candidateImage = layout.imageFile("page.jpg", generationId, "candidate", "jpg")
@@ -506,7 +506,7 @@ class ChapterArtifactEngineTest {
             origin = ArtifactOrigin.BATCH,
             expectedPageVersion = 0L,
             dependencyFingerprint = "deps",
-            nowEpochMs = 100L,
+            nowEpochMs = ChapterArtifactEngine.processStartEpochMs,
         ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
         val page = displayablePage()
@@ -772,5 +772,115 @@ class ChapterArtifactEngineTest {
         // Second load with unchanged bytes takes the fast path and stays equal.
         val reloaded = store.loadArtifact(ArtifactSeed(createdAtEpochMs = 1L))
         reloaded.manifest shouldBe reparsed
+    }
+
+    @Test
+    fun `load closes a dead-run candidate without a committed bundle and restores prior display state`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val seeded = store.loadArtifact(seededSnapshot()).manifest
+        check(
+            store.publishManifest(
+                seeded.copy(
+                    pages = mapOf(
+                        "page.jpg" to PageArtifactRecord(
+                            pageKey = "page.jpg",
+                            ocr = StageArtifactRecord(
+                                status = ArtifactStageStatus.READY,
+                                fingerprint = "ocr-fp",
+                                origin = ArtifactOrigin.BATCH,
+                                generationId = "g-dead",
+                                updatedAtEpochMs = 42L,
+                            ),
+                            candidate = CandidateGenerationMetadata(
+                                generationId = "g-dead",
+                                origin = ArtifactOrigin.BATCH,
+                                dependencyFingerprint = "deps",
+                                createdAtEpochMs = 0L,
+                                priorDisplayState = PageDisplayState.ORIGINAL_ONLY,
+                            ),
+                            displayState = PageDisplayState.CANDIDATE_RUNNING,
+                        ),
+                    ),
+                    activeCandidateGenerationIds = setOf("g-dead"),
+                ),
+            ),
+        )
+
+        val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout).load().manifest
+        val page = reloaded.pages.getValue("page.jpg")
+        page.candidate.shouldBeNull()
+        page.ocr.shouldBeNull()
+        page.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
+        page.pageVersion shouldBe 1L
+        reloaded.activeCandidateGenerationIds shouldBe emptySet()
+    }
+
+    @Test
+    fun `orphan sweep keeps committed bundles and non-candidate stage records`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val seeded = store.loadArtifact(seededSnapshot()).manifest
+        check(
+            store.publishManifest(
+                seeded.copy(
+                    pages = mapOf(
+                        "page.jpg" to PageArtifactRecord(
+                            pageKey = "page.jpg",
+                            ocr = StageArtifactRecord(
+                                status = ArtifactStageStatus.READY,
+                                fingerprint = "ocr-fp",
+                                origin = ArtifactOrigin.BATCH,
+                                generationId = "g-dead",
+                                updatedAtEpochMs = 42L,
+                            ),
+                            translation = StageArtifactRecord(
+                                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                                origin = ArtifactOrigin.BATCH,
+                                generationId = null,
+                                updatedAtEpochMs = 42L,
+                            ),
+                            committed = seeded.pages.getValue("page.jpg").committed,
+                            candidate = CandidateGenerationMetadata(
+                                generationId = "g-dead",
+                                origin = ArtifactOrigin.BATCH,
+                                dependencyFingerprint = "deps",
+                                createdAtEpochMs = 0L,
+                                priorDisplayState = PageDisplayState.DISPLAY_READY,
+                            ),
+                            displayState = PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT,
+                        ),
+                    ),
+                    activeCandidateGenerationIds = setOf("g-dead"),
+                ),
+            ),
+        )
+
+        val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout).load().manifest
+        val page = reloaded.pages.getValue("page.jpg")
+        page.candidate.shouldBeNull()
+        page.ocr.shouldBeNull()
+        page.translation.shouldNotBeNull().generationId.shouldBeNull()
+        page.committed.shouldNotBeNull().generationId shouldBe "fixture-page.jpg"
+        page.displayState shouldBe PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
+    }
+
+    @Test
+    fun `load keeps a candidate opened by this process`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadArtifact(seededSnapshot()).manifest
+        val opened = store.candidates.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = ChapterArtifactEngine.processStartEpochMs,
+        ).shouldBeInstanceOf<ChapterArtifactEngine.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+
+        val reloaded = ChapterArtifactEngine(AtomicChapterDocuments(io), layout).load().manifest
+        reloaded.pages.getValue("page.jpg").candidate.shouldNotBeNull().generationId shouldBe generationId
     }
 }
