@@ -225,14 +225,19 @@ class PaddleOcrV6DetEngine : Closeable {
         var neuralForwardNanos = 0L
         var recoveryNanos = 0L
 
-        inBuf.writeFloat(inputFloats)
+        // The demotion scope must span write/read too: a dead GPU delegate can
+        // fail the tensor lock on output read while run() itself returns
+        // silently, and only a full write→run→read retry produces real lines.
+        var probabilityArray: FloatArray
         try {
+            inBuf.writeFloat(inputFloats)
             val forwardStart = System.nanoTime()
             try {
                 activeModel.run(listOf(inBuf), listOf(outBuf))
             } finally {
                 neuralForwardNanos += System.nanoTime() - forwardStart
             }
+            probabilityArray = outBuf.readFloat()
         } catch (failure: Throwable) {
             if (!liteRtGpuActive || !liteRtAllowXnnpackFallback) throw failure
             val recoveryStart = System.nanoTime()
@@ -254,10 +259,10 @@ class PaddleOcrV6DetEngine : Closeable {
                 neuralForwardNanos += retryForwardNanos
                 recoveryNanos = (System.nanoTime() - recoveryStart - retryForwardNanos).coerceAtLeast(0L)
             }
+            probabilityArray = outBuf.readFloat()
         }
 
         val postprocessStart = System.nanoTime()
-        val probabilityArray = outBuf.readFloat()
         val mapLines = DbPostProcess.detectLines(
             probabilityMap = probabilityArray,
             width = MAX_DET_SIZE,

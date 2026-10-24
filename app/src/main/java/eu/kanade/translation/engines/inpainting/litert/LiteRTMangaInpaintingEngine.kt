@@ -31,8 +31,10 @@ import kotlin.math.min
  *  - [NeuralInpaintModel.AOT_GAN] — optimized AOT 512 FP16 (aot-512-regen-gap).
  * Model-specific tensor math lives in [LiteRtTensorAdapter] implementations;
  * the GPU session, 1:1 pad/composite, and tight stroke masking are shared.
- * The AOT model is GPU-required: if the GPU delegate fails to compile, the
- * engine stays unavailable (no silent neural-CPU fallback, no NPU claims).
+ * Init stays accelerator-first with no neural-CPU fallback for AOT: a GPU
+ * that fails to compile leaves the engine unavailable. A live GPU/NPU runtime
+ * that throws or returns a degenerate all-zero pass demotes ONCE to CPU and
+ * reruns; CPU is then reported honestly as the backend.
  *
  * Employs tight stroke masking (fixed pill mask) and ring-median background
  * context padding to eliminate screentone phase distortion and moiré artifacts.
@@ -128,11 +130,19 @@ class LiteRTMangaInpaintingEngine(
             extractedLength > 1_000_000L &&
             cachedTime == appUpdateTime &&
             (cachedSize <= 0L || extractedLength == cachedSize)
+
+        /** A silently no-op delegate leaves the output tensor untouched at zero. */
+        internal fun isDegenerateOutput(output: FloatArray): Boolean {
+            for (value in output) if (value != 0f) return false
+            return true
+        }
     }
 
     private var model: CompiledModel? = null
     private var environment: Environment? = null
     private var backendName: String = "UNINITIALIZED"
+    private var runtimeModelFile: File? = null
+    private var activeAccelerator: Accelerator? = null
 
     // Inputs bind BY SIGNATURE NAME, never by buffer index. The AOT flatbuffer
     // lists mask as subgraph input 0 and image as input 1, so index-ordered
@@ -189,6 +199,7 @@ class LiteRTMangaInpaintingEngine(
                     logcat(LogPriority.WARN) { "[LiteRTInpaint] No model file available; LiteRT inpainter unavailable" }
                     return
                 }
+                runtimeModelFile = modelFile
 
                 val libDir = context.applicationInfo.nativeLibraryDir
                 val envOptions = mapOf(
@@ -261,10 +272,9 @@ class LiteRTMangaInpaintingEngine(
                     }
                 }
 
-                // NO neural CPU fallback: an unsupported GPU leaves the engine
-                // unavailable so callers take their honest unavailable/error or
-                // user-enabled CLASSICAL fallback with degraded status. CPU is
-                // never silently reported as an optimized accelerator.
+                // NO neural CPU fallback at init: an unsupported GPU leaves the engine
+                // unavailable so callers take their honest unavailable/error or the
+                // user-enabled CLASSICAL fallback. Runtime recovery lives in runRecoveredPass.
 
                 if (model == null) {
                     env.close()
@@ -361,6 +371,7 @@ class LiteRTMangaInpaintingEngine(
             resolvedImageInputName = resolvedImage
             resolvedMaskInputName = resolvedMask
             resolvedOutputName = resolvedOutput
+            activeAccelerator = accelerator
             backendName = when (accelerator) {
                 Accelerator.NPU -> "NPU (LiteRT CompiledModel)"
                 Accelerator.GPU -> "GPU (LiteRT CompiledModel)"
@@ -598,6 +609,27 @@ class LiteRTMangaInpaintingEngine(
             adapter.encodePixel(paddedSourcePixels[i], isMask, imageInputValues, imageIndex, maskInputValues, i)
             imageIndex += 3
         }
+        val output = try {
+            runNeuralPass(activeModel, imageBuffer, maskBuffer, outBuffer, imageName, maskName, outName)
+        } catch (failure: Throwable) {
+            runRecoveredPass(failure) ?: throw failure
+        }
+        if (!isDegenerateOutput(output)) return output
+        // A dead GPU delegate can no-op run() and leave the output tensor at
+        // zero; decoding that verbatim paints flat 0.5-gray over the masks.
+        val degraded = IllegalStateException("[LiteRTInpaint] $backendName returned an all-zero output tensor")
+        return runRecoveredPass(degraded) ?: throw degraded
+    }
+
+    private fun runNeuralPass(
+        activeModel: CompiledModel,
+        imageBuffer: TensorBuffer,
+        maskBuffer: TensorBuffer,
+        outBuffer: TensorBuffer,
+        imageName: String,
+        maskName: String,
+        outName: String,
+    ): FloatArray {
         imageBuffer.writeFloat(imageInputValues)
         maskBuffer.writeFloat(maskInputValues)
         activeModel.run(
@@ -606,6 +638,46 @@ class LiteRTMangaInpaintingEngine(
             signatureName,
         )
         return outBuffer.readFloat()
+    }
+
+    /**
+     * Single failure recovery: rebuild the runtime on CPU and rerun the pass.
+     * Null when already on CPU or the rebuild fails — the caller then surfaces
+     * the original failure instead of retrying blind.
+     */
+    private fun runRecoveredPass(failure: Throwable): FloatArray? {
+        if (activeAccelerator == Accelerator.CPU) return null
+        val file = runtimeModelFile ?: return null
+        val env = environment ?: return null
+        logcat(LogPriority.WARN, failure) {
+            "[LiteRTInpaint] $backendName pass failed or degenerate; demoting to CPU"
+        }
+        releaseCompiledModel()
+        if (!tryCreateCompiledModel(file, Accelerator.CPU, env)) return null
+        val rebuiltModel = model ?: return null
+        val imageBuffer = imageInputBuffer ?: return null
+        val maskBuffer = maskInputBuffer ?: return null
+        val outBuffer = outputBuffer ?: return null
+        val imageName = resolvedImageInputName ?: return null
+        val maskName = resolvedMaskInputName ?: return null
+        val outName = resolvedOutputName ?: return null
+        return runNeuralPass(rebuiltModel, imageBuffer, maskBuffer, outBuffer, imageName, maskName, outName)
+    }
+
+    /** Closes the CompiledModel and its buffers while keeping the Environment alive for a rebuild. */
+    private fun releaseCompiledModel() {
+        imageInputBuffer?.let { runCatching { it.close() } }
+        maskInputBuffer?.let { runCatching { it.close() } }
+        outputBuffer?.let { runCatching { it.close() } }
+        imageInputBuffer = null
+        maskInputBuffer = null
+        outputBuffer = null
+        resolvedImageInputName = null
+        resolvedMaskInputName = null
+        resolvedOutputName = null
+        activeAccelerator = null
+        runCatching { model?.close() }
+        model = null
     }
 
     /**
@@ -864,17 +936,7 @@ class LiteRTMangaInpaintingEngine(
     }
 
     private fun closeRuntime() {
-        imageInputBuffer?.let { runCatching { it.close() } }
-        maskInputBuffer?.let { runCatching { it.close() } }
-        outputBuffer?.let { runCatching { it.close() } }
-        imageInputBuffer = null
-        maskInputBuffer = null
-        outputBuffer = null
-        resolvedImageInputName = null
-        resolvedMaskInputName = null
-        resolvedOutputName = null
-        runCatching { model?.close() }
-        model = null
+        releaseCompiledModel()
         runCatching { environment?.close() }
         environment = null
     }
