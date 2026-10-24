@@ -50,6 +50,7 @@ class TranslationBatchProgressTracker(
     private val terminalEventQueued = AtomicBoolean(false)
     private val terminalSnapshot = CompletableDeferred<TranslationProgressSnapshot>()
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
+    private val createdAtEpochMs = System.currentTimeMillis()
     private var projection = Projection()
 
     // The ordered work keys define the batch's real total, so the
@@ -231,6 +232,7 @@ class TranslationBatchProgressTracker(
             //   the tracker-driven rebuild window carries its own
             // adoption counter alongside the REBUILDING phase.
             rebuildProgress = state.rebuildProgress,
+            elapsedMs = System.currentTimeMillis() - createdAtEpochMs,
         )
     }
 
@@ -462,7 +464,9 @@ class TranslationBatchProgressTracker(
                 }.groupBy({
                     it.value.activeError ?: "Unknown error"
                 }, { it.key }),
-                System.currentTimeMillis(),
+                // Elapsed is unknowable here (no run-start context); callers
+                // that track a run supply it. 0 renders as an em-dash.
+                0L,
                 batchPhase = batchPhase,
                 aiProgress = aiProgress,
                 cancelledPages = cancelled,
