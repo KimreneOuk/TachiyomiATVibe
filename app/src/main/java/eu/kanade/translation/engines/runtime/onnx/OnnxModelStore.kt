@@ -62,6 +62,9 @@ data class LiteRtVisionPaths(
     val pageTextDetector: File?,
     val panelDetector: File?,
     val bubbleSegmenter: File?,
+    val ocrEncoder: File?,
+    val ocrDecoderInit: File?,
+    val ocrDecoderStep: File?,
 )
 
 class OnnxModelStore(private val context: Context) {
@@ -253,7 +256,8 @@ class OnnxModelStore(private val context: Context) {
     fun liteRtVisionAssetsAvailable(): Boolean {
         return try {
             context.assets.list("models/detection/litert")?.isNotEmpty() == true ||
-                context.assets.list("models/segmentation/litert")?.isNotEmpty() == true
+                context.assets.list("models/segmentation/litert")?.isNotEmpty() == true ||
+                context.assets.list("models/ocr/litert")?.isNotEmpty() == true
         } catch (_: Exception) {
             false
         }
@@ -272,6 +276,9 @@ class OnnxModelStore(private val context: Context) {
             pageTextDetector = copy("models/detection/litert/detector_v4_s_fp32.tflite"),
             panelDetector = copy("models/detection/litert/panel_detector_fp32.tflite"),
             bubbleSegmenter = copy("models/segmentation/litert/bubble_segmenter_fp32.tflite"),
+            ocrEncoder = copy("models/ocr/litert/ocr_encoder_fp32.tflite"),
+            ocrDecoderInit = copy("models/ocr/litert/ocr_decoder_init_fp32.tflite"),
+            ocrDecoderStep = copy("models/ocr/litert/ocr_decoder_step_fp32.tflite"),
         )
     }
 

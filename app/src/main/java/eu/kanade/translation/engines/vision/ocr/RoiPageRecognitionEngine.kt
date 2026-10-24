@@ -310,8 +310,17 @@ class RoiPageRecognitionEngine(
                     }
                 }
                 roiOcrEngine = when (ocrModel) {
-                    OcrModel.MANGAOCR -> MangaOcrEngine().also {
-                        it.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
+                    OcrModel.MANGAOCR -> MangaOcrEngine().also { engine ->
+                        val liteRtEncoder = liteRtVision?.ocrEncoder
+                        val liteRtInit = liteRtVision?.ocrDecoderInit
+                        val liteRtStep = liteRtVision?.ocrDecoderStep
+                        if (liteRtEncoder != null && liteRtInit != null && liteRtStep != null) {
+                            engine.initializeLiteRt(liteRtEncoder, liteRtInit, liteRtStep, paths.ocrVocab) {
+                                engine.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
+                            }
+                        } else {
+                            engine.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
+                        }
                     }
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also { engine ->
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()

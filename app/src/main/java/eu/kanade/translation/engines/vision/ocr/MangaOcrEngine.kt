@@ -7,7 +7,14 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.Paint
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
+import com.google.ai.edge.litert.Environment
+import com.google.ai.edge.litert.TensorBuffer
+import com.google.ai.edge.litert.TensorType
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -27,6 +34,24 @@ class MangaOcrEngine : RoiOcrEngine {
     private var decoderStepSession: OrtSession? = null
     private var vocab: List<String> = emptyList()
     private var loggedTensorShapes = false
+
+    // LiteRT backend (GPU never attempted: autoregressive graphlets are CPU
+    // territory). When null, the ONNX sessions serve recognize().
+    private var liteRtEnv: Environment? = null
+    private var encoderLiteRt: LiteRtModel? = null
+    private var decoderInitLiteRt: LiteRtModel? = null
+    private var decoderStepLiteRt: LiteRtModel? = null
+
+    // Engine-level decode scratch; guarded by decodeMutex because TensorBuffer
+    // has no positional write, so caches are rewritten from these each step.
+    private val decodeMutex = Mutex()
+    private val hiddenScratch = FloatArray(HIDDEN_SEQ * HIDDEN_DIM)
+    private val stepHiddenScratch = FloatArray(HIDDEN_SEQ * HIDDEN_DIM)
+    private val selfKScratch = FloatArray(4 * 1 * 4 * MAX_LEN * 64)
+    private val selfVScratch = FloatArray(4 * 1 * 4 * MAX_LEN * 64)
+    private val crossKScratch = FloatArray(4 * 1 * 4 * HIDDEN_SEQ * 64)
+    private val crossVScratch = FloatArray(4 * 1 * 4 * HIDDEN_SEQ * 64)
+    private val nhwcInputScratch = FloatArray(3 * 224 * 224)
 
     /**
      * Always CPU: the autoregressive decoder loop runs many tiny per-step
@@ -97,6 +122,311 @@ class MangaOcrEngine : RoiOcrEngine {
     }
 
     override suspend fun recognize(cropBitmap: Bitmap): String {
+        val liteRt = encoderLiteRt
+        if (liteRt != null) return recognizeLiteRt(cropBitmap)
+        return recognizeOnnx(cropBitmap)
+    }
+
+    /**
+     * Initializes the LiteRT backend (fp32 encoder + decoders, CPU XNNPACK).
+     * Buffers bind by SIGNATURE key — the flatbuffer subgraph order permutes
+     * the init outputs (cross before logits) and self_k/self_v are
+     * shape-identical, so index binding could silently swap them.
+     */
+    fun initializeLiteRt(
+        encoderFile: File,
+        decoderInitFile: File,
+        decoderStepFile: File,
+        vocabFile: File,
+        numThreads: Int = decoderThreadCount,
+        fallbackInitializer: (() -> Unit)? = null,
+    ) {
+        try {
+            initializeLiteRtModels(encoderFile, decoderInitFile, decoderStepFile, vocabFile, numThreads)
+        } catch (failure: Throwable) {
+            val fallback = fallbackInitializer ?: throw failure
+            logcat(LogPriority.WARN, failure) { "OCR LiteRT init failed; falling back to ONNX sessions" }
+            fallback()
+        }
+    }
+
+    private fun initializeLiteRtModels(
+        encoderFile: File,
+        decoderInitFile: File,
+        decoderStepFile: File,
+        vocabFile: File,
+        numThreads: Int,
+    ) {
+        logcat(LogPriority.INFO) {
+            "OCR LiteRT init: encoder=${encoderFile.name} decoderInit=${decoderInitFile.name} " +
+                "decoderStep=${decoderStepFile.name} (${encoderFile.length()}B/${decoderInitFile.length()}B/" +
+                "${decoderStepFile.length()}B) threads=$numThreads"
+        }
+        val env = Environment.create()
+        try {
+            val encoder = buildLiteRtModel(
+                env,
+                encoderFile,
+                numThreads,
+                inputBindings = listOf(BindingSpec("pixel_values", isInt64 = false, dims = listOf(1, 224, 224, 3))),
+                outputBindings = listOf(BindingSpec("hidden_states", isInt64 = false, dims = listOf(1, HIDDEN_SEQ, HIDDEN_DIM))),
+            )
+            val decoderInit = buildLiteRtModel(
+                env,
+                decoderInitFile,
+                numThreads,
+                inputBindings = listOf(
+                    BindingSpec("encoder_hidden_states", isInt64 = false, dims = listOf(1, HIDDEN_SEQ, HIDDEN_DIM)),
+                    BindingSpec("input_ids", isInt64 = true, dims = listOf(1, 1)),
+                ),
+                outputBindings = listOf(
+                    BindingSpec("logits", isInt64 = false, dims = listOf(1, VOCAB_SIZE)),
+                    BindingSpec("self_k", isInt64 = false, dims = listOf(4, 1, 4, 1, 64)),
+                    BindingSpec("self_v", isInt64 = false, dims = listOf(4, 1, 4, 1, 64)),
+                    BindingSpec("cross_k", isInt64 = false, dims = listOf(4, 1, 4, HIDDEN_SEQ, 64)),
+                    BindingSpec("cross_v", isInt64 = false, dims = listOf(4, 1, 4, HIDDEN_SEQ, 64)),
+                ),
+            )
+            val decoderStep = buildLiteRtModel(
+                env,
+                decoderStepFile,
+                numThreads,
+                inputBindings = listOf(
+                    BindingSpec("encoder_hidden_states", isInt64 = false, dims = listOf(1, HIDDEN_DIM, HIDDEN_SEQ)),
+                    BindingSpec("self_k_cache", isInt64 = false, dims = listOf(4, 4, MAX_LEN, 64, 1)),
+                    BindingSpec("self_v_cache", isInt64 = false, dims = listOf(4, 4, MAX_LEN, 64, 1)),
+                    BindingSpec("cross_k_cache", isInt64 = false, dims = listOf(4, 4, HIDDEN_SEQ, 64, 1)),
+                    BindingSpec("cross_v_cache", isInt64 = false, dims = listOf(4, 4, HIDDEN_SEQ, 64, 1)),
+                    BindingSpec("input_ids", isInt64 = true, dims = listOf(1, 1)),
+                    BindingSpec("position_ids", isInt64 = true, dims = listOf(1, 1)),
+                ),
+                outputBindings = listOf(
+                    BindingSpec("logits", isInt64 = false, dims = listOf(1, VOCAB_SIZE)),
+                    BindingSpec("self_k_slice", isInt64 = false, dims = listOf(4, 1, 4, 1, 64)),
+                    BindingSpec("self_v_slice", isInt64 = false, dims = listOf(4, 1, 4, 1, 64)),
+                ),
+            )
+            encoderLiteRt = encoder
+            decoderInitLiteRt = decoderInit
+            decoderStepLiteRt = decoderStep
+            liteRtEnv = env
+            vocab = loadVocab(vocabFile)
+            logcat(LogPriority.INFO) { "OCR LiteRT ready (vocab=${vocab.size}, cpu xnnpack)" }
+        } catch (failure: Throwable) {
+            runCatching { env.close() }
+            throw failure
+        }
+    }
+
+    private suspend fun recognizeLiteRt(cropBitmap: Bitmap): String {
+        val encoder = encoderLiteRt ?: throw IllegalStateException("OCR LiteRT not initialized")
+        val t0 = System.nanoTime()
+        val pixels = preprocess(cropBitmap)
+        if (pixels.isEmpty()) return ""
+        val t1 = System.nanoTime()
+
+        return decodeMutex.withLock {
+            val hidden = runEncoder(encoder, pixels)
+            val t2 = System.nanoTime()
+            val result = decodeHiddenStateLiteRt(hidden)
+            val t3 = System.nanoTime()
+            if (isDiagnosticsEnabled()) {
+                logcat(LogPriority.INFO) {
+                    "[ocr] backend=litert total=${(t3 - t0) / 1_000_000.0}ms " +
+                        "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
+                        "encoder=${(t2 - t1) / 1_000_000.0}ms " +
+                        "decoder=${(t3 - t2) / 1_000_000.0}ms"
+                }
+            }
+            result
+        }
+    }
+
+    private fun runEncoder(encoder: LiteRtModel, pixels: IntArray): FloatArray {
+        writeNormalizedNhwc(pixels, nhwcInputScratch)
+        encoder.input("pixel_values").writeFloat(nhwcInputScratch)
+        encoder.model.run(listOf(encoder.input("pixel_values")), listOf(encoder.output("hidden_states")))
+        return encoder.output("hidden_states").readFloat()
+    }
+
+    // Greedy autoregressive decode over the fp32 graphlets. Host caches keep
+    // the [4,1,4,L,64] layout; the step model's [4,4,L,64,1] inputs are a
+    // stride-preserving reshape of the same flat floats, so they are fed
+    // as-is. Cross caches are constant across steps — written once.
+    private fun decodeHiddenStateLiteRt(hidden: FloatArray): String {
+        val decInit = decoderInitLiteRt ?: throw IllegalStateException("OCR LiteRT not initialized")
+        val decStep = decoderStepLiteRt ?: throw IllegalStateException("OCR LiteRT not initialized")
+        require(hidden.size == HIDDEN_SEQ * HIDDEN_DIM) { "OCR encoder hidden size ${hidden.size}" }
+
+        transposeHiddenToStepLayout(hidden, stepHiddenScratch)
+        decStep.input("encoder_hidden_states").writeFloat(stepHiddenScratch)
+
+        decInit.input("encoder_hidden_states").writeFloat(hidden)
+        decInit.input("input_ids").writeLong(longArrayOf(START_TOKEN.toLong()))
+        decInit.model.run(
+            listOf(decInit.input("encoder_hidden_states"), decInit.input("input_ids")),
+            listOf(
+                decInit.output("logits"),
+                decInit.output("self_k"),
+                decInit.output("self_v"),
+                decInit.output("cross_k"),
+                decInit.output("cross_v"),
+            ),
+        )
+        copyCache(decInit.output("cross_k").readFloat(), crossKScratch)
+        copyCache(decInit.output("cross_v").readFloat(), crossVScratch)
+        seedSelfCacheSlot0(decInit.output("self_k").readFloat(), selfKScratch)
+        seedSelfCacheSlot0(decInit.output("self_v").readFloat(), selfVScratch)
+        decStep.input("cross_k_cache").writeFloat(crossKScratch)
+        decStep.input("cross_v_cache").writeFloat(crossVScratch)
+
+        val initLogits = decInit.output("logits").readFloat()
+        var maxIdx = argmax(initLogits)
+        if (maxIdx == END_TOKEN) return ""
+        val tokenIds = mutableListOf(maxIdx)
+
+        var pos = 2
+        var currentInputId = maxIdx.toLong()
+        var currentPositionId = pos.toLong()
+        for (stepIdx in 0 until MAX_GENERATION_LENGTH) {
+            if (pos >= DECODER_POSITION_COUNT) break
+            decStep.input("input_ids").writeLong(longArrayOf(currentInputId))
+            decStep.input("position_ids").writeLong(longArrayOf(currentPositionId))
+            decStep.input("self_k_cache").writeFloat(selfKScratch)
+            decStep.input("self_v_cache").writeFloat(selfVScratch)
+            decStep.model.run(
+                listOf(
+                    decStep.input("encoder_hidden_states"),
+                    decStep.input("self_k_cache"),
+                    decStep.input("self_v_cache"),
+                    decStep.input("cross_k_cache"),
+                    decStep.input("cross_v_cache"),
+                    decStep.input("input_ids"),
+                    decStep.input("position_ids"),
+                ),
+                listOf(
+                    decStep.output("logits"),
+                    decStep.output("self_k_slice"),
+                    decStep.output("self_v_slice"),
+                ),
+            )
+            writeCacheSliceAtSlot(decStep.output("self_k_slice").readFloat(), selfKScratch, pos - 1)
+            writeCacheSliceAtSlot(decStep.output("self_v_slice").readFloat(), selfVScratch, pos - 1)
+            maxIdx = argmax(decStep.output("logits").readFloat())
+            if (maxIdx == END_TOKEN) break
+            tokenIds.add(maxIdx)
+            pos++
+            currentInputId = maxIdx.toLong()
+            currentPositionId = pos.toLong()
+        }
+
+        val text = buildString {
+            for (tokenId in tokenIds) {
+                if (tokenId < vocab.size) append(vocab[tokenId])
+            }
+        }
+        return postprocess(text)
+    }
+
+    private fun argmax(logits: FloatArray): Int {
+        var maxVal = Float.NEGATIVE_INFINITY
+        var maxIdx = 0
+        for (i in logits.indices) {
+            if (logits[i] > maxVal) {
+                maxVal = logits[i]
+                maxIdx = i
+            }
+        }
+        return maxIdx
+    }
+
+    private class BindingSpec(
+        val key: String,
+        val isInt64: Boolean,
+        val dims: List<Int>,
+    )
+
+    /** One bound CompiledModel whose buffers are addressed by signature key. */
+    private class LiteRtModel(
+        val model: CompiledModel,
+        private val inputs: Map<String, TensorBuffer>,
+        private val outputs: Map<String, TensorBuffer>,
+    ) : AutoCloseable {
+        fun input(key: String): TensorBuffer = checkNotNull(inputs[key]) { "OCR LiteRT input '$key' not bound" }
+        fun output(key: String): TensorBuffer = checkNotNull(outputs[key]) { "OCR LiteRT output '$key' not bound" }
+
+        override fun close() {
+            (inputs.values + outputs.values).forEach { runCatching { it.close() } }
+            runCatching { model.close() }
+        }
+    }
+
+    private fun buildLiteRtModel(
+        env: Environment,
+        modelFile: File,
+        numThreads: Int,
+        inputBindings: List<BindingSpec>,
+        outputBindings: List<BindingSpec>,
+    ): LiteRtModel {
+        val options = CompiledModel.Options(Accelerator.CPU).apply {
+            cpuOptions = CompiledModel.CpuOptions(numThreads = numThreads)
+        }
+        val model = CompiledModel.create(modelFile.absolutePath, options, env)
+        try {
+            val inputs = inputBindings.associate { spec ->
+                spec.key to resolveBuffer(model, spec, wantInput = true)
+            }
+            val outputs = outputBindings.associate { spec ->
+                spec.key to resolveBuffer(model, spec, wantInput = false)
+            }
+            return LiteRtModel(model, inputs, outputs)
+        } catch (failure: Throwable) {
+            runCatching { model.close() }
+            throw failure
+        }
+    }
+
+    // Signature-key binding with graph-tensor-name fallback; validates dtype +
+    // exact dims and fails closed so a k/v-shaped pair can never bind swapped.
+    private fun resolveBuffer(model: CompiledModel, spec: BindingSpec, wantInput: Boolean): TensorBuffer {
+        val candidates = listOf(spec.key, "serving_default_${spec.key}:0")
+        for (name in candidates) {
+            val tensorType = try {
+                if (wantInput) model.getInputTensorType(name, SIGNATURE) else model.getOutputTensorType(name, SIGNATURE)
+            } catch (_: Throwable) {
+                continue
+            }
+            val elementTypeOk = if (spec.isInt64) {
+                tensorType.elementType == TensorType.ElementType.INT64
+            } else {
+                tensorType.elementType == TensorType.ElementType.FLOAT
+            }
+            val dims = tensorType.layout?.dimensions
+            if (elementTypeOk && dims != null && dims == spec.dims) {
+                return if (wantInput) {
+                    model.createInputBuffer(name, SIGNATURE)
+                } else {
+                    model.createOutputBuffer(name, SIGNATURE)
+                }
+            }
+        }
+        throw IllegalStateException(
+            "OCR LiteRT tensor '${spec.key}' (${spec.dims}, int64=${spec.isInt64}) " +
+                "did not resolve under signature '$SIGNATURE'",
+        )
+    }
+
+    private fun loadVocab(vocabFile: File): List<String> =
+        BufferedReader(InputStreamReader(vocabFile.inputStream(), Charsets.UTF_8)).use { reader ->
+            reader.lineSequence().map { it.trimEnd() }.toList()
+        }
+
+    private fun copyCache(src: FloatArray, dst: FloatArray) {
+        require(src.size == dst.size) { "OCR LiteRT cache size mismatch: ${src.size} vs ${dst.size}" }
+        System.arraycopy(src, 0, dst, 0, src.size)
+    }
+
+    private suspend fun recognizeOnnx(cropBitmap: Bitmap): String {
         val enc = encoderSession ?: throw IllegalStateException("OCR not initialized")
 
         val t0 = System.nanoTime()
@@ -346,6 +676,14 @@ class MangaOcrEngine : RoiOcrEngine {
     }
 
     override fun close() {
+        encoderLiteRt?.close()
+        decoderInitLiteRt?.close()
+        decoderStepLiteRt?.close()
+        encoderLiteRt = null
+        decoderInitLiteRt = null
+        decoderStepLiteRt = null
+        liteRtEnv?.close()
+        liteRtEnv = null
         encoderSession?.close()
         decoderInitSession?.close()
         decoderStepSession?.close()
@@ -438,10 +776,6 @@ class MangaOcrEngine : RoiOcrEngine {
         }
     }
 
-    internal fun writeCacheAtPos(updatedTensor: OnnxTensor, dstBuf: FloatBuffer, pos: Int) {
-        writeCacheAtSlot(updatedTensor, dstBuf, pos)
-    }
-
     private fun postprocess(text: String): String {
         var result = text.replace("\\s".toRegex(), "")
         result = result.replace("\u2026", "...")
@@ -464,6 +798,65 @@ class MangaOcrEngine : RoiOcrEngine {
         // (node_embedding_1) has 128 entries; pos==128 overflows it and crashes
         // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
         private const val DECODER_POSITION_COUNT = 128
+
+        // LiteRT flatbuffer contract (sha-stamped deployment artifacts):
+        // hidden [1,196,256]; decoder_step wants the TRANSPOSED [1,256,196]
+        // view plus [4,4,L,64,1] caches — a stride-preserving reshape of the
+        // host [4,1,4,L,64] caches (batch dim 1 drops, trailing 1 appends).
+        private const val HIDDEN_SEQ = 196
+        private const val HIDDEN_DIM = 256
+        private const val VOCAB_SIZE = 9415
+        private const val SIGNATURE = "serving_default"
+
+        /**
+         * Writes one ARGB pixel's normalized RGB into interleaved NHWC layout
+         * at [pixelIndex]. Pure; unit-tested.
+         */
+        internal fun writeNormalizedNhwcPixel(pixel: Int, destination: FloatArray, pixelIndex: Int) {
+            val base = 3 * pixelIndex
+            destination[base] = ((pixel shr 16 and 0xFF) / 255.0f - 0.5f) / 0.5f
+            destination[base + 1] = ((pixel shr 8 and 0xFF) / 255.0f - 0.5f) / 0.5f
+            destination[base + 2] = ((pixel and 0xFF) / 255.0f - 0.5f) / 0.5f
+        }
+
+        internal fun writeNormalizedNhwc(sourcePixels: IntArray, destination: FloatArray) {
+            require(sourcePixels.size == 224 * 224) {
+                "MangaOCR preprocessing expected ${224 * 224} pixels, got ${sourcePixels.size}"
+            }
+            require(destination.size == 3 * 224 * 224) {
+                "MangaOCR NHWC input buffer is too small: ${destination.size}"
+            }
+            for (i in sourcePixels.indices) {
+                writeNormalizedNhwcPixel(sourcePixels[i], destination, i)
+            }
+        }
+
+        /** [1,196,256] encoder output → [1,256,196] decoder_step input. Pure; unit-tested. */
+        internal fun transposeHiddenToStepLayout(hidden: FloatArray, destination: FloatArray) {
+            require(hidden.size == HIDDEN_SEQ * HIDDEN_DIM) { "hidden size ${hidden.size}" }
+            for (s in 0 until HIDDEN_SEQ) {
+                for (d in 0 until HIDDEN_DIM) {
+                    destination[d * HIDDEN_SEQ + s] = hidden[s * HIDDEN_DIM + d]
+                }
+            }
+        }
+
+        /** Copies init self-cache [4,1,4,1,64] into host slot 0. Pure; unit-tested. */
+        internal fun seedSelfCacheSlot0(src: FloatArray, dst: FloatArray) {
+            require(src.size == 4 * 4 * 64) { "self cache seed size ${src.size}" }
+            for (slice in 0 until 4 * 4) {
+                System.arraycopy(src, slice * 64, dst, slice * MAX_LEN * 64, 64)
+            }
+        }
+
+        /** Writes one step's [4,1,4,1,64] KV slice into host slot [slot]. Pure; unit-tested. */
+        internal fun writeCacheSliceAtSlot(src: FloatArray, dst: FloatArray, slot: Int) {
+            require(src.size == 4 * 4 * 64) { "self cache slice size ${src.size}" }
+            require(slot in 0 until MAX_LEN) { "slot $slot out of cache range" }
+            for (slice in 0 until 4 * 4) {
+                System.arraycopy(src, slice * 64, dst, slice * MAX_LEN * 64 + slot * 64, 64)
+            }
+        }
 
         internal fun writeNormalizedChw(sourcePixels: IntArray, destination: FloatBuffer, offset: Int = 0) {
             val channelSize = 224 * 224
