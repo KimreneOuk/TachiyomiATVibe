@@ -6,6 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import com.google.ai.edge.litert.Environment
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionLayouts
+import eu.kanade.translation.engines.runtime.litert.LiteRtVisionRunner
 import eu.kanade.translation.engines.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.engines.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.engines.runtime.onnx.QnnVisionContextCache
@@ -37,15 +40,19 @@ import java.nio.FloatBuffer
  * Only class 0 (panel) is returned; class 1 (text) is dropped because the
  * production RT-DETR text detector is the source of truth for text/bubble boxes.
  *
- * Attempts NNAPI with a CPU retry via createSessionWithFallback, matching the
- * other vision-side ONNX engines. One cheap 640x640 pass
- * per page; runs alongside the text detector during recognition.
+ * Two interchangeable backends: the ONNX session (NNAPI attempt + CPU retry
+ * via createSessionWithFallback) and the LiteRT fp32 flatbuffer (GPU
+ * delegate attempt + one-shot XNNPACK demotion) used when the store deployed
+ * `panel_detector_fp32.tflite`. One cheap 640x640 pass per page; runs
+ * alongside the text detector during recognition.
  */
 class OnnxPanelDetector {
 
     private var session: OrtSession? = null
+    private var liteRtRunner: LiteRtVisionRunner? = null
+    private var liteRtEnvironment: Environment? = null
 
-    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"/"litert_*"), for honest perf logging. */
     var executionProviderLabel: String = "uninitialized"
         private set
 
@@ -56,6 +63,10 @@ class OnnxPanelDetector {
         bufferCapacityBytes = INPUT_FLOATS * Float.SIZE_BYTES,
         maxPoolSize = 2,
     )
+
+    // interleaved NHWC scratch for the LiteRT path; allocated only when the
+    // LiteRT backend is initialized.
+    private var liteRtInputFloats: FloatArray? = null
 
     fun initialize(
         modelFile: File,
@@ -85,7 +96,54 @@ class OnnxPanelDetector {
         }
     }
 
-    fun isInitialized(): Boolean = session != null
+    /**
+     * Initializes the LiteRT backend (GPU attempt + CPU demotion). On total
+     * failure, [fallbackToOnnx] runs instead of throwing so the caller keeps
+     * its ONNX session; when null, the failure propagates.
+     */
+    fun initializeLiteRt(
+        modelFile: File,
+        preferGpu: Boolean = true,
+        numThreads: Int = 4,
+        fallbackToOnnx: (() -> Unit)? = null,
+    ) {
+        logcat(LogPriority.INFO) {
+            "PanelDetector LiteRT init: ${modelFile.name} (${modelFile.length()}B) preferGpu=$preferGpu"
+        }
+        val env = try {
+            Environment.create()
+        } catch (failure: Throwable) {
+            runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+            return
+        }
+        try {
+            val runner = LiteRtVisionRunner(
+                modelFile = modelFile,
+                inputCount = 1,
+                outputCount = 1,
+                preferGpu = preferGpu,
+                numThreads = numThreads,
+                onGpuFallback = { executionProviderLabel = "litert_xnnpack" },
+                env = env,
+            )
+            liteRtRunner = runner
+            liteRtEnvironment = env
+            liteRtInputFloats = FloatArray(INPUT_FLOATS)
+            executionProviderLabel = runner.executionProviderLabel
+            logcat(LogPriority.INFO) { "PanelDetector LiteRT ready: provider=$executionProviderLabel" }
+        } catch (failure: Throwable) {
+            runCatching { env.close() }
+            runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx, failure)
+        }
+    }
+
+    private fun runOnnxFallbackAfterLiteRtFailure(fallbackToOnnx: (() -> Unit)?, failure: Throwable) {
+        if (fallbackToOnnx == null) throw failure
+        logcat(LogPriority.WARN, failure) { "PanelDetector LiteRT init failed; using ONNX session" }
+        fallbackToOnnx.invoke()
+    }
+
+    fun isInitialized(): Boolean = session != null || liteRtRunner != null
 
     /**
      * Run panel detection on [bitmap]. Returns panel boxes
@@ -95,49 +153,28 @@ class OnnxPanelDetector {
      * a real signal (orphan page), not a fallback-to-stretch case.
      */
     fun detect(bitmap: Bitmap): List<FloatArray> {
+        val runner = liteRtRunner
+        return if (runner != null) detectLiteRt(runner, bitmap) else detectOnnx(bitmap)
+    }
+
+    private fun detectOnnx(bitmap: Bitmap): List<FloatArray> {
         val localSession = session ?: throw IllegalStateException("PanelDetector not initialized")
 
         val t0 = System.nanoTime()
         val originalWidth = bitmap.width
         val originalHeight = bitmap.height
-
-        // Letterbox: scale + center-pad to 640x640.
-        val ratio = minOf(IMG_SIZE.toFloat() / originalWidth, IMG_SIZE.toFloat() / originalHeight)
-        val newWidth = (originalWidth * ratio).toInt()
-        val newHeight = (originalHeight * ratio).toInt()
-        val padWidth = (IMG_SIZE - newWidth) / 2
-        val padHeight = (IMG_SIZE - newHeight) / 2
-
-        val resized = BitmapPool.getARGB8888(IMG_SIZE, IMG_SIZE)
+        val letterbox = letterbox(bitmap)
         var inputTensor: OnnxTensor? = null
         var results: OrtSession.Result? = null
         var inputBuffer: FloatBuffer? = null
 
         try {
-            // Pre-fill the pooled ARGB_8888 canvas with the YOLO pad colour before
-            // drawing the scaled source into its centre.
-            val canvas = Canvas(resized)
-            canvas.drawColor(PAD_COLOR)
-            val paint = Paint().apply { isFilterBitmap = true }
-            canvas.drawBitmap(
-                bitmap,
-                null,
-                RectF(
-                    padWidth.toFloat(),
-                    padHeight.toFloat(),
-                    (padWidth + newWidth).toFloat(),
-                    (padHeight + newHeight).toFloat(),
-                ),
-                paint,
-            )
-
             inputBuffer = inputBufferPool.acquire()
-            inputTensor = preprocess(resized, inputBuffer)
-            val inputTensorValue = inputTensor
+            inputTensor = preprocess(letterbox.bitmap, inputBuffer)
             val t1 = System.nanoTime()
 
             val inputName = localSession.inputNames.first()
-            results = localSession.run(mapOf(inputName to inputTensorValue))
+            results = localSession.run(mapOf(inputName to inputTensor))
             val t2 = System.nanoTime()
 
             // Output [1, N, 4+nc]; ORT surfaces 3-D float tensors as
@@ -160,16 +197,7 @@ class OnnxPanelDetector {
                 candidates.add(Box(decoded[0], decoded[1], decoded[2], decoded[3], decoded[4]))
             }
 
-            val kept = nms(candidates, IOU_THRESHOLD)
-            val panels = ArrayList<FloatArray>(kept.size)
-            for (b in kept) {
-                val ox1 = ((b.x1 - padWidth) / ratio).coerceIn(0f, originalWidth.toFloat())
-                val oy1 = ((b.y1 - padHeight) / ratio).coerceIn(0f, originalHeight.toFloat())
-                val ox2 = ((b.x2 - padWidth) / ratio).coerceIn(0f, originalWidth.toFloat())
-                val oy2 = ((b.y2 - padHeight) / ratio).coerceIn(0f, originalHeight.toFloat())
-                if (!PanelAssignment.isValidBox(ox1, oy1, ox2, oy2)) continue
-                panels.add(floatArrayOf(ox1, oy1, ox2, oy2))
-            }
+            val panels = rescaleToOriginal(nms(candidates, IOU_THRESHOLD), letterbox, originalWidth, originalHeight)
             val t3 = System.nanoTime()
             logcat(LogPriority.INFO) {
                 "[panel_perf] model=panel_detector provider=$executionProviderLabel total=${(t3 - t0) / 1_000_000.0}ms " +
@@ -177,18 +205,76 @@ class OnnxPanelDetector {
                     "inference=${(t2 - t1) / 1_000_000.0}ms " +
                     "postprocess=${(t3 - t2) / 1_000_000.0}ms " +
                     "raw=${candidates.size} kept=${panels.size} " +
-                    "img=${originalWidth}x$originalHeight ratio=$ratio"
+                    "img=${originalWidth}x$originalHeight ratio=${letterbox.ratio}"
             }
             return panels
         } finally {
             results?.close()
             inputTensor?.close()
             inputBuffer?.let { inputBufferPool.release(it) }
-            BitmapPool.putARGB8888(resized)
+            BitmapPool.putARGB8888(letterbox.bitmap)
+        }
+    }
+
+    private fun detectLiteRt(runner: LiteRtVisionRunner, bitmap: Bitmap): List<FloatArray> {
+        val t0 = System.nanoTime()
+        val originalWidth = bitmap.width
+        val originalHeight = bitmap.height
+        val letterbox = letterbox(bitmap)
+        try {
+            val pixels = IntArray(IMG_SIZE * IMG_SIZE)
+            letterbox.bitmap.getPixels(pixels, 0, IMG_SIZE, 0, 0, IMG_SIZE, IMG_SIZE)
+            val inputFloats = requireNotNull(liteRtInputFloats) { "LiteRT panel input scratch is not allocated" }
+            val t1 = System.nanoTime()
+
+            // Reads stay inside the retry closure: a GPU demotion swaps every
+            // buffer, so the output must come from the backend that ran.
+            var raw: FloatArray? = null
+            runner.runWithCpuRetry {
+                for (i in pixels.indices) {
+                    LiteRtVisionLayouts.writeNhwcPixel(pixels[i], inputFloats, i)
+                }
+                runner.writeInputFloats(0, inputFloats)
+                runner.runInference()
+                raw = runner.readOutputFloats(0)
+            }
+            val output = requireNotNull(raw)
+            if (output.size < PANEL_ANCHORS * 5) {
+                logcat(LogPriority.WARN) {
+                    "PanelDetector LiteRT: unexpected output size=${output.size}; returning no panels"
+                }
+                return emptyList()
+            }
+            val t2 = System.nanoTime()
+
+            val candidates = ArrayList<Box>(64)
+            for (a in 0 until PANEL_ANCHORS) {
+                val decoded = decodePanelYoloRow(panelChannelFirstRow(output, a, PANEL_ANCHORS), CONF_THRESHOLD) ?: continue
+                candidates.add(Box(decoded[0], decoded[1], decoded[2], decoded[3], decoded[4]))
+            }
+
+            val panels = rescaleToOriginal(nms(candidates, IOU_THRESHOLD), letterbox, originalWidth, originalHeight)
+            val t3 = System.nanoTime()
+            logcat(LogPriority.INFO) {
+                "[panel_perf] model=panel_detector provider=${runner.executionProviderLabel} total=${(t3 - t0) / 1_000_000.0}ms " +
+                    "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
+                    "inference=${(t2 - t1) / 1_000_000.0}ms " +
+                    "postprocess=${(t3 - t2) / 1_000_000.0}ms " +
+                    "raw=${candidates.size} kept=${panels.size} " +
+                    "img=${originalWidth}x$originalHeight ratio=${letterbox.ratio}"
+            }
+            return panels
+        } finally {
+            BitmapPool.putARGB8888(letterbox.bitmap)
         }
     }
 
     fun close() {
+        liteRtRunner?.close()
+        liteRtRunner = null
+        liteRtEnvironment?.close()
+        liteRtEnvironment = null
+        liteRtInputFloats = null
         session?.close()
         session = null
         inputBufferPool.clear()
@@ -200,6 +286,54 @@ class OnnxPanelDetector {
 
     fun forceReleaseNativeBuffers() {
         inputBufferPool.clear()
+    }
+
+    /** Pooled 640x640 letterboxed canvas plus its inverse-transform parameters. */
+    private class Letterbox(
+        val bitmap: Bitmap,
+        val ratio: Float,
+        val padWidth: Int,
+        val padHeight: Int,
+    )
+
+    // Letterbox: scale + center-pad to 640x640 onto a pooled bitmap prefilled
+    // with the YOLO pad colour (grey 114).
+    private fun letterbox(bitmap: Bitmap): Letterbox {
+        val ratio = minOf(IMG_SIZE.toFloat() / bitmap.width, IMG_SIZE.toFloat() / bitmap.height)
+        val newWidth = (bitmap.width * ratio).toInt()
+        val newHeight = (bitmap.height * ratio).toInt()
+        val padWidth = (IMG_SIZE - newWidth) / 2
+        val padHeight = (IMG_SIZE - newHeight) / 2
+        val resized = BitmapPool.getARGB8888(IMG_SIZE, IMG_SIZE)
+        Canvas(resized).apply {
+            drawColor(PAD_COLOR)
+            drawBitmap(
+                bitmap,
+                null,
+                RectF(
+                    padWidth.toFloat(),
+                    padHeight.toFloat(),
+                    (padWidth + newWidth).toFloat(),
+                    (padHeight + newHeight).toFloat(),
+                ),
+                Paint().apply { isFilterBitmap = true },
+            )
+        }
+        return Letterbox(resized, ratio, padWidth, padHeight)
+    }
+
+    // Inverse letterbox into original-image coordinates, clamped and validated.
+    private fun rescaleToOriginal(kept: List<Box>, letterbox: Letterbox, originalWidth: Int, originalHeight: Int): List<FloatArray> {
+        val panels = ArrayList<FloatArray>(kept.size)
+        for (b in kept) {
+            val ox1 = ((b.x1 - letterbox.padWidth) / letterbox.ratio).coerceIn(0f, originalWidth.toFloat())
+            val oy1 = ((b.y1 - letterbox.padHeight) / letterbox.ratio).coerceIn(0f, originalHeight.toFloat())
+            val ox2 = ((b.x2 - letterbox.padWidth) / letterbox.ratio).coerceIn(0f, originalWidth.toFloat())
+            val oy2 = ((b.y2 - letterbox.padHeight) / letterbox.ratio).coerceIn(0f, originalHeight.toFloat())
+            if (!PanelAssignment.isValidBox(ox1, oy1, ox2, oy2)) continue
+            panels.add(floatArrayOf(ox1, oy1, ox2, oy2))
+        }
+        return panels
     }
 
     // Letterboxed NCHW [1,3,640,640], channel-first (R/G/B into three regions),
@@ -274,6 +408,9 @@ class OnnxPanelDetector {
         const val IMG_SIZE = 640
         const val INPUT_FLOATS = 3 * IMG_SIZE * IMG_SIZE
 
+        // YOLO26 anchor grid: [1, 6, 8400] in the LiteRT fp32 export.
+        const val PANEL_ANCHORS = 8400
+
         // Confidence threshold for class-0 (panel), set to 0.5 after validation
         // across the Okiraku chapter.
         const val CONF_THRESHOLD = 0.5f
@@ -303,3 +440,15 @@ internal fun decodePanelYoloRow(row: FloatArray, confThreshold: Float): FloatArr
     if (!PanelAssignment.isValidBox(x1, y1, x2, y2)) return null
     return floatArrayOf(x1, y1, x2, y2, conf)
 }
+
+/**
+ * Gathers one anchor's `(cx, cy, w, h, conf0)` from the channels-first
+ * `[1, 6, anchors]` LiteRT output (class-1 channel dropped). Pure; unit-tested.
+ */
+internal fun panelChannelFirstRow(output: FloatArray, anchor: Int, anchors: Int): FloatArray = floatArrayOf(
+    output[anchor],
+    output[anchors + anchor],
+    output[2 * anchors + anchor],
+    output[3 * anchors + anchor],
+    output[4 * anchors + anchor],
+)

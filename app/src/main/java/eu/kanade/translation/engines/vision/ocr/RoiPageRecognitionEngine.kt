@@ -243,6 +243,20 @@ class RoiPageRecognitionEngine(
                     null
                 }
                 val visionRoute = HardwareDiscoveryEngine.resolveVisionGpuRoute()
+                // LiteRT fp32 vision flatbuffers are strictly optional: when
+                // none are deployed, every vision engine stays on its ONNX path.
+                val liteRtVision = if (modelStore.liteRtVisionAssetsAvailable()) {
+                    try {
+                        modelStore.ensureLiteRtVision()
+                    } catch (e: Exception) {
+                        logcat(LogPriority.WARN, e) {
+                            "ONNX init: LiteRT vision deployment failed; ONNX remains authoritative"
+                        }
+                        null
+                    }
+                } else {
+                    null
+                }
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization (visionRoute=$visionRoute)" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel, requestedHardwareRoute = visionRoute) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
@@ -250,8 +264,17 @@ class RoiPageRecognitionEngine(
                 // init mirrors paddleDet (missing asset -> null, never blocks OCR).
                 paths.panelDetectorModel?.let { panelModelFile ->
                     try {
-                        panelDetector = OnnxPanelDetector().also { it.initialize(panelModelFile, requestedHardwareRoute = visionRoute) }
-                        logcat(LogPriority.INFO) { "ONNX init: panel detector OK" }
+                        val panel = OnnxPanelDetector()
+                        val liteRtPanel = liteRtVision?.panelDetector
+                        if (liteRtPanel != null) {
+                            panel.initializeLiteRt(liteRtPanel, preferGpu = true) {
+                                panel.initialize(panelModelFile, requestedHardwareRoute = visionRoute)
+                            }
+                        } else {
+                            panel.initialize(panelModelFile, requestedHardwareRoute = visionRoute)
+                        }
+                        panelDetector = panel
+                        logcat(LogPriority.INFO) { "ONNX init: panel detector OK (provider=${panel.executionProviderLabel})" }
                     } catch (e: Exception) {
                         logcat(LogPriority.WARN, e) {
                             "ONNX init: panel detector failed; panel-aware translation context disabled"

@@ -54,6 +54,16 @@ data class PaddleOcrV6DetPaths(
     val detectionModel: File,
 )
 
+/**
+ * Deployed LiteRT fp32 vision models; each field is null when that asset is
+ * not bundled, so every engine keeps its ONNX session as the fallback.
+ */
+data class LiteRtVisionPaths(
+    val pageTextDetector: File?,
+    val panelDetector: File?,
+    val bubbleSegmenter: File?,
+)
+
 class OnnxModelStore(private val context: Context) {
 
     /**
@@ -237,6 +247,31 @@ class OnnxModelStore(private val context: Context) {
                 "inference.onnx",
                 "models/ocr/paddle-v6-small/det/inference.onnx",
             ),
+        )
+    }
+
+    fun liteRtVisionAssetsAvailable(): Boolean {
+        return try {
+            context.assets.list("models/detection/litert")?.isNotEmpty() == true ||
+                context.assets.list("models/segmentation/litert")?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Per-file optional: a missing asset leaves that engine on its ONNX path. */
+    fun ensureLiteRtVision(): LiteRtVisionPaths {
+        val dir = File(modelsDir, "litert-vision").also { if (!it.exists()) it.mkdirs() }
+        fun copy(assetPath: String): File? = try {
+            copyIfNeeded(dir, assetPath.substringAfterLast('/'), assetPath)
+        } catch (_: Exception) {
+            logcat(LogPriority.INFO) { "LiteRT vision asset $assetPath not bundled; ONNX stays authoritative" }
+            null
+        }
+        return LiteRtVisionPaths(
+            pageTextDetector = copy("models/detection/litert/detector_v4_s_fp32.tflite"),
+            panelDetector = copy("models/detection/litert/panel_detector_fp32.tflite"),
+            bubbleSegmenter = copy("models/segmentation/litert/bubble_segmenter_fp32.tflite"),
         )
     }
 
