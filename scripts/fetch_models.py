@@ -27,6 +27,7 @@ MODEL_GROUPS = {
     "paddle": "ocr/paddle-v6-small/",
     "aot": "inpainting/aot_512_regen_gap_fp16.tflite",
     "lama": "inpainting/manga_lama_fused_fp16.tflite",
+    "fumeto": "fumeto/",
 }
 
 
@@ -315,7 +316,7 @@ def parse_arguments() -> argparse.Namespace:
         "--group",
         nargs="+",
         choices=sorted(MODEL_GROUPS),
-        help="provision only selected families: paddle (ONNX + optimized LiteRT), aot, lama",
+        help="provision only selected families: paddle (ONNX + optimized LiteRT), aot, lama, fumeto",
     )
     parser.add_argument(
         "--clean",

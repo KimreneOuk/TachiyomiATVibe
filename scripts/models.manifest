@@ -126,6 +126,42 @@
       "size_bytes": 74947,
       "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
       "source_url": "https://github.com/KimreneOuk/TachiyomiATVibe/releases/download/paddle-ocr-litert-v1/PP-OCRv6_small_rec.txt"
+    },
+    {
+      "path": "fumeto/encoder.int8.onnx",
+      "size_bytes": 358353978,
+      "sha256": "55f914d801a3b5259b5ce556017dc2ba8a8d692fb8d6d6005d7dbed6c1387c0e",
+      "source_url": "https://huggingface.co/fumetodev/fumetotranslate-manga-ja-translator/resolve/d30bf6fc9a8656e80800d5362e7bcb2b9199f6b2/int8/encoder.int8.onnx"
+    },
+    {
+      "path": "fumeto/decoder.int8.onnx",
+      "size_bytes": 90095234,
+      "sha256": "f49ca242e7bf58d32a8603c834c7763653df74b9c2babc51f30112ea23034bbf",
+      "source_url": "https://huggingface.co/fumetodev/fumetotranslate-manga-ja-translator/resolve/d30bf6fc9a8656e80800d5362e7bcb2b9199f6b2/int8/decoder.int8.onnx"
+    },
+    {
+      "path": "fumeto/enc-vocab.tsv",
+      "size_bytes": 3026545,
+      "sha256": "5f4df73aae37f9e330d028fc48f3a3574189d9699b043fca8859c610b3e107ed",
+      "source_url": "https://huggingface.co/fumetodev/fumetotranslate-manga-ja-translator/resolve/d30bf6fc9a8656e80800d5362e7bcb2b9199f6b2/int8/tokenizer/tokenizer.json",
+      "convert": {
+        "script": "scripts/converters/extract_unigram_vocab.py",
+        "source_filename": "tokenizer.json",
+        "source_size_bytes": 7137261,
+        "source_sha256": "0c4ee1d8c68b53c06965a7a93fda4d3976c2cce593bcc6174d48a87a8388e0d5"
+      }
+    },
+    {
+      "path": "fumeto/spm-pieces.txt",
+      "size_bytes": 167232,
+      "sha256": "88c9bdf70758536dea94450ae14aaa2ab79197b0813095c02d9179c02bc67c5a",
+      "source_url": "https://huggingface.co/fumetodev/fumetotranslate-manga-ja-translator/resolve/d30bf6fc9a8656e80800d5362e7bcb2b9199f6b2/int8/tokenizer/decoder-spm.model",
+      "convert": {
+        "script": "scripts/converters/extract_spm_pieces.py",
+        "source_filename": "decoder-spm.model",
+        "source_size_bytes": 263858,
+        "source_sha256": "727ebc8b3f8c5acba88c9d49300a77e9792f6bf1526288121c67b104b7384eb0"
+      }
     }
   ]
 }
