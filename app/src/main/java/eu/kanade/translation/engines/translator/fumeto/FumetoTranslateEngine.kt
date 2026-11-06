@@ -68,43 +68,52 @@ class FumetoTranslateEngine : TextTranslator {
         if (encoderSession != null) return
         initMutex.withLock {
             if (encoderSession != null) return
-            val startedAt = System.nanoTime()
-            val paths = modelStore.ensureFumetoTranslate()
-            val loadedTokenizer = UnigramTokenizer.fromTsv(paths.encoderVocab.readText())
-            val loadedSpm = SentencePieceDecoder.fromTsv(paths.spmPieces.readText())
-            val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false) {
-                it.setIntraOpNumThreads(THREAD_COUNT)
-            }
-            val decoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false) {
-                it.setIntraOpNumThreads(THREAD_COUNT)
-            }
             try {
-                encoderSession = OnnxRuntimeProvider.environment.createSession(
-                    paths.encoderModel.absolutePath,
-                    encoderOpts,
-                )
-                decoderSession = OnnxRuntimeProvider.environment.createSession(
-                    paths.decoderModel.absolutePath,
-                    decoderOpts,
-                )
-            } catch (failure: Exception) {
-                encoderSession?.close()
-                decoderSession?.close()
-                encoderSession = null
-                decoderSession = null
+                initializeLocked()
+            } catch (failure: Throwable) {
+                logcat(LogPriority.ERROR, failure) { "FumetoTranslate initialization failed" }
                 throw failure
-            } finally {
-                encoderOpts.close()
-                decoderOpts.close()
             }
-            tokenizer = loadedTokenizer
-            spmDecoder = loadedSpm
-            logcat(LogPriority.INFO) {
-                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000.0
-                "FumetoTranslate ready in ${elapsedMs}ms (cpu, int8, threads=$THREAD_COUNT); " +
-                    "encoder inputs=${encoderSession?.inputNames} outputs=${encoderSession?.outputNames}; " +
-                    "decoder inputs=${decoderSession?.inputNames} outputs=${decoderSession?.outputNames}"
-            }
+        }
+    }
+
+    private suspend fun initializeLocked() {
+        val startedAt = System.nanoTime()
+        val paths = modelStore.ensureFumetoTranslate()
+        val loadedTokenizer = UnigramTokenizer.fromTsv(paths.encoderVocab.readText())
+        val loadedSpm = SentencePieceDecoder.fromTsv(paths.spmPieces.readText())
+        val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false) {
+            it.setIntraOpNumThreads(THREAD_COUNT)
+        }
+        val decoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false) {
+            it.setIntraOpNumThreads(THREAD_COUNT)
+        }
+        try {
+            encoderSession = OnnxRuntimeProvider.environment.createSession(
+                paths.encoderModel.absolutePath,
+                encoderOpts,
+            )
+            decoderSession = OnnxRuntimeProvider.environment.createSession(
+                paths.decoderModel.absolutePath,
+                decoderOpts,
+            )
+        } catch (failure: Exception) {
+            encoderSession?.close()
+            decoderSession?.close()
+            encoderSession = null
+            decoderSession = null
+            throw failure
+        } finally {
+            encoderOpts.close()
+            decoderOpts.close()
+        }
+        tokenizer = loadedTokenizer
+        spmDecoder = loadedSpm
+        logcat(LogPriority.INFO) {
+            val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000.0
+            "FumetoTranslate ready in ${elapsedMs}ms (cpu, int8, threads=$THREAD_COUNT); " +
+                "encoder inputs=${encoderSession?.inputNames} outputs=${encoderSession?.outputNames}; " +
+                "decoder inputs=${decoderSession?.inputNames} outputs=${decoderSession?.outputNames}"
         }
     }
 
@@ -339,7 +348,9 @@ class FumetoTranslateEngine : TextTranslator {
                         // Degenerate all-EOS frontier: finished holds the line's output.
                         finished[lineIndex].isNotEmpty()
                     } else {
-                        val bestFinished = finished[lineIndex].maxOf { it.first }
+                        // No beam has emitted EOS in early steps; the rule is
+                        // false for finishedCount < width regardless of sentinel.
+                        val bestFinished = finished[lineIndex].maxOfOrNull { it.first } ?: Double.NEGATIVE_INFINITY
                         val bestAlive = selection.alive.maxOf { it.score }
                         FumetoBeamSearch.isLineDone(
                             width = BEAM_WIDTH,

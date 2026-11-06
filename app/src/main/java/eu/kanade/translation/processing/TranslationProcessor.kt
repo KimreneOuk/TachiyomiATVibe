@@ -227,6 +227,7 @@ internal class TranslationProcessor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
+                logcat(LogPriority.ERROR, t) { "TranslationProcessor: translate failed for page $pageKey" }
                 page.translationStatus = StageStatus.FAILED
                 page.translationError = t.message ?: "Translation failed"
                 throw t
@@ -251,6 +252,7 @@ internal class TranslationProcessor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
+                logcat(LogPriority.ERROR, t) { "TranslationProcessor: batch translate failed for ${targets.size} pages" }
                 targets.values.forEach {
                     it.translationStatus = StageStatus.FAILED
                     it.translationError = t.message ?: "Batch translation failed"
