@@ -130,6 +130,14 @@ private fun StandardEngineCard(
                 onValueChange = onDeeplApiKeyChange,
             )
         }
+
+        if (state.standardEngine == StandardEngine.FUMETO) {
+            Text(
+                text = stringResource(ATMR.strings.reader_translation_engine_fumeto_summary),
+                fontSize = 10.sp,
+                color = DesignTokens.TextMuted,
+            )
+        }
     }
 }
 

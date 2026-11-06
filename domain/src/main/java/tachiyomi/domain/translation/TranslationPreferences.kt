@@ -14,10 +14,11 @@ enum class TranslationEngineCategory { STANDARD, AI_MODEL }
 /**
  * Standard translators. These do not use dynamic LLM model selection. Most
  * require no credentials; DeepL is the exception (it needs an API key, stored
- * via [translationDeeplApiKey]). Keeps the list scalable for future providers
+ * via [translationDeeplApiKey]), and FUMETO runs an on-device ONNX model
+ * (Japanese→English only). Keeps the list scalable for future providers
  * such as Microsoft or Yandex.
  */
-enum class StandardEngine { MLKIT, GOOGLE, DEEPL }
+enum class StandardEngine { MLKIT, GOOGLE, DEEPL, FUMETO }
 
 /**
  * AI model translators. Each provider has its own API key and model

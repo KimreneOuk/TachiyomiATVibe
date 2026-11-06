@@ -296,6 +296,13 @@ object SettingsTranslationScreen : SearchableSettings {
                     },
                 )
             }
+            if (selectedEngine == StandardEngine.FUMETO) {
+                add(
+                    Preference.PreferenceItem.InfoPreference(
+                        title = stringResource(ATMR.strings.reader_translation_engine_fumeto_summary),
+                    ),
+                )
+            }
         }
     }
 

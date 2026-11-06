@@ -67,6 +67,17 @@ data class LiteRtVisionPaths(
     val ocrDecoderStep: File?,
 )
 
+/**
+ * fumetotranslate (Japanese→English on-device translator): int8 encoder +
+ * autoregressive decoder ONNX graphs and the two converted tokenizer tables.
+ */
+data class FumetoTranslatePaths(
+    val encoderModel: File,
+    val decoderModel: File,
+    val encoderVocab: File,
+    val spmPieces: File,
+)
+
 class OnnxModelStore(private val context: Context) {
 
     /**
@@ -279,6 +290,24 @@ class OnnxModelStore(private val context: Context) {
             ocrEncoder = copy("models/ocr/litert/ocr_encoder_fp32.tflite"),
             ocrDecoderInit = copy("models/ocr/litert/ocr_decoder_init_fp32.tflite"),
             ocrDecoderStep = copy("models/ocr/litert/ocr_decoder_step_fp32.tflite"),
+        )
+    }
+
+    fun fumetoAssetsAvailable(): Boolean {
+        return try {
+            context.assets.list("models/fumeto")?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun ensureFumetoTranslate(): FumetoTranslatePaths {
+        val dir = File(modelsDir, "fumeto").also { if (!it.exists()) it.mkdirs() }
+        return FumetoTranslatePaths(
+            encoderModel = copyIfNeeded(dir, "encoder.int8.onnx", "models/fumeto/encoder.int8.onnx"),
+            decoderModel = copyIfNeeded(dir, "decoder.int8.onnx", "models/fumeto/decoder.int8.onnx"),
+            encoderVocab = copyIfNeeded(dir, "enc-vocab.tsv", "models/fumeto/enc-vocab.tsv"),
+            spmPieces = copyIfNeeded(dir, "spm-pieces.txt", "models/fumeto/spm-pieces.txt"),
         )
     }
 

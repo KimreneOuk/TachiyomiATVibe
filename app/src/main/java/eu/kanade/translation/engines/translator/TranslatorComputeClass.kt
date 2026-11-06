@@ -1,4 +1,5 @@
 package eu.kanade.translation.engines.translator
+import eu.kanade.translation.engines.translator.fumeto.FumetoTranslateEngine
 import eu.kanade.translation.engines.translator.providers.DeepLTranslator
 import eu.kanade.translation.engines.translator.providers.DeepSeekTranslator
 import eu.kanade.translation.engines.translator.providers.GeminiTranslator
@@ -37,12 +38,14 @@ enum class TranslatorComputeClass {
          * Classify a built [TextTranslator] instance. Falls back to REMOTE_IO for
          * unknown/future translators: an unknown remote translator overlapping is
          * safe (the CPU is still free), whereas misclassifying a heavy local
-         * engine as LOCAL_COMPUTE would block legitimate overlap. ML Kit is the
-         * only known LOCAL_COMPUTE engine.
+         * engine as LOCAL_COMPUTE would block legitimate overlap. ML Kit and
+         * FumetoTranslate are the known LOCAL_COMPUTE engines.
          */
         fun forTranslator(translator: TextTranslator): TranslatorComputeClass =
             when (translator) {
-                is MLKitTranslator -> LOCAL_COMPUTE
+                is MLKitTranslator,
+                is FumetoTranslateEngine,
+                -> LOCAL_COMPUTE
                 is GeminiTranslator,
                 is OpenRouterTranslator,
                 is DeepSeekTranslator,
@@ -64,7 +67,13 @@ enum class TranslatorComputeClass {
             aiEngineName: String?,
         ): TranslatorComputeClass = when (category) {
             TranslationEngineCategory.STANDARD ->
-                if (standardEngineName == StandardTranslatorKind.MLKIT.name) LOCAL_COMPUTE else REMOTE_IO
+                if (standardEngineName == StandardTranslatorKind.MLKIT.name ||
+                    standardEngineName == StandardTranslatorKind.FUMETO.name
+                ) {
+                    LOCAL_COMPUTE
+                } else {
+                    REMOTE_IO
+                }
             TranslationEngineCategory.AI_MODEL -> REMOTE_IO
         }
     }

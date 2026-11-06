@@ -216,6 +216,7 @@
     <string name="reader_translation_ocr_mangaocr_summary">High-accuracy Japanese</string>
     <string name="reader_translation_ocr_mlkit_summary">Universal Latin/CJK</string>
     <string name="reader_translation_deepl_api_key">DeepL API key</string>
+    <string name="reader_translation_engine_fumeto_summary">On-device Japanese→English model (CPU, page context)</string>
     <string name="reader_translation_reset_summary">Purges cached artifacts for this page</string>
 
     <!-- Translation settings shared section headings -->

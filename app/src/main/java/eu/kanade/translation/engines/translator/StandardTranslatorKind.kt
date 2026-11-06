@@ -1,4 +1,5 @@
 package eu.kanade.translation.engines.translator
+import eu.kanade.translation.engines.translator.fumeto.FumetoTranslateEngine
 import eu.kanade.translation.engines.translator.providers.DeepLTranslator
 import eu.kanade.translation.engines.translator.providers.GoogleTranslator
 import eu.kanade.translation.engines.translator.providers.MLKitTranslator
@@ -10,13 +11,14 @@ import tachiyomi.domain.translation.TranslationPreferences
 
 /**
  * Built-in translators that do not use dynamic LLM model selection. Most require
- * neither API keys nor model ids (Google Translate, on-device ML Kit); DeepL is
- * the exception and needs an API key (read from [TranslationPreferences]).
+ * neither API keys nor model ids (Google Translate, on-device ML Kit); DeepL needs
+ * an API key and FumetoTranslate runs a bundled on-device model (ja→en only).
  */
 enum class StandardTranslatorKind(val label: String) {
     MLKIT("MlKit (On Device)"),
     GOOGLE("Google Translate"),
     DEEPL("DeepL"),
+    FUMETO("FumetoTranslate (On Device)"),
     ;
 
     fun build(
@@ -32,6 +34,17 @@ enum class StandardTranslatorKind(val label: String) {
             val apiKey = pref.translationDeeplApiKey().get()
             require(apiKey.isNotBlank()) { "DeepL API key is required" }
             DeepLTranslator(fromLang, toLang, apiKey)
+        }
+        FUMETO -> {
+            // The bundled model is Japanese→English only; fail fast so a mismatched
+            // selection surfaces as a FAILED page instead of garbage output.
+            require(fromLang == TextRecognizerLanguage.JAPANESE) {
+                "FumetoTranslate requires Japanese as the source language"
+            }
+            require(toLang == TextTranslatorLanguage.ENGLISH) {
+                "FumetoTranslate requires English as the target language"
+            }
+            FumetoTranslateEngine()
         }
     }
 
