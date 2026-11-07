@@ -1,0 +1,70 @@
+{
+  "sana_color_v2": {
+    "repo_id": "masterofaudio2077/sana-manga-coloring-v2",
+    "revision": "4d69287bf27cea4f8f20262a0830bfe55183e32e",
+    "target": "download/coloring_repo_v2",
+    "allow_patterns": [
+      "README.md",
+      "model.py",
+      "ema_bf16.pt",
+      "meta.json",
+      "params.json",
+      "results/*.jpg",
+      "results/*.png"
+    ],
+    "required_files": [
+      "model.py",
+      "ema_bf16.pt",
+      "meta.json",
+      "params.json"
+    ],
+    "checks": {
+      "ema_bf16.pt": {
+        "size_bytes": 1187236240,
+        "sha256": "c0bcaa88379ea6f3ef4da48657173783168da345db74082f6816a85e3e872d68"
+      }
+    }
+  },
+  "sana_base": {
+    "repo_id": "Efficient-Large-Model/Sana_600M_1024px_diffusers",
+    "revision": "28f3af7689de15f3883d5863059a2fca0aa9b829",
+    "target": "download/sana_base",
+    "allow_patterns": [
+      "model_index.json",
+      "scheduler/scheduler_config.json",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.fp16.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.fp16.safetensors"
+    ],
+    "required_files": [
+      "model_index.json",
+      "scheduler/scheduler_config.json",
+      "transformer/config.json",
+      "transformer/diffusion_pytorch_model.fp16.safetensors",
+      "vae/config.json",
+      "vae/diffusion_pytorch_model.fp16.safetensors"
+    ],
+    "checks": {
+      "transformer/diffusion_pytorch_model.fp16.safetensors": {
+        "size_bytes": 1183558264
+      },
+      "vae/diffusion_pytorch_model.fp16.safetensors": {
+        "size_bytes": 1249044836
+      }
+    }
+  },
+  "mcv2_onnx": {
+    "repo_id": "Faridzar/manga-colorization-v2-onnx",
+    "revision": "5515e06d31b08ffd107af686cba5e98e95e8d4cf",
+    "target": "download/onnx_color",
+    "allow_patterns": ["manga-colorize-fp16.onnx"],
+    "required_files": ["manga-colorize-fp16.onnx"],
+    "checks": {
+      "manga-colorize-fp16.onnx": {
+        "size_bytes": 61650260,
+        "sha256": "39660d0047ea6f1a0ddee6aa89054997f95ea566f4d56ff762f66dbcf1a1a7ef"
+      }
+    }
+  }
+}

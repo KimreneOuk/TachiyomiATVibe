@@ -1,0 +1,14 @@
+download/
+exported/
+.cache/
+**/__pycache__/
+*.py[cod]
+*.log
+*.tflite
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.npz
+*.f32.bin
+validation/
