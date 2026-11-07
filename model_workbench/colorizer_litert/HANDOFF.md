@@ -17,7 +17,8 @@ The fetcher uses pinned public Hub repositories in `sources.json`, downloads eac
 
 ## Current environment and progress
 
-- Workbench scripts and this context are being packaged under `model_workbench/colorizer_litert/`; only this directory is intended for the task branch. Uncommitted app changes on `ui-experimentation` are not included.
+- Workbench scripts and this context are committed and pushed under `model_workbench/colorizer_litert/` on `workbench/colorizer-litert-int8`. The uncommitted app changes on `ui-experimentation` are not included; the branch is based on local HEAD `7c145814` plus the handoff commit(s).
+- Fetcher verification succeeded for Sana Coloring v2 and MCV2 ONNX. Fetching the Sana base weights was attempted but stopped because the local workbench volume reported only 492 MB free while the two weight files require about 2.43 GB total. The receiving machine must have enough disk for all model inputs and generated exports.
 - The prior machine had 15.6 GB physical RAM and Docker limited to about 7.58 GiB. Large Sana direct quantization and MCV2 static ONNX calibration were killed with exit 137. Use the stronger desktop for model conversion and validation.
 - Observed working environment: Linux container, Python 3.11, Torch 2.14.1, LiteRT Torch 0.10.0, LiteRT runtime 2.3.0, TorchAO 0.18.0, Diffusers 0.42.1, Transformers 5.22.1. `requirements-sana.lock.txt` and pinned base image digest capture the observed Sana environment.
 - Sana v2 wrapper parity passed exactly (`max_abs_diff=0`). A 2.375 GB DiT FP32 TFLite and a 605 MB weight-only INT8 graph were produced, but both are from the old positional path; the INT8 graph has generic input names and is **not app-contract-ready**. No VAE graphs or device GPU test have been completed.
