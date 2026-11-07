@@ -79,6 +79,12 @@ class PagerPageHolder(
     private var translateButtonWithControls =
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translateButtonWithControls().get()
 
+    // TachiyomiAT: colorization display gate. Seeded from the pref and kept
+    // current by the collector in [onAttachedToWindow]; passed to
+    // displayImageName(colorizationEnabled) when choosing which image to decode.
+    private var colorizationEnabled =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationColorizationEnabled().get()
+
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.
      */
@@ -208,6 +214,15 @@ class PagerPageHolder(
                     if (!isPageBeingTranslated()) syncTranslateButtonState()
                 }
         }
+        // Reactively re-pick the displayed image (cleaned vs colored) when the
+        // colorization gate flips: rebind the stream bytes first (the projected
+        // file changes), then refresh so the holder decodes the new image.
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+            .translationColorizationEnabled().changes().onEach { enabled ->
+                colorizationEnabled = enabled
+                viewer.activity.viewModel.rebindTranslatedStreamForPref(page)
+                refreshTranslation()
+            }.launchIn(holderScope)
     }
 
     /**
@@ -355,7 +370,7 @@ class PagerPageHolder(
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (page.showTranslatedImage) {
-            page.translation?.displayImageName
+            page.translation?.displayImageName(colorizationEnabled)
         } else {
             null
         }
@@ -424,7 +439,7 @@ class PagerPageHolder(
 
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
-        val newName = page.translation?.displayImageName
+        val newName = page.translation?.displayImageName(colorizationEnabled)
 
         val wantTranslated = if (page.translationToggled) {
             page.showTranslatedImage && streamAvailable

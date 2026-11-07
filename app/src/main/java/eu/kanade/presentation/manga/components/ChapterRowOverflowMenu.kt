@@ -55,7 +55,7 @@ internal fun chapterOverflowTranslationActions(
         if (hasPendingRequest) {
             listOf(ChapterTranslationAction.DETAILS, ChapterTranslationAction.CANCEL)
         } else {
-            listOf(ChapterTranslationAction.START)
+            listOf(ChapterTranslationAction.START, ChapterTranslationAction.COLORIZE)
         }
     Translation.State.QUEUE, Translation.State.TRANSLATING ->
         listOf(ChapterTranslationAction.DETAILS, ChapterTranslationAction.CANCEL)
@@ -189,6 +189,7 @@ private fun translationActionLabel(
     ChapterTranslationAction.DETAILS -> stringResource(ATMR.strings.manga_translation_details)
     ChapterTranslationAction.CANCEL -> stringResource(ATMR.strings.manga_translation_cancel)
     ChapterTranslationAction.DELETE -> stringResource(ATMR.strings.manga_chapter_reset_data)
+    ChapterTranslationAction.COLORIZE -> stringResource(ATMR.strings.manga_colorize)
 }
 
 @Composable

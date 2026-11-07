@@ -57,7 +57,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
@@ -80,6 +79,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
@@ -156,7 +156,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 combine(
                     translationPreferences.translationInpaintingMode().changes(),
                     translationPreferences.translationInpaintingNeuralModel().changes(),
-                ) { inpaintingMode, neuralModel -> inpaintingMode to neuralModel },
+                    translationPreferences.translationColorizationEnabled().changes(),
+                    translationPreferences.translationColorizationModel().changes(),
+                ) { inpaintingMode, neuralModel, colorization, colorModel ->
+                    Quad(inpaintingMode, neuralModel, colorization, colorModel)
+                },
             ) { a, b, c, d -> Quad(a, b, c, d) },
         ) { q1, q2 -> Pair(q1, q2) },
         combine(
@@ -214,8 +218,10 @@ class ReaderViewModel @JvmOverloads constructor(
             translationRecentLanguagesTo = recentLangsTo,
             ocrModel = ocrModel,
             ocrModelEntries = ocrModelEntries,
-            inpaintingMode = q2.d.first,
-            inpaintingNeuralModel = q2.d.second,
+            inpaintingMode = q2.d.a,
+            inpaintingNeuralModel = q2.d.b,
+            colorizationEnabled = q2.d.c,
+            colorizationModel = q2.d.d,
             engineCategory = q3.a,
             standardEngine = q3.b,
             deeplApiKey = q3.c,
@@ -739,6 +745,10 @@ class ReaderViewModel @JvmOverloads constructor(
     suspend fun attachTranslatedStreamForPage(page: ReaderPage) =
         translationController.attachTranslatedStreamForPage(page)
 
+    /** Holder-facing colorization-gate rebind (never nulls; see controller). */
+    suspend fun rebindTranslatedStreamForPref(page: ReaderPage) =
+        translationController.rebindTranslatedStreamForPref(page)
+
     private fun isInTranslationWarmWindow(page: ReaderPage): Boolean =
         translationController.isInTranslationWarmWindow(page)
 
@@ -932,6 +942,12 @@ class ReaderViewModel @JvmOverloads constructor(
 
     fun setOcrModel(model: OcrModel) =
         translationController.setOcrModel(model)
+
+    fun setTranslationColorizationEnabled(enabled: Boolean) =
+        translationController.setTranslationColorizationEnabled(enabled)
+
+    fun setTranslationColorizationModel(model: ColorizationModel) =
+        translationController.setTranslationColorizationModel(model)
 
     fun setTranslationInpaintingMode(mode: String) =
         translationController.setTranslationInpaintingMode(mode)

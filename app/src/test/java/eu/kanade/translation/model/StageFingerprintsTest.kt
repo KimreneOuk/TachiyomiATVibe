@@ -94,6 +94,31 @@ class StageFingerprintsTest {
     }
 
     @Test
+    fun `colorization fingerprint is deterministic and sensitive to every input`() {
+        fun colorization(
+            engineStamp: String = "SANA_COLOR_GPU_FP16",
+            quantVariant: String = "FP16",
+            conditioningConfig: String = StageFingerprints.COLORIZATION_CONDITIONING_NONE,
+            seed: Long = 42L,
+            cleanedImageContentHash: String = "c1",
+        ) = StageFingerprints.colorization(
+            engineStamp,
+            quantVariant,
+            conditioningConfig,
+            seed,
+            cleanedImageContentHash,
+        )
+
+        val base = colorization()
+        base shouldBe colorization()
+        colorization(engineStamp = "SANA_COLOR_CPU_FP16") shouldNotBe base
+        colorization(quantVariant = "INT8") shouldNotBe base
+        colorization(conditioningConfig = "CONDITIONING_HINTS") shouldNotBe base
+        colorization(seed = 43L) shouldNotBe base
+        colorization(cleanedImageContentHash = "c2") shouldNotBe base
+    }
+
+    @Test
     fun `committed bundle fingerprint covers base and stage identities`() {
         val source = SourceIdentity(pageKey = "p", sha256 = "h", width = 1, height = 1, orientation = "n")
         val base = DisplayBaseReference(DisplayBaseKind.CLEANED_IMAGE, fileName = "a.jpg")

@@ -13,6 +13,19 @@ data class PageTranslation(
     override var cleanedImageName: String? = null,
     /** SHA-256 of the exact JPEG bytes named by [cleanedImageName], when verified at publication. */
     override var cleanedImageContentHash: String? = null,
+    override var coloredImageName: String? = null,
+    /** SHA-256 of the exact JPEG bytes named by [coloredImageName], when verified at publication. */
+    override var coloredImageContentHash: String? = null,
+    /**
+     * The colored image was derived from the ORIGINAL page (colorize-only run),
+     * not from an inpainted cleaned image. Drives the reader display gate and
+     * [isColorizeOnlyComplete]; a later full translation overwrites it via
+     * resetInpaint -> resetColoring.
+     */
+    override var coloredFromOriginal: Boolean = false,
+    /** Engine+variant+tag-config stamp that produced the current colored image; stale stamps force a re-color. */
+    override var coloringStamp: String? = null,
+    override var coloringFingerprint: String? = null,
     override var ocrArtifactId: String? = null,
     override var recognitionEngine: String? = null,
     override var detectionCount: Int = 0,
@@ -24,10 +37,14 @@ data class PageTranslation(
     override var translationStatus: String = StageStatus.PENDING,
     override var inpaintStatus: String = StageStatus.PENDING,
     override var renderStatus: String = StageStatus.PENDING,
+    // A coloring failure never fails the page (mirrors the inpaint fallback
+    // contract): the reader keeps showing the uncolored translated page.
+    override var coloringStatus: String = StageStatus.PENDING,
     override var ocrError: String? = null,
     override var translationError: String? = null,
     override var inpaintError: String? = null,
     override var renderError: String? = null,
+    override var coloringError: String? = null,
     override var updatedAt: Long = 0L,
     override var sourceFileName: String? = null,
     // Defaults preserve compatibility with translation JSON written before
@@ -90,6 +107,9 @@ data class PageTranslation(
     @Transient
     var cleanedBitmap: Bitmap? = null
 
+    @Transient
+    var coloredBitmap: Bitmap? = null
+
     private var errorMessageValue: String? = null
 
     override var errorMessage: String?
@@ -102,6 +122,7 @@ data class PageTranslation(
                     translationStatus == StageStatus.FAILED -> translationError = value
                     inpaintStatus == StageStatus.FAILED -> inpaintError = value
                     renderStatus == StageStatus.FAILED -> renderError = value
+                    coloringStatus == StageStatus.FAILED -> coloringError = value
                     else -> ocrError = value // Default to OCR error if stage is unknown
                 }
             } else {
@@ -109,6 +130,7 @@ data class PageTranslation(
                 translationError = null
                 inpaintError = null
                 renderError = null
+                coloringError = null
             }
         }
 
@@ -117,7 +139,7 @@ data class PageTranslation(
         errorMessageValue = value
     }
 
-    override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
+    override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: coloringError ?: errorMessage
 
     override fun equals(other: Any?): Boolean = pageTranslationValueEquals(this, other)
 
@@ -212,6 +234,20 @@ data class PageTranslation(
         inpaintRevision = 0
         inpaintingModeUsed = null
         inpaintFingerprint = null
+        // The colored image is derived from the cleaned image: a re-inpaint
+        // invalidates it.
+        resetColoring()
+    }
+
+    fun resetColoring() {
+        coloringStatus = StageStatus.PENDING
+        coloringError = null
+        coloredImageName = null
+        coloredImageContentHash = null
+        coloredFromOriginal = false
+        coloredBitmap = null
+        coloringStamp = null
+        coloringFingerprint = null
     }
 
     fun resetOcr() {

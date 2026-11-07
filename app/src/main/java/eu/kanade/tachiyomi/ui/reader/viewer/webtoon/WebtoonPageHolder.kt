@@ -84,6 +84,7 @@ class WebtoonPageHolder(
     // refreshTranslation() which the viewer calls on visible holders.
     private val showTranslations get() = viewer.translationPrefs.showTranslations
     private val translationEnabled get() = viewer.translationPrefs.translationEnabled
+    private val colorizationEnabled get() = viewer.translationPrefs.colorizationEnabled
 
     private val progressIndicator = createProgressIndicator()
 
@@ -354,7 +355,7 @@ class WebtoonPageHolder(
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {
-            boundPage.translation?.displayImageName
+            boundPage.translation?.displayImageName(colorizationEnabled)
         } else {
             null
         }
@@ -416,7 +417,7 @@ class WebtoonPageHolder(
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        val newName = currentPage.translation?.displayImageName
+        val newName = currentPage.translation?.displayImageName(colorizationEnabled)
 
         val wantTranslated = if (currentPage.translationToggled) {
             currentPage.showTranslatedImage && streamAvailable
@@ -472,6 +473,15 @@ class WebtoonPageHolder(
 
         val overlay = selectReaderTranslationOverlayBinding(currentPage.showTranslatedImage, currentPage.translation)
         frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
+    }
+
+    /** Rebinds stream bytes after a colorization-gate flip, then re-evaluates display. */
+    fun onColorizationGateChanged() {
+        val currentPage = page ?: return
+        holderScope.launch {
+            viewer.activity.viewModel.rebindTranslatedStreamForPref(currentPage)
+            refreshTranslation()
+        }
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {

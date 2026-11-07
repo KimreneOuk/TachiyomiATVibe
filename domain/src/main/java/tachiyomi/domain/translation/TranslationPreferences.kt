@@ -115,6 +115,20 @@ class TranslationPreferences(
      */
     fun translationInpaintQualityFallback() = preferenceStore.getBoolean("translation_inpaint_quality_fallback", false)
 
+    /**
+     * Master gate for on-device colorization: when on, every translated page
+     * that produced a cleaned image is also colorized (post-inpaint stage).
+     * Default OFF — colorization is a multi-second model pass.
+     */
+    fun translationColorizationEnabled() = preferenceStore.getBoolean("translation_colorization_enabled", false)
+
+    /** Experimental Qualcomm NPU pass for the int8 DiT; attempted only after GPU fails. */
+    fun translationColorizationNpu() = preferenceStore.getBoolean("translation_colorization_npu", false)
+
+    /** Which colorization engine runs when colorization is enabled. */
+    fun translationColorizationModel(): Preference<ColorizationModel> =
+        preferenceStore.getEnum("translation_colorization_model", ColorizationModel.DEFAULT)
+
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")
 

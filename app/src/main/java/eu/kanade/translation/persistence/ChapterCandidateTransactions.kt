@@ -621,6 +621,7 @@ class ChapterCandidateTransactions internal constructor(
         ArtifactStage.INPAINT -> copy(inpaint = record)
         ArtifactStage.TRANSLATION -> copy(translation = record)
         ArtifactStage.LAYOUT -> copy(layout = record)
+        ArtifactStage.COLORING -> error("COLORING has no manifest record slot")
     }
 
     /**

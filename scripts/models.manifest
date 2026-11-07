@@ -162,6 +162,30 @@
         "source_size_bytes": 263858,
         "source_sha256": "727ebc8b3f8c5acba88c9d49300a77e9792f6bf1526288121c67b104b7384eb0"
       }
+    },
+    {
+      "path": "coloring/manga_colorize_fp32.onnx",
+      "size_bytes": 123033890,
+      "sha256": "ef6fc7a3bf0eb49974718496377a9951c2f66cdc471208ce8e99906238960a88",
+      "source_url": "https://huggingface.co/Faridzar/manga-colorization-v2-onnx/resolve/5515e06d31b08ffd107af686cba5e98e95e8d4cf/manga-colorize-fp16.onnx",
+      "convert": {
+        "script": "scripts/converters/convert_colorizer_fp32.py",
+        "source_filename": "manga-colorize-fp16.onnx",
+        "source_size_bytes": 61650260,
+        "source_sha256": "39660d0047ea6f1a0ddee6aa89054997f95ea566f4d56ff762f66dbcf1a1a7ef"
+      }
+    },
+    {
+      "path": "coloring/manga_colorize_int8.onnx",
+      "size_bytes": 31608669,
+      "sha256": "1b85c65679b0a1f151669808920d667668fb53965e0e77508b0edd04c5b3d2f6",
+      "source_url": "https://huggingface.co/Faridzar/manga-colorization-v2-onnx/resolve/5515e06d31b08ffd107af686cba5e98e95e8d4cf/manga-colorize-fp16.onnx",
+      "convert": {
+        "script": "scripts/converters/convert_colorizer_int8.py",
+        "source_filename": "manga-colorize-fp16.onnx",
+        "source_size_bytes": 61650260,
+        "source_sha256": "39660d0047ea6f1a0ddee6aa89054997f95ea566f4d56ff762f66dbcf1a1a7ef"
+      }
     }
   ]
 }

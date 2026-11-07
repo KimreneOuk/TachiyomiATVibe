@@ -19,6 +19,10 @@ private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
 internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
     lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
 
+/** Both derived-image domains live in the companion dir and share this lifecycle. */
+private fun isDerivedCompanionImageName(name: String): Boolean =
+    name.contains(".cleaned.") || name.contains(".colored.")
+
 /** Owns cleaned-image lookup, retirement, and cleanup for translation artifacts. */
 internal class CleanedImageLifecycleController(
     private val applicationScopeProvider: () -> CoroutineScope,
@@ -34,6 +38,14 @@ internal class CleanedImageLifecycleController(
     private val provider get() = providerProvider()
 
     private val activeCleanupChapters = ConcurrentHashMap.newKeySet<Long>()
+
+    /** Delete authorization routed by the name's intrinsic domain (colored vs cleaned). */
+    private fun ChapterTranslationStore.mayDeleteImage(pageKey: String, name: String): Boolean =
+        if (name.contains(".colored.")) {
+            mayDeleteColoredImage(pageKey, name)
+        } else {
+            mayDeleteCleanedImage(pageKey, name)
+        }
 
     /**
      * Reclaims previous committed cleaned images discovered while opening a
@@ -60,7 +72,9 @@ internal class CleanedImageLifecycleController(
         applicationScope.launch {
             try {
                 store.state.value.keys.forEach { pageKey ->
-                    store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
+                    val retiredNames = store.drainRetiredCleanedImages(pageKey) +
+                        store.drainRetiredColoredImages(pageKey)
+                    retiredNames.forEach { imageName ->
                         streamRegistry.retireCleanedImage(
                             sourceId = source.id,
                             mangaId = stableMangaId,
@@ -68,7 +82,7 @@ internal class CleanedImageLifecycleController(
                             pageKey = pageKey,
                             imageName = imageName,
                         ) {
-                            if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
+                            if (!store.mayDeleteImage(pageKey, imageName)) return@retireCleanedImage
                             val deleted = provider.findPageCleanedImage(
                                 mangaTitle,
                                 source,
@@ -86,7 +100,7 @@ internal class CleanedImageLifecycleController(
                                 )?.delete()
                             }
                             logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                                "TachiyomiAT chapter-load retired cleaned image drain: " +
+                                "TachiyomiAT chapter-load retired image drain: " +
                                     "pageKey=$pageKey file=$imageName deleted=$deleted"
                             }
                         }
@@ -117,7 +131,7 @@ internal class CleanedImageLifecycleController(
         mangaId: Long,
     ) {
         val directory = provider.findCompanionImageDir(mangaTitle, source, chapterName, scanlator) ?: return
-        val referenced = store.referencedCleanedImageNames()
+        val referenced = store.referencedCleanedImageNames() + store.referencedColoredImageNames()
         val pageKeys = store.state.value.keys
         val now = System.currentTimeMillis()
         var deletedImages = 0
@@ -125,12 +139,12 @@ internal class CleanedImageLifecycleController(
             ?.asSequence()
             ?.mapNotNull { file -> file.name?.let { it to file } }
             ?.filter { (name, file) ->
-                file.isFile && name.contains(".cleaned.") && !name.endsWith(".identity.json")
+                file.isFile && isDerivedCompanionImageName(name) && !name.endsWith(".identity.json")
             }
             ?.filterNot { (name, file) ->
                 name in referenced ||
                     streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, name) > 0 ||
-                    pageKeys.any { pageKey -> !store.mayDeleteCleanedImage(pageKey, name) } ||
+                    pageKeys.any { pageKey -> !store.mayDeleteImage(pageKey, name) } ||
                     isFreshOrphanedCleanedImage(file.lastModified(), now)
             }
             ?.take(MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP)
@@ -141,7 +155,7 @@ internal class CleanedImageLifecycleController(
                     directory.findFile(CleanedImageIdentity.sidecarName(name))?.delete()
                 }
                 logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                    "TachiyomiAT orphaned cleaned image sweep: chapter=$chapterName file=$name deleted=$deleted"
+                    "TachiyomiAT orphaned companion image sweep: chapter=$chapterName file=$name deleted=$deleted"
                 }
             }
 
@@ -155,14 +169,14 @@ internal class CleanedImageLifecycleController(
                 (imageName to file).takeIf {
                     file.isFile &&
                         name.endsWith(".identity.json") &&
-                        imageName.contains(".cleaned.")
+                        isDerivedCompanionImageName(imageName)
                 }
             }
             ?.filterNot { (imageName, sidecar) ->
                 directory.findFile(imageName)?.exists() == true ||
                     imageName in referenced ||
                     streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, imageName) > 0 ||
-                    pageKeys.any { pageKey -> !store.mayDeleteCleanedImage(pageKey, imageName) } ||
+                    pageKeys.any { pageKey -> !store.mayDeleteImage(pageKey, imageName) } ||
                     isFreshOrphanedCleanedImage(sidecar.lastModified(), now)
             }
             ?.take(remainingBudget)

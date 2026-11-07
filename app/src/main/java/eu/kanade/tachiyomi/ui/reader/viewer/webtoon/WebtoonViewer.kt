@@ -509,6 +509,13 @@ class WebtoonTranslationPrefs(
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translateButtonWithControls().get()
         private set
 
+    // TachiyomiAT: colorization display gate, passed to displayImageName() by
+    // holders when choosing which image to decode.
+    @Volatile
+    var colorizationEnabled: Boolean =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationColorizationEnabled().get()
+        private set
+
     init {
         val readerPrefs = Injekt.get<ReaderPreferences>()
         val translationPrefs = Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
@@ -534,6 +541,15 @@ class WebtoonTranslationPrefs(
             }
             .launchIn(scope)
 
+        translationPrefs.translationColorizationEnabled().changes()
+            .onEach {
+                colorizationEnabled = it
+                // The projected file changes with the gate, so visible holders
+                // must rebind their stream bytes before refreshing.
+                rebindVisibleHolders()
+            }
+            .launchIn(scope)
+
         viewer.activity.viewModel.state
             .map { it.menuVisible }
             .distinctUntilChanged()
@@ -550,6 +566,17 @@ class WebtoonTranslationPrefs(
             val holder = recycler.getChildViewHolder(recycler.getChildAt(i))
             if (holder is WebtoonPageHolder) {
                 holder.refreshTranslation()
+            }
+        }
+    }
+
+    /** Rebinds stream bytes for visible holders, then refreshes their display. */
+    private fun rebindVisibleHolders() {
+        val recycler = viewer.recycler
+        for (i in 0 until recycler.childCount) {
+            val holder = recycler.getChildViewHolder(recycler.getChildAt(i))
+            if (holder is WebtoonPageHolder) {
+                holder.onColorizationGateChanged()
             }
         }
     }

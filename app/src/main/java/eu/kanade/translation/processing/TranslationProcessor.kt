@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.engines.coloring.PageColorizationEngine
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.translator.NativeStallWatchdog
 import eu.kanade.translation.engines.translator.TextTranslator
@@ -49,6 +50,7 @@ enum class TranslationStageSignal {
     READING,
     TRANSLATING,
     CLEANING,
+    COLORING,
     FINISHING,
 }
 
@@ -107,7 +109,6 @@ internal class TranslationProcessor(
         suppliedCleanedPublication ?: if (provider != null && streamRegistry != null && engineLane != null) {
             CleanedPublication(
                 provider = provider,
-                streamRegistry = streamRegistry,
                 currentInpaintingMode = { engineLane.currentInpaintingMode },
                 currentNeuralInpaintModel = { engineLane.currentNeuralInpaintModel },
             )
@@ -118,6 +119,14 @@ internal class TranslationProcessor(
 
     @Volatile
     var onPageStuck: ((chapterId: Long?, pageKey: String) -> Unit)? = null
+
+    /** Owned by TranslationManager; the colorization stage gates on the pref at stage time. */
+    @Volatile
+    var colorizationEngine: PageColorizationEngine? = null
+
+    /** The colorization engine only when attached and the user gate is on. */
+    fun activeColorizationEngine(): PageColorizationEngine? =
+        colorizationEngine?.takeIf { translationPreferences?.translationColorizationEnabled()?.get() == true }
 
     val nativeStall get() = nativeStallWatchdog.state
     fun permitHolderPageKeySnapshot(): String? = engineLane?.permitHolderPageKeySnapshot()
@@ -138,7 +147,11 @@ internal class TranslationProcessor(
     fun setInpaintingHardwareOverride(override: InpaintingHardwareOverride) =
         requireEngineLane().setInpaintingHardwareOverride(override)
 
-    fun closeEngines() = requireEngineLane().closeEngines()
+    fun closeEngines() {
+        // Attached (not detached) so a restart in the same session colorizes again.
+        colorizationEngine?.let { engine -> runCatching { engine.close() } }
+        requireEngineLane().closeEngines()
+    }
 
     fun forceReleaseNativeBuffers() {
         engineLane?.let { lane -> MemoryGovernance.forceReleaseNativeBuffers { lane.recognitionEngine } }
@@ -167,6 +180,8 @@ internal class TranslationProcessor(
     fun releasePageBitmaps(page: PageTranslation) {
         page.cleanedBitmap?.let(::recycleIfNeeded)
         page.cleanedBitmap = null
+        page.coloredBitmap?.let(::recycleIfNeeded)
+        page.coloredBitmap = null
     }
 
     /** Executes OCR on the serialized native lane. */
@@ -357,6 +372,93 @@ internal class TranslationProcessor(
         cleaned
     }
 
+    /**
+     * Colorizes [base] (the cleaned bitmap by default; the decoded original for
+     * colorize-only runs) with the attached engine and persists a verified
+     * colored image. Never fails the page: a failure only marks
+     * [PageTranslation.coloringStatus] FAILED and the reader keeps showing
+     * the uncolored result.
+     */
+    suspend fun colorize(
+        pageKey: String,
+        page: PageTranslation,
+        coloringEngine: PageColorizationEngine,
+        companionDir: UniFile? = null,
+        base: Bitmap? = page.cleanedBitmap,
+        fromOriginal: Boolean = false,
+    ): Bitmap? = withContext(Dispatchers.Default) {
+        val input = base ?: return@withContext null
+        // First call builds the engine runtime; absence (missing assets or a
+        // failed session) is feature-absence, not a page failure — skip it.
+        if (!coloringEngine.isAvailable()) {
+            page.coloringStatus = StageStatus.SKIPPED
+            return@withContext null
+        }
+        page.coloringStatus = StageStatus.RUNNING
+        val colored = try {
+            // Stable per-page seed: identical re-runs reproduce the identical
+            // coloring instead of flickering between variations.
+            val seed = stableSeed(pageKey)
+            coloringEngine.colorize(input, seed)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (oom: OutOfMemoryError) {
+            logcat(LogPriority.ERROR, oom) { "TranslationProcessor: OOM during colorize for page $pageKey" }
+            page.coloringStatus = StageStatus.FAILED
+            page.coloringError = "Out of memory during colorization"
+            return@withContext null
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN, t) { "TranslationProcessor: colorize failed for page $pageKey" }
+            page.coloringStatus = StageStatus.FAILED
+            page.coloringError = t.message ?: "Colorization failed"
+            return@withContext null
+        }
+
+        page.coloredBitmap = colored
+        page.coloringStatus = StageStatus.READY
+        page.coloringError = null
+        page.coloringStamp = coloringEngine.currentStamp()
+        page.coloredFromOriginal = fromOriginal
+        try {
+            if (companionDir != null) {
+                val publication = cleanedPublication
+                if (publication != null) {
+                    val written = withContext(Dispatchers.IO) {
+                        publication.writeVerifiedColoredImage(companionDir, pageKey, colored)
+                    }
+                    page.coloredImageName = written.name
+                    page.coloredImageContentHash = written.contentSha256
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                if (page.coloredBitmap === colored) {
+                    recycleIfNeeded(colored)
+                    page.coloredBitmap = null
+                    page.coloringStatus = StageStatus.FAILED
+                    page.coloringError = "Colorization cancelled during publication"
+                }
+            }
+            throw cancelled
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN, t) { "TranslationProcessor: colored image publication failed for $pageKey" }
+            page.coloredImageName = null
+            page.coloredImageContentHash = null
+            page.coloringStatus = StageStatus.FAILED
+            page.coloringError = "Colored image publication failed"
+        }
+        colored
+    }
+
+    /** Stable 64-bit page seed for the diffusion sampler. */
+    private fun stableSeed(pageKey: String): Long {
+        var hash = 1125899906842597L
+        for (char in pageKey) {
+            hash = 31 * hash + char.code
+        }
+        return hash
+    }
+
     /** Decode → OCR → translate → inpaint, with operation and native-lane timeouts. */
     suspend fun processSinglePage(
         pageKey: String,
@@ -373,11 +475,16 @@ internal class TranslationProcessor(
         var sourceBitmap: Bitmap? = null
         var page: PageTranslation? = null
         var activeStage = "DECODE"
+        // Colorization extends the page budget: 20 diffusion steps can exceed
+        // the whole translate+inpaint budget when demoted to CPU.
+        val colorizationEnabled = activeColorizationEngine() != null
+        val pageTimeoutMs = TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS +
+            if (colorizationEnabled) TranslationProcessingTimeouts.COLORING_PHASE_TIMEOUT_MS else 0L
         return try {
             // TachiyomiAT: publish the transient Preparing boundary before any
             // work starts so feedback can distinguish "queued" from "running".
             stageReporter?.invoke(TranslationStageSignal.PREPARING)
-            withTimeout(TranslationProcessingTimeouts.SINGLE_PAGE_TIMEOUT_MS) {
+            withTimeout(pageTimeoutMs) {
                 val decoded = decodeImage(pageKey, streamFn) { recognitionEngine }
                     ?: return@withTimeout ProcessResult.Failure(
                         pageKey,
@@ -434,6 +541,18 @@ internal class TranslationProcessor(
                     page!!.inpaintStatus = StageStatus.READY
                     page!!.originalImageFallback = true
                 }
+                // TachiyomiAT: colorization is a derived post-inpaint stage and
+                // never re-fails the page; its pill time folds under CLEANING.
+                val coloringEngine = activeColorizationEngine()
+                if (coloringEngine != null) {
+                    if (page!!.cleanedBitmap != null) {
+                        activeStage = "COLOR"
+                        stageReporter?.invoke(TranslationStageSignal.COLORING)
+                        colorize(pageKey, page!!, coloringEngine, companionDir)
+                    } else {
+                        page!!.coloringStatus = StageStatus.SKIPPED
+                    }
+                }
                 // TachiyomiAT: the candidate is assembled; remaining work is
                 // persistence of the final record by the caller. Signal this so
                 // the status pill can distinguish last-mile latency.
@@ -453,6 +572,10 @@ internal class TranslationProcessor(
                             current.inpaintStatus = StageStatus.FAILED
                             current.inpaintError = "Single-page inpainting timed out"
                             current.originalImageFallback = true
+                        }
+                        "COLOR" -> {
+                            current.coloringStatus = StageStatus.FAILED
+                            current.coloringError = "Single-page colorization timed out"
                         }
                         else -> {
                             current.translationStatus = StageStatus.FAILED
@@ -521,6 +644,7 @@ internal class TranslationProcessor(
     }
 
     override fun close() {
+        colorizationEngine?.let { engine -> runCatching { engine.close() } }
         engineLane?.closeEngines()
         nativeRunScope.cancel()
     }

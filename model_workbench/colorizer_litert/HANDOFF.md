@@ -17,7 +17,8 @@ The fetcher uses pinned public Hub repositories in `sources.json`, downloads eac
 
 ## Current environment and progress
 
-- Workbench scripts and this context are committed and pushed under `model_workbench/colorizer_litert/` on `workbench/colorizer-litert-int8`. The uncommitted app changes on `ui-experimentation` are not included; the branch is based on local HEAD `7c145814` plus the handoff commit(s).
+- The branch carries the complete local app state for this task: the Fumeto Standard translation engine (committed on `ui-experimentation`), both colorizer engines under `app/src/main/java/eu/kanade/translation/engines/coloring/` (`SanaMangaColoringEngine` LiteRT, `OnnxMangaColorizationEngine` ONNX CPU, plus `PageColorizationEngine`, `LineArtMerger`, `FlowMatchEulerScheduler` and tests), the colorize-only chapter flow integration across coordinator/processing/persistence/UI, and the MCV2 ONNX entries in `scripts/models.manifest`.
+- Runtime model provisioning mirrors Fumeto: `python scripts/fetch_models.py --group fumeto coloring` downloads the manifest-verified models into `app/src/main/assets/models/` before a debug build. Fumeto and MCV2 ONNX artifacts are live manifest entries; the Sana LiteRT graphs do not exist yet — the workbench below is what produces them, and `SanaMangaColoringEngine` stays unavailable until `sana_color_*.tflite` + `graph_signatures.json` + `color_look_normal.f32.bin` are bundled.
 - Fetcher verification succeeded for Sana Coloring v2 and MCV2 ONNX. Fetching the Sana base weights was attempted but stopped because the local workbench volume reported only 492 MB free while the two weight files require about 2.43 GB total. The receiving machine must have enough disk for all model inputs and generated exports.
 - The prior machine had 15.6 GB physical RAM and Docker limited to about 7.58 GiB. Large Sana direct quantization and MCV2 static ONNX calibration were killed with exit 137. Use the stronger desktop for model conversion and validation.
 - Observed working environment: Linux container, Python 3.11, Torch 2.14.1, LiteRT Torch 0.10.0, LiteRT runtime 2.3.0, TorchAO 0.18.0, Diffusers 0.42.1, Transformers 5.22.1. `requirements-sana.lock.txt` and pinned base image digest capture the observed Sana environment.
@@ -29,7 +30,8 @@ The fetcher uses pinned public Hub repositories in `sources.json`, downloads eac
 ## First actions
 
 1. Check available RAM/disk; read `README.md`, `restructure_spec.md`, `sources.json`, and current scripts.
-2. Run syntax checks and lightweight gates:
+2. Confirm the app side builds from this branch: `JAVA_HOME="<Android Studio jbr>" ./gradlew spotlessCheck :app:compileStandardDebugKotlin`, and provision runtime models with `python -I scripts/fetch_models.py --group fumeto coloring`. The MCV2 ONNX engine path must keep working while the LiteRT path is developed.
+3. Run workbench syntax checks and lightweight gates:
 
 ```bash
 MSYS_NO_PATHCONV=1 docker run --rm -v "$ROOT_WIN:/work" sana-converter python -I -m compileall -q /work/scripts

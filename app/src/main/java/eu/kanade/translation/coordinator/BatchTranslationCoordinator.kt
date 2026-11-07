@@ -194,16 +194,22 @@ internal class BatchTranslationCoordinator(
 
     private fun persistQueue() {
         synchronized(queueMutationLock) {
-            queueStore.save(_queueState.value.mapNotNull { it.chapter.id })
+            val queue = _queueState.value
+            queueStore.save(
+                queue.mapNotNull { it.chapter.id },
+                queue.filter { it.colorizeOnly }.mapNotNullTo(mutableSetOf()) { it.chapter.id },
+            )
         }
     }
 
     suspend fun restoreQueue() {
         val ids = synchronized(queueMutationLock) { queueStore.load() }
         if (ids.isEmpty()) return
+        val colorizeOnlyIds = synchronized(queueMutationLock) { queueStore.loadColorizeOnlyIds() }
         val restored = mutableListOf<Translation>()
         for (id in ids) {
             val translation = resolveTranslationFromChapterId(id) ?: continue
+            if (id in colorizeOnlyIds) translation.colorizeOnly = true
             val durable = durableQueueState(translation)
             translation.status = when (durable?.status) {
                 Translation.State.ERROR -> Translation.State.ERROR
@@ -604,6 +610,7 @@ internal class BatchTranslationCoordinator(
         // Defaults keep callers without that probe on the same path.
         probedSourcePageCount: Int? = null,
         sourceCountKnown: Boolean = false,
+        colorizeOnly: Boolean = false,
     ) {
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val existing = queueState.value.firstOrNull { it.chapter.id == chapter.id }
@@ -613,28 +620,35 @@ internal class BatchTranslationCoordinator(
             }
             return
         }
-        // Invalid persisted configuration must not crash this UI action or
-        // queue a batch that would fail every page with the same error. Catch
-        // conversion failures and surface them as a toast.
+        // A colorize-only run never translates, so an invalid or unsupported
+        // language configuration is irrelevant and must not block queueing.
         val fromLang: TextRecognizerLanguage
         val toLang: TextTranslatorLanguage
-        try {
-            fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-            toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        } catch (e: IllegalArgumentException) {
-            logcat(LogPriority.ERROR, e) { "TachiyomiAT queueChapter aborted: invalid translation config" }
-            scope.launchUI {
-                context.toast(e.message ?: "Invalid translation configuration")
+        if (colorizeOnly) {
+            fromLang = TextRecognizerLanguage.CHINESE
+            toLang = TextTranslatorLanguage.ENGLISH
+        } else {
+            // Invalid persisted configuration must not crash this UI action or
+            // queue a batch that would fail every page with the same error. Catch
+            // conversion failures and surface them as a toast.
+            try {
+                fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+                toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+            } catch (e: IllegalArgumentException) {
+                logcat(LogPriority.ERROR, e) { "TachiyomiAT queueChapter aborted: invalid translation config" }
+                scope.launchUI {
+                    context.toast(e.message ?: "Invalid translation configuration")
+                }
+                return
             }
-            return
-        }
-        if (TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
-            !TextTranslatorLanguage.mlkitSupportedLanguages().contains(toLang)
-        ) {
-            scope.launchUI {
-                context.toast(ATMR.strings.error_mlkit_language_unsupported)
+            if (TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
+                !TextTranslatorLanguage.mlkitSupportedLanguages().contains(toLang)
+            ) {
+                scope.launchUI {
+                    context.toast(ATMR.strings.error_mlkit_language_unsupported)
+                }
+                return
             }
-            return
         }
         val executionMode = if (translationPreferences.translationRequireCharging().get()) {
             eu.kanade.translation.model.BatchExecutionMode.ONLY_WHILE_CHARGING
@@ -646,6 +660,7 @@ internal class BatchTranslationCoordinator(
             translation.probedSourcePageCount = probedSourcePageCount
             translation.sourceCountKnown = true
         }
+        translation.colorizeOnly = colorizeOnly
         addToQueue(translation)
     }
 
@@ -814,6 +829,7 @@ internal class BatchTranslationCoordinator(
                                     translation.chapter.scanlator,
                                 ),
                                 onProgress = { tracker?.rebuildFromStore() },
+                                colorizeOnly = translation.colorizeOnly,
                             )
                             if (result.error != null) {
                                 tracker?.abort(batchOrderedPageKeys.toSet(), result.error)

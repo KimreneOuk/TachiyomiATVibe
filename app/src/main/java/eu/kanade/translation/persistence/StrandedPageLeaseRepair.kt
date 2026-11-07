@@ -8,6 +8,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isCleanedImageReady
+import eu.kanade.translation.model.isColorizeOnlyComplete
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toDraft
 
@@ -56,7 +57,8 @@ internal fun strandedSweepPageUpdate(
             safe.renderStatus == StageStatus.FAILED ||
             safe.displayImageName != null ||
             safe.isCleanedImageReady ||
-            safe.isTextlessTerminal
+            safe.isTextlessTerminal ||
+            safe.isColorizeOnlyComplete
         if (safeTerminal) return safe
         return safe.apply {
             if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {

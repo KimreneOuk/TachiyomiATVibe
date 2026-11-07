@@ -13,6 +13,13 @@ interface PageTranslationView {
     val imgHeight: Float
     val cleanedImageName: String?
     val cleanedImageContentHash: String?
+    val coloredImageName: String?
+    val coloredImageContentHash: String?
+
+    /** The colored image was derived from the original page, not from an inpainted cleaned image. */
+    val coloredFromOriginal: Boolean
+    val coloringStamp: String?
+    val coloringFingerprint: String?
     val ocrArtifactId: String?
     val recognitionEngine: String?
     val detectionCount: Int
@@ -24,10 +31,12 @@ interface PageTranslationView {
     val translationStatus: String
     val inpaintStatus: String
     val renderStatus: String
+    val coloringStatus: String
     val ocrError: String?
     val translationError: String?
     val inpaintError: String?
     val renderError: String?
+    val coloringError: String?
     val updatedAt: Long
     val sourceFileName: String?
     val runGeneration: Long
@@ -107,6 +116,11 @@ class PublishedPageTranslation private constructor(
     override val imgHeight: Float,
     override val cleanedImageName: String?,
     override val cleanedImageContentHash: String?,
+    override val coloredImageName: String?,
+    override val coloredImageContentHash: String?,
+    override val coloredFromOriginal: Boolean,
+    override val coloringStamp: String?,
+    override val coloringFingerprint: String?,
     override val ocrArtifactId: String?,
     override val recognitionEngine: String?,
     override val detectionCount: Int,
@@ -118,10 +132,12 @@ class PublishedPageTranslation private constructor(
     override val translationStatus: String,
     override val inpaintStatus: String,
     override val renderStatus: String,
+    override val coloringStatus: String,
     override val ocrError: String?,
     override val translationError: String?,
     override val inpaintError: String?,
     override val renderError: String?,
+    override val coloringError: String?,
     override val updatedAt: Long,
     override val sourceFileName: String?,
     override val runGeneration: Long,
@@ -147,7 +163,7 @@ class PublishedPageTranslation private constructor(
     override val inpaintMaskBoxes: List<InpaintMaskBox> = inpaintMaskBoxesData
     override val allTextDetections: List<DetectionView> = allTextDetectionsData
 
-    override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
+    override val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: coloringError ?: errorMessage
 
     override fun equals(other: Any?): Boolean = pageTranslationValueEquals(this, other)
 
@@ -162,6 +178,11 @@ class PublishedPageTranslation private constructor(
             imgHeight = page.imgHeight,
             cleanedImageName = page.cleanedImageName,
             cleanedImageContentHash = page.cleanedImageContentHash,
+            coloredImageName = page.coloredImageName,
+            coloredImageContentHash = page.coloredImageContentHash,
+            coloredFromOriginal = page.coloredFromOriginal,
+            coloringStamp = page.coloringStamp,
+            coloringFingerprint = page.coloringFingerprint,
             ocrArtifactId = page.ocrArtifactId,
             recognitionEngine = page.recognitionEngine,
             detectionCount = page.detectionCount,
@@ -173,10 +194,12 @@ class PublishedPageTranslation private constructor(
             translationStatus = page.translationStatus,
             inpaintStatus = page.inpaintStatus,
             renderStatus = page.renderStatus,
+            coloringStatus = page.coloringStatus,
             ocrError = page.ocrError,
             translationError = page.translationError,
             inpaintError = page.inpaintError,
             renderError = page.renderError,
+            coloringError = page.coloringError,
             updatedAt = page.updatedAt,
             sourceFileName = page.sourceFileName,
             runGeneration = page.runGeneration,
@@ -358,6 +381,11 @@ internal fun PublishedPageTranslation.toDraft(): PageTranslation = PageTranslati
     imgHeight = imgHeight,
     cleanedImageName = cleanedImageName,
     cleanedImageContentHash = cleanedImageContentHash,
+    coloredImageName = coloredImageName,
+    coloredImageContentHash = coloredImageContentHash,
+    coloredFromOriginal = coloredFromOriginal,
+    coloringStamp = coloringStamp,
+    coloringFingerprint = coloringFingerprint,
     ocrArtifactId = ocrArtifactId,
     recognitionEngine = recognitionEngine,
     detectionCount = detectionCount,
@@ -369,10 +397,12 @@ internal fun PublishedPageTranslation.toDraft(): PageTranslation = PageTranslati
     translationStatus = translationStatus,
     inpaintStatus = inpaintStatus,
     renderStatus = renderStatus,
+    coloringStatus = coloringStatus,
     ocrError = ocrError,
     translationError = translationError,
     inpaintError = inpaintError,
     renderError = renderError,
+    coloringError = coloringError,
     updatedAt = updatedAt,
     sourceFileName = sourceFileName,
     runGeneration = runGeneration,
@@ -444,6 +474,11 @@ internal fun pageTranslationValueEquals(page: PageTranslationView, other: Any?):
         sameValue(page.imgHeight, other.imgHeight) &&
         page.cleanedImageName == other.cleanedImageName &&
         page.cleanedImageContentHash == other.cleanedImageContentHash &&
+        page.coloredImageName == other.coloredImageName &&
+        page.coloredImageContentHash == other.coloredImageContentHash &&
+        page.coloredFromOriginal == other.coloredFromOriginal &&
+        page.coloringStamp == other.coloringStamp &&
+        page.coloringFingerprint == other.coloringFingerprint &&
         page.ocrArtifactId == other.ocrArtifactId &&
         page.recognitionEngine == other.recognitionEngine &&
         page.detectionCount == other.detectionCount &&
@@ -455,10 +490,12 @@ internal fun pageTranslationValueEquals(page: PageTranslationView, other: Any?):
         page.translationStatus == other.translationStatus &&
         page.inpaintStatus == other.inpaintStatus &&
         page.renderStatus == other.renderStatus &&
+        page.coloringStatus == other.coloringStatus &&
         page.ocrError == other.ocrError &&
         page.translationError == other.translationError &&
         page.inpaintError == other.inpaintError &&
         page.renderError == other.renderError &&
+        page.coloringError == other.coloringError &&
         page.updatedAt == other.updatedAt &&
         page.sourceFileName == other.sourceFileName &&
         page.runGeneration == other.runGeneration &&
@@ -483,6 +520,11 @@ internal fun pageTranslationValueHashCode(page: PageTranslationView): Int {
     result = 31 * result + page.imgHeight.toBits()
     result = 31 * result + (page.cleanedImageName?.hashCode() ?: 0)
     result = 31 * result + (page.cleanedImageContentHash?.hashCode() ?: 0)
+    result = 31 * result + (page.coloredImageName?.hashCode() ?: 0)
+    result = 31 * result + (page.coloredImageContentHash?.hashCode() ?: 0)
+    result = 31 * result + page.coloredFromOriginal.hashCode()
+    result = 31 * result + (page.coloringStamp?.hashCode() ?: 0)
+    result = 31 * result + (page.coloringFingerprint?.hashCode() ?: 0)
     result = 31 * result + (page.ocrArtifactId?.hashCode() ?: 0)
     result = 31 * result + (page.recognitionEngine?.hashCode() ?: 0)
     result = 31 * result + page.detectionCount
@@ -494,10 +536,12 @@ internal fun pageTranslationValueHashCode(page: PageTranslationView): Int {
     result = 31 * result + page.translationStatus.hashCode()
     result = 31 * result + page.inpaintStatus.hashCode()
     result = 31 * result + page.renderStatus.hashCode()
+    result = 31 * result + page.coloringStatus.hashCode()
     result = 31 * result + (page.ocrError?.hashCode() ?: 0)
     result = 31 * result + (page.translationError?.hashCode() ?: 0)
     result = 31 * result + (page.inpaintError?.hashCode() ?: 0)
     result = 31 * result + (page.renderError?.hashCode() ?: 0)
+    result = 31 * result + (page.coloringError?.hashCode() ?: 0)
     result = 31 * result + page.updatedAt.hashCode()
     result = 31 * result + (page.sourceFileName?.hashCode() ?: 0)
     result = 31 * result + page.runGeneration.hashCode()
@@ -524,6 +568,11 @@ internal fun pageTranslationValueToString(page: PageTranslationView): String =
         "imgHeight=${page.imgHeight}, " +
         "cleanedImageName=${page.cleanedImageName}, " +
         "cleanedImageContentHash=${page.cleanedImageContentHash}, " +
+        "coloredImageName=${page.coloredImageName}, " +
+        "coloredImageContentHash=${page.coloredImageContentHash}, " +
+        "coloredFromOriginal=${page.coloredFromOriginal}, " +
+        "coloringStamp=${page.coloringStamp}, " +
+        "coloringFingerprint=${page.coloringFingerprint}, " +
         "ocrArtifactId=${page.ocrArtifactId}, " +
         "recognitionEngine=${page.recognitionEngine}, " +
         "detectionCount=${page.detectionCount}, " +
@@ -535,10 +584,12 @@ internal fun pageTranslationValueToString(page: PageTranslationView): String =
         "translationStatus=${page.translationStatus}, " +
         "inpaintStatus=${page.inpaintStatus}, " +
         "renderStatus=${page.renderStatus}, " +
+        "coloringStatus=${page.coloringStatus}, " +
         "ocrError=${page.ocrError}, " +
         "translationError=${page.translationError}, " +
         "inpaintError=${page.inpaintError}, " +
         "renderError=${page.renderError}, " +
+        "coloringError=${page.coloringError}, " +
         "updatedAt=${page.updatedAt}, " +
         "sourceFileName=${page.sourceFileName}, " +
         "runGeneration=${page.runGeneration}, " +

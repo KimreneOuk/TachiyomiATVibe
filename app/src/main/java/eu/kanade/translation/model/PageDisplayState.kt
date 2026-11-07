@@ -31,10 +31,17 @@ enum class PageDisplayState {
 
     /** OCR-confirmed textless page; terminally complete without translation. */
     TEXTLESS_COMPLETE,
+
+    /**
+     * Colorize-only run published a colored original: no OCR/translation/inpaint
+     * exists or is expected, yet the committed colored page is reader-visible.
+     */
+    COLORIZE_ONLY_COMPLETE,
 }
 
 /** States whose committed bundle can be shown as translated by the reader. */
 val PageDisplayState.hasCommittedDisplay: Boolean
     get() = this == PageDisplayState.DISPLAY_READY ||
         this == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
-        this == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+        this == PageDisplayState.FAILED_WITH_COMMITTED_RESULT ||
+        this == PageDisplayState.COLORIZE_ONLY_COMPLETE

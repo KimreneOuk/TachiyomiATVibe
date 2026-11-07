@@ -2,20 +2,13 @@ package eu.kanade.translation.processing
 
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.engines.inpainting.InpaintingMode
 import eu.kanade.translation.engines.inpainting.stampName
 import eu.kanade.translation.persistence.ArtifactDocumentJson
-import eu.kanade.translation.persistence.ChapterTranslationStore
 import eu.kanade.translation.persistence.CleanedImageIdentity
 import eu.kanade.translation.persistence.CleanedImageIdentitySidecar
 import eu.kanade.translation.persistence.TranslationFileProvider
-import eu.kanade.translation.processing.execution.TranslationStreamRegistry
 import kotlinx.serialization.decodeFromString
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.NeuralInpaintModel
 import java.security.DigestOutputStream
 import java.security.MessageDigest
@@ -24,7 +17,6 @@ import java.util.UUID
 /** Owns verified cleaned-image files and retirement of superseded images. */
 internal class CleanedPublication(
     private val provider: TranslationFileProvider,
-    private val streamRegistry: TranslationStreamRegistry,
     private val currentInpaintingMode: () -> InpaintingMode,
     private val currentNeuralInpaintModel: () -> NeuralInpaintModel = { NeuralInpaintModel.AOT_GAN },
 ) {
@@ -32,41 +24,6 @@ internal class CleanedPublication(
         neuralModel = currentNeuralInpaintModel(),
         neuralAvailable = true,
     )
-
-    suspend fun deleteRetiredCleanedFile(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-    ) {
-        val chapterId = chapter.id ?: return
-        store.drainRetiredCleanedImages(pageKey).forEach { name ->
-            streamRegistry.retireCleanedImage(source.id, manga.id, chapterId, pageKey, name) {
-                if (!store.mayDeleteCleanedImage(pageKey, name)) return@retireCleanedImage
-                val imageFile = provider.findPageCleanedImage(
-                    manga.title,
-                    source,
-                    chapter.name,
-                    chapter.scanlator,
-                    name,
-                )
-                val deleted = imageFile?.let { !it.exists() || it.delete() } ?: true
-                if (deleted) {
-                    provider.findPageCleanedImage(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                        CleanedImageIdentity.sidecarName(name),
-                    )?.delete()
-                }
-                logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                    "TachiyomiAT retired cleaned image drain: pageKey=$pageKey file=$name deleted=$deleted"
-                }
-            }
-        }
-    }
 
     internal data class CleanedImageWriteResult(val name: String, val contentSha256: String)
 
@@ -128,5 +85,26 @@ internal class CleanedPublication(
         val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val version = "${System.currentTimeMillis().toString(36)}-${UUID.randomUUID().toString().replace("-", "")}"
         return "$safeName.cleaned.$version.jpg"
+    }
+
+    /**
+     * Publishes a derived colored image through the same verified write (JPEG +
+     * sha256 identity sidecar) under a `.colored.` versioned name.
+     */
+    internal fun writeVerifiedColoredImage(
+        directory: UniFile,
+        pageKey: String,
+        bitmap: Bitmap,
+    ): CleanedImageWriteResult = writeVerifiedCleanedImage(
+        directory,
+        pageKey,
+        bitmap,
+        name = newColoredImageName(pageKey),
+    )
+
+    internal fun newColoredImageName(pageKey: String): String {
+        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val version = "${System.currentTimeMillis().toString(36)}-${UUID.randomUUID().toString().replace("-", "")}"
+        return "$safeName.colored.$version.jpg"
     }
 }

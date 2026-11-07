@@ -36,13 +36,16 @@ class TranslationQueueStore(
      * Persists the ordered list of chapter ids. Clears the store first so
      * removals are reflected (a removed chapter id is simply absent from
      * [chapterIds]). Cheap: one editor batch regardless of queue length.
+     * [colorizeOnlyIds] marks which of those chapters run colorize-only, so a
+     * restart restores the queue in the mode it was admitted with.
      */
-    fun save(chapterIds: List<Long>) {
+    fun save(chapterIds: List<Long>, colorizeOnlyIds: Set<Long> = emptySet()) {
         preferences.edit(commit = true) {
             clear()
             chapterIds.forEachIndexed { index, id ->
                 putString("$index", id.toString())
             }
+            putString(COLORIZE_ONLY_KEY, colorizeOnlyIds.joinToString(","))
         }
     }
 
@@ -61,6 +64,13 @@ class TranslationQueueStore(
         return result
     }
 
+    /** The persisted subset of [load]'s ids that run colorize-only. */
+    fun loadColorizeOnlyIds(): Set<Long> =
+        preferences.getString(COLORIZE_ONLY_KEY, null)
+            ?.split(',')
+            ?.mapNotNullTo(mutableSetOf()) { it.toLongOrNull() }
+            .orEmpty()
+
     /**
      * Removes all persisted entries. Called when the queue legitimately
      * empties (all chapters translated or explicitly cleared).
@@ -71,5 +81,6 @@ class TranslationQueueStore(
 
     private companion object {
         const val PREFS_NAME = "translation_queue"
+        const val COLORIZE_ONLY_KEY = "colorize_only_ids"
     }
 }

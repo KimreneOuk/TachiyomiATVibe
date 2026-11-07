@@ -26,6 +26,7 @@ enum class TranslationPillStage {
     READING_TEXT,
     TRANSLATING,
     CLEANING,
+    COLORING,
     FINISHING,
 }
 
@@ -111,6 +112,7 @@ private fun TranslationStageSignal.toPillStage(): TranslationPillStage = when (t
     TranslationStageSignal.READING -> TranslationPillStage.READING_TEXT
     TranslationStageSignal.TRANSLATING -> TranslationPillStage.TRANSLATING
     TranslationStageSignal.CLEANING -> TranslationPillStage.CLEANING
+    TranslationStageSignal.COLORING -> TranslationPillStage.COLORING
     TranslationStageSignal.FINISHING -> TranslationPillStage.FINISHING
 }
 

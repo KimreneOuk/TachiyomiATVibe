@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,9 +22,12 @@ import eu.kanade.presentation.components.SearchableConfigSelectorBox
 import eu.kanade.presentation.components.designsystem.DesignTokens
 import eu.kanade.presentation.components.designsystem.SectionHeading
 import eu.kanade.presentation.components.designsystem.SelectionTile
+import eu.kanade.presentation.components.designsystem.SwitchCard
+import eu.kanade.presentation.translation.colorizationModelOptions
 import eu.kanade.presentation.translation.neuralInpaintOptions
 import eu.kanade.presentation.translation.ocrModelOptions
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.i18n.at.ATMR
@@ -31,7 +36,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 /**
  * Vision and inpainting sections of the reader translation sheet: the OCR
  * engine selector, the FAST/BALANCE/QUALITY inpainting tiles and the neural
- * model override used whenever the mode is not FAST.
+ * model override used whenever the mode is not FAST, plus the colorization
+ * gate and model.
  */
 @Composable
 internal fun TranslationVisionSection(
@@ -39,6 +45,8 @@ internal fun TranslationVisionSection(
     onOcrModelChange: (OcrModel) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
+    onColorizationEnabledChange: (Boolean) -> Unit,
+    onColorizationModelChange: (ColorizationModel) -> Unit,
 ) {
     SectionHeading(title = stringResource(ATMR.strings.reader_translation_section_vision))
 
@@ -111,6 +119,38 @@ internal fun TranslationVisionSection(
                 options = neuralOptions,
                 onSelect = onTranslationInpaintingNeuralModelChange,
                 placeholder = "Select Neural Model",
+            )
+        }
+    }
+
+    SectionHeading(title = stringResource(ATMR.strings.pref_colorization_title))
+
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 20.dp)
+            .fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        SwitchCard(
+            icon = Icons.Outlined.Palette,
+            title = stringResource(ATMR.strings.pref_colorization_enabled),
+            subtitle = stringResource(ATMR.strings.pref_colorization_enabled_summary),
+            checked = state.colorizationEnabled,
+            onCheckedChange = onColorizationEnabledChange,
+        )
+
+        AnimatedVisibility(
+            visible = state.colorizationEnabled,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            val colorizationOptions = colorizationModelOptions()
+            SearchableConfigSelectorBox(
+                selectedLabel = colorizationOptions.firstOrNull { it.value == state.colorizationModel }?.label
+                    ?: state.colorizationModel.name,
+                options = colorizationOptions,
+                onSelect = onColorizationModelChange,
+                placeholder = stringResource(ATMR.strings.pref_colorization_model),
             )
         }
     }

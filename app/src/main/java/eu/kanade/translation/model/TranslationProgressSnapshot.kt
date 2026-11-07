@@ -226,9 +226,10 @@ enum class TranslationProgressStage {
     INPAINT,
     TRANSLATE,
     RENDER,
+    COLORING,
     DONE,
     FAILED,
     ;
 
-    val isRunning: Boolean get() = this == OCR || this == INPAINT || this == TRANSLATE || this == RENDER
+    val isRunning: Boolean get() = this == OCR || this == INPAINT || this == TRANSLATE || this == RENDER || this == COLORING
 }

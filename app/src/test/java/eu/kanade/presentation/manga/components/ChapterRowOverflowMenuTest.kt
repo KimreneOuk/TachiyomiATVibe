@@ -13,9 +13,9 @@ import org.junit.jupiter.api.Test
 class ChapterRowOverflowMenuTest {
 
     @Test
-    fun `idle chapter offers only translate`() {
+    fun `idle chapter offers translate and colorize`() {
         assertEquals(
-            listOf(ChapterTranslationAction.START),
+            listOf(ChapterTranslationAction.START, ChapterTranslationAction.COLORIZE),
             chapterOverflowTranslationActions(Translation.State.NOT_TRANSLATED, hasPendingRequest = false),
         )
     }

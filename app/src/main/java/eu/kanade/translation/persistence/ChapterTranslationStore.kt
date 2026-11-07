@@ -128,6 +128,9 @@ class ChapterTranslationStore internal constructor(
      * of promotions from losing an earlier retained file.
      */
     internal val retiredCleanedImages = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /** Colored-image names retained the same way as [retiredCleanedImages]; memory-only, never hydrated. */
+    internal val retiredColoredImages = ConcurrentHashMap<String, MutableSet<String>>()
     internal val pendingArtifactPageRegistrations = LinkedHashSet<String>()
 
     internal val publishedDisplay = MutableStateFlow<PersistentMap<String, PublishedPageTranslation>>(persistentMapOf())
@@ -559,6 +562,15 @@ class ChapterTranslationStore internal constructor(
 
     fun drainRetiredCleanedImages(pageKey: String): List<String> =
         displayPublication.drainRetiredCleanedImages(pageKey)
+
+    fun mayDeleteColoredImage(pageKey: String, name: String): Boolean =
+        displayPublication.mayDeleteColoredImage(pageKey, name)
+
+    fun referencedColoredImageNames(): Set<String> =
+        displayPublication.referencedColoredImageNames()
+
+    fun drainRetiredColoredImages(pageKey: String): List<String> =
+        displayPublication.drainRetiredColoredImages(pageKey)
 
     suspend fun demoteCommittedDisplay(pageKey: String, reason: String): String? =
         displayPublication.demoteCommittedDisplay(pageKey, reason)

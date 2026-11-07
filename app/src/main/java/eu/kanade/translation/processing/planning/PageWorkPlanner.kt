@@ -3,6 +3,7 @@ package eu.kanade.translation.processing.planning
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isCleanedImageReady
+import eu.kanade.translation.model.isColorizeOnlyComplete
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.persistence.ArtifactOrigin
@@ -86,6 +87,9 @@ object PageWorkPlanner {
         val expected = input.expectedFingerprints
         val textless = page?.ocrStatus == StageStatus.TEXTLESS ||
             page?.isTextlessTerminal == true ||
+            // A colorize-only page is terminal: no reader-side rework unless
+            // explicitly forced.
+            page?.isColorizeOnlyComplete == true ||
             artifact?.ocr?.status == ArtifactStageStatus.TEXTLESS
 
         val evidence = BatchStage.entries.associateWith { stage ->
@@ -492,6 +496,7 @@ object PageWorkPlanner {
         ArtifactStage.INPAINT -> stage == BatchStage.INPAINT
         ArtifactStage.TRANSLATION -> stage == BatchStage.TRANSLATION
         ArtifactStage.LAYOUT -> stage == BatchStage.LAYOUT
+        ArtifactStage.COLORING -> false
     }
 
     private const val NO_ERASE_REGIONS = "NO_ERASE_REGIONS"

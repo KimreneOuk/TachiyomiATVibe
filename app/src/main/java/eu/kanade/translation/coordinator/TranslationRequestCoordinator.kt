@@ -328,6 +328,7 @@ internal class TranslationRequestCoordinator(
         expectedGeneration: Long?,
         admissionContext: BatchAdmissionContext?,
         evictStaleQueuedEntry: Boolean,
+        colorizeOnly: Boolean = false,
     ): AdmissionResult {
         val chapterId = chapter.id ?: return AdmissionResult.QUEUE_FAILED
         if (expectedGeneration != null) {
@@ -348,6 +349,7 @@ internal class TranslationRequestCoordinator(
             chapter,
             admissionContext?.probedSourcePageCount,
             admissionContext?.sourceCountKnown ?: false,
+            colorizeOnly,
         )
         return if (batchCoordinator.queuedTranslationOrNull(chapterId) != null) {
             clearPendingTranslationRequest(chapterId)
@@ -364,6 +366,7 @@ internal class TranslationRequestCoordinator(
         expectedRequestGeneration: Long? = null,
         admissionContext: BatchAdmissionContext? = null,
         autoStart: Boolean = true,
+        colorizeOnly: Boolean = false,
     ): AdmissionResult {
         val chapterId = chapter.id ?: return AdmissionResult.QUEUE_FAILED
         if (!sessionCoordinator.requestBatchSession(setOf(chapterId))) return AdmissionResult.QUEUE_FAILED
@@ -374,6 +377,7 @@ internal class TranslationRequestCoordinator(
                 expectedRequestGeneration,
                 admissionContext,
                 evictStaleQueuedEntry = true,
+                colorizeOnly,
             )
         }
         if (result == AdmissionResult.STALE_GENERATION) return result
@@ -392,8 +396,9 @@ internal class TranslationRequestCoordinator(
         expectedRequestGeneration: Long? = null,
         admissionContext: BatchAdmissionContext? = null,
         autoStart: Boolean = true,
+        colorizeOnly: Boolean = false,
     ): AdmissionResult {
-        val result = translateChapter(manga, chapter, expectedRequestGeneration, admissionContext, autoStart)
+        val result = translateChapter(manga, chapter, expectedRequestGeneration, admissionContext, autoStart, colorizeOnly)
         if (autoStart && result != AdmissionResult.STALE_GENERATION) startBatchTranslation()
         return result
     }

@@ -89,6 +89,22 @@ object StageFingerprints {
         cleanupRevision,
     )
 
+    /** Colored image derived from the cleaned image; [seed] is the caller's stable per-page seed. */
+    fun colorization(
+        engineStamp: String,
+        quantVariant: String,
+        conditioningConfig: String,
+        seed: Long,
+        cleanedImageContentHash: String,
+    ): String = fingerprint(
+        "colorization",
+        engineStamp,
+        quantVariant,
+        conditioningConfig,
+        seed,
+        cleanedImageContentHash,
+    )
+
     /** Render layout artifact (contract §8). */
     fun layout(
         translationArtifactId: String,
@@ -611,6 +627,9 @@ object StageFingerprints {
 
     /** Explicit absence value for authority fingerprints (FP-04); never "". */
     const val AUTHORITY_ABSENT = "ABSENT"
+
+    /** v1 colorization conditioning: no color hints (deterministic engines). */
+    const val COLORIZATION_CONDITIONING_NONE = "CONDITIONING_NONE"
 
     /**
      * Raw SHA-256 over [bytes], lowercase hex — the byte-level core under

@@ -50,6 +50,9 @@ enum class ArtifactStage {
     INPAINT,
     TRANSLATION,
     LAYOUT,
+
+    /** Persisted by name; [PageArtifactRecord] has no record slot for it yet. */
+    COLORING,
 }
 
 /** Provenance class of an artifact or generation (lifecycle contract §§12, 14). */

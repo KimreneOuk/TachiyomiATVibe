@@ -19,6 +19,15 @@ data class Translation(
     val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH,
     val executionMode: BatchExecutionMode = BatchExecutionMode.STANDARD,
 ) {
+    /**
+     * Colorize-only run: decode + colorize each original page directly — no
+     * OCR, no translation, no inpaint; [fromLang]/[toLang] go unused. Mutable
+     * post-construction only by queue restore, mirroring
+     * [probedSourcePageCount]; defaults keep every other construction site
+     * byte-identical.
+     */
+    var colorizeOnly: Boolean = false
+
     @Transient
     private val _statusFlow = MutableStateFlow(State.NOT_TRANSLATED)
 

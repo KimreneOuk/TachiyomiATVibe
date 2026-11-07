@@ -4,6 +4,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationView
 import eu.kanade.translation.model.StageFingerprints
 import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.isColorizeOnlyComplete
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.toDraft
@@ -16,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Owns display snapshot publication, committed display pointer management,
- * and cleaned-image reference tracking and authorization for [ChapterTranslationStore].
+ * and cleaned/colored-image reference tracking and authorization for [ChapterTranslationStore].
  */
 internal class ChapterDisplayPublication(
     private val store: ChapterTranslationStore,
@@ -28,23 +29,24 @@ internal class ChapterDisplayPublication(
      * displayable state (cleaned image file published and verified upstream by
      * [CleanedImagePublisher], translation READY/PARTIAL, some
      * translated text), the committed pointer swaps to a frozen snapshot of
-     * exactly that state. A superseded bundle\'s cleaned file is retained until
-     * the pipeline drains it, never deleted under a live committed pointer.
+     * exactly that state. A superseded bundle\'s cleaned and colored files are retained
+     * until the pipeline drains them, never deleted under a live committed pointer.
      */
     internal fun promoteDisplayIfReadyLocked(pageKey: String, updated: PageTranslation) {
         val published = store.pages[pageKey] ?: return
-        if (pageKey.isEmpty() || (!published.isTranslationDisplayReady && !published.isTextlessTerminal)) return
+        if (pageKey.isEmpty() ||
+            (!published.isTranslationDisplayReady && !published.isTextlessTerminal && !published.isColorizeOnlyComplete)
+        ) {
+            return
+        }
         val fingerprint = displayFingerprintOf(published)
         val existing = store.committedDisplay[pageKey]
         if (existing != null && existing.displayFingerprint == fingerprint) return
         if (existing != null) {
-            existing.page.cleanedImageName
-                ?.takeIf { it != published.cleanedImageName && it.isNotEmpty() }
-                ?.let {
-                    store.retiredCleanedImages
-                        .computeIfAbsent(pageKey) { ConcurrentHashMap.newKeySet() }
-                        .add(it)
-                }
+            store.retiredCleanedImages
+                .retainSuperseded(pageKey, existing.page.cleanedImageName, published.cleanedImageName)
+            store.retiredColoredImages
+                .retainSuperseded(pageKey, existing.page.coloredImageName, published.coloredImageName)
         }
         store.committedDisplay = store.committedDisplay.put(
             pageKey,
@@ -84,6 +86,9 @@ internal class ChapterDisplayPublication(
             buildList {
                 add(page.cleanedImageName)
                 add(page.inpaintRevision)
+                // A colorize-only re-publication changes only the colored image;
+                // including it keeps the promotion fingerprint honest for both bases.
+                add(page.coloredImageName)
                 addAll(page.blockFingerprints())
             },
         )
@@ -183,6 +188,37 @@ internal class ChapterDisplayPublication(
     fun drainRetiredCleanedImages(pageKey: String): List<String> =
         store.retiredCleanedImages.remove(pageKey)?.toList().orEmpty()
 
+    /** Colored-image counterpart of [mayDeleteCleanedImage]; the manifest records no colored names. */
+    fun mayDeleteColoredImage(pageKey: String, name: String): Boolean {
+        if (store.pages[pageKey]?.coloredImageName == name ||
+            store.committedDisplay[pageKey]?.page?.coloredImageName == name
+        ) {
+            return false
+        }
+        return name !in referencedColoredImageNames()
+    }
+
+    internal fun referencedColoredImageNames(): Set<String> = buildSet {
+        store.pages.values.mapNotNullTo(this) { it.coloredImageName }
+        store.committedDisplay.values.mapNotNullTo(this) { it.page.coloredImageName }
+        store.retiredColoredImages.values.forEach { addAll(it) }
+    }
+
+    /** Atomically takes every superseded colored-image name for [pageKey]. */
+    fun drainRetiredColoredImages(pageKey: String): List<String> =
+        store.retiredColoredImages.remove(pageKey)?.toList().orEmpty()
+
+    /** Retains [previous] for a later drain once a promotion stops displaying it. */
+    private fun ConcurrentHashMap<String, MutableSet<String>>.retainSuperseded(
+        pageKey: String,
+        previous: String?,
+        current: String?,
+    ) {
+        previous
+            ?.takeIf { it != current && it.isNotEmpty() }
+            ?.let { computeIfAbsent(pageKey) { ConcurrentHashMap.newKeySet() }.add(it) }
+    }
+
     /**
      * Explicitly drops the committed display pointer — reserved for user
      * resets (reset translation/inpaint data), never for candidate retries.
@@ -193,6 +229,7 @@ internal class ChapterDisplayPublication(
             if (store.committedDisplay.containsKey(pageKey)) {
                 store.committedDisplay = store.committedDisplay.remove(pageKey)
                 store.retiredCleanedImages.remove(pageKey)
+                store.retiredColoredImages.remove(pageKey)
                 val demotion = demoteArtifactPageLocked(pageKey)
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT committed display demoted: pageKey=$pageKey reason=$reason"

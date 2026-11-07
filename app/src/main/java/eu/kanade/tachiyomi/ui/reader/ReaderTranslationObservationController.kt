@@ -16,6 +16,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isCleanedImageReady
+import eu.kanade.translation.model.isColorizeOnlyComplete
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.toDraft
@@ -149,7 +150,8 @@ internal class ReaderTranslationObservationController(private val controller: Re
                 // The cleaned image and translated text are the durable result;
                 // layout and drawing happen in the reader.
                 pt.isCleanedImageReady ||
-                pt.isTextlessTerminal
+                pt.isTextlessTerminal ||
+                pt.isColorizeOnlyComplete
             if (isTerminal) continue
             val isNonTerminal = pt.ocrStatus == StageStatus.RUNNING ||
                 pt.ocrStatus == StageStatus.PENDING ||

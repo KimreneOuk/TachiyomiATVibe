@@ -40,6 +40,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
@@ -220,6 +221,33 @@ internal class ReaderTranslationController(
             )
             return
         }
+        bindTranslatedStream(page, manga, chapter, source, pageKey)
+        val translation = page.translation
+        if (translation?.isTranslationDisplayReady == true || page.translatedStream != null || page.showTranslatedImage) {
+            recordArrivalWait(page.index, pageKey)
+        }
+    }
+
+    /**
+     * Re-binds the display stream after a colorization-gate toggle without the
+     * warm-window gate: the page already has durable artifacts, and a gated
+     * re-attach would drop the stream for cold chapters. Never nulls; the
+     * caller's refresh re-evaluates which projected image decodes.
+     */
+    internal suspend fun rebindTranslatedStreamForPref(page: ReaderPage) {
+        val manga = manga ?: return
+        val chapter = getCurrentChapter() ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        bindTranslatedStream(page, manga, chapter, source, resolvePageKey(page))
+    }
+
+    private suspend fun bindTranslatedStream(
+        page: ReaderPage,
+        manga: Manga,
+        chapter: ReaderChapter,
+        source: HttpSource,
+        pageKey: String,
+    ) {
         val store = currentTranslationStore
         if (store != null) {
             val translation = page.translation
@@ -231,13 +259,18 @@ internal class ReaderTranslationController(
             }
         }
         val translation = page.translation
+        // The stream must carry the same file the holders project: with
+        // colorization on and a READY colored image, attach its bytes.
+        val displayImage = translation?.displayImageName(
+            translationPreferences.translationColorizationEnabled().get(),
+        )
         page.translatedStream = when {
-            translation?.displayImageName != null -> translationManager.getCleanedImageStream(
+            displayImage != null -> translationManager.getCleanedImageStream(
                 manga.title,
                 source,
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
-                translation.displayImageName!!,
+                displayImage,
                 pageKey = pageKey,
                 mangaId = manga.id,
                 chapterId = chapter.chapter.id,
@@ -255,9 +288,6 @@ internal class ReaderTranslationController(
             showTranslatedImage = page.showTranslatedImage,
             displayImageName = translation?.displayImageName != null,
         )
-        if (translation?.isTranslationDisplayReady == true || page.translatedStream != null || page.showTranslatedImage) {
-            recordArrivalWait(page.index, pageKey)
-        }
     }
 
     /**
@@ -585,6 +615,14 @@ internal class ReaderTranslationController(
 
     internal fun setTranslationInpaintingNeuralModel(model: NeuralInpaintModel) {
         translationPreferences.translationInpaintingNeuralModel().set(model)
+    }
+
+    internal fun setTranslationColorizationEnabled(enabled: Boolean) {
+        translationPreferences.translationColorizationEnabled().set(enabled)
+    }
+
+    internal fun setTranslationColorizationModel(model: ColorizationModel) {
+        translationPreferences.translationColorizationModel().set(model)
     }
 
     internal fun setTranslationEngineCategory(category: TranslationEngineCategory) {

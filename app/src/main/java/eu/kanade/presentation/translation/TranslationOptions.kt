@@ -5,6 +5,7 @@ import eu.kanade.presentation.components.SelectorOption
 import eu.kanade.translation.engines.translator.AiTranslatorKind
 import eu.kanade.translation.engines.translator.StandardTranslatorKind
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
@@ -52,4 +53,16 @@ internal fun ocrModelOptions(): List<SelectorOption<OcrModel>> = listOf(
 internal fun neuralInpaintOptions(): List<SelectorOption<NeuralInpaintModel>> = listOf(
     SelectorOption(NeuralInpaintModel.LAMA_LITERT_GPU, "Manga LaMa", "LiteRT GPU Accelerated"),
     SelectorOption(NeuralInpaintModel.AOT_GAN, "AOT-GAN", "512px High Speed"),
+)
+
+@Composable
+internal fun colorizationModelOptions(): List<SelectorOption<ColorizationModel>> = listOf(
+    SelectorOption(
+        value = ColorizationModel.MANGA_COLORIZATION_V2,
+        label = stringResource(ATMR.strings.pref_colorization_model_mcv2),
+    ),
+    SelectorOption(
+        value = ColorizationModel.SANA_V2,
+        label = stringResource(ATMR.strings.pref_colorization_model_sana),
+    ),
 )

@@ -9,6 +9,7 @@ import eu.kanade.translation.model.SinglePageOutcome
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.isColorizeOnlyComplete
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.persistence.ActiveChapterStoreRegistry
 import eu.kanade.translation.persistence.ChapterTranslationStore
@@ -191,7 +192,11 @@ internal class ReaderTranslationCoordinator(
                     // Check if already completed in store
                     val currentState = nextRequest.session.store.state.value[nextRequest.pageKey]
                     if (!nextRequest.force &&
-                        (currentState?.translationStatus == StageStatus.READY || currentState?.isTextlessTerminal == true)
+                        (
+                            currentState?.translationStatus == StageStatus.READY ||
+                                currentState?.isTextlessTerminal == true ||
+                                currentState?.isColorizeOnlyComplete == true
+                            )
                     ) {
                         logcat(LogPriority.DEBUG) {
                             "ReaderTranslationCoordinator: page $fullKey already complete, skipping"

@@ -255,6 +255,7 @@ object TranslationUiTruth {
         page.stage == TranslationProgressStage.OCR -> "Reading text."
         page.stage == TranslationProgressStage.TRANSLATE -> "Translating text."
         page.stage == TranslationProgressStage.INPAINT -> "Cleaning bubbles."
+        page.stage == TranslationProgressStage.COLORING -> "Coloring page."
         page.stage == TranslationProgressStage.RENDER -> "Finishing page."
         else -> "Translation pending."
     }

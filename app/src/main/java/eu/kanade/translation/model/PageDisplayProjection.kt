@@ -18,6 +18,9 @@ data class PageDisplayProjection(
 
     /** A textless terminal page is processed but is not translated-ready. */
     val isTextless: Boolean get() = state == PageDisplayState.TEXTLESS_COMPLETE
+
+    /** A colorize-only page is processed and shows a colored original. */
+    val isColorizeOnly: Boolean get() = state == PageDisplayState.COLORIZE_ONLY_COMPLETE
 }
 
 /**
@@ -39,12 +42,13 @@ fun PageTranslationView.toPageDisplayProjection(committed: PageTranslationView? 
             candidateChanged && committedReady -> PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
             committedReady -> PageDisplayState.DISPLAY_READY
             isTextlessTerminal -> PageDisplayState.TEXTLESS_COMPLETE
+            isColorizeOnlyComplete -> PageDisplayState.COLORIZE_ONLY_COMPLETE
             isTranslationDisplayShapeReady() -> PageDisplayState.DISPLAY_READY
             candidateFailed -> PageDisplayState.FAILED_NO_RESULT
             candidateRunning -> PageDisplayState.CANDIDATE_RUNNING
             else -> PageDisplayState.ORIGINAL_ONLY
         }
-    val displayReady = committedReady || (!candidateChanged && isTranslationDisplayShapeReady())
+    val displayReady = committedReady || (!candidateChanged && (isTranslationDisplayShapeReady() || isColorizeOnlyComplete))
 
     return PageDisplayProjection(
         state = state,
@@ -56,15 +60,17 @@ fun PageTranslationView.toPageDisplayProjection(committed: PageTranslationView? 
                 PageDisplayState.FAILED_WITH_COMMITTED_RESULT,
                 PageDisplayState.FAILED_NO_RESULT,
                 PageDisplayState.TEXTLESS_COMPLETE,
+                PageDisplayState.COLORIZE_ONLY_COMPLETE,
             ),
     )
 }
 
 private fun PageTranslationView.singlePageProjection(): PageDisplayProjection {
-    val displayReady = isTranslationDisplayShapeReady()
+    val displayReady = isTranslationDisplayShapeReady() || isColorizeOnlyComplete
     val state =
         when {
             isTextlessTerminal -> PageDisplayState.TEXTLESS_COMPLETE
+            isColorizeOnlyComplete -> PageDisplayState.COLORIZE_ONLY_COMPLETE
             displayReady -> PageDisplayState.DISPLAY_READY
             isStageFailed -> PageDisplayState.FAILED_NO_RESULT
             isStageRunning -> PageDisplayState.CANDIDATE_RUNNING
@@ -79,6 +85,7 @@ private fun PageTranslationView.singlePageProjection(): PageDisplayProjection {
                 PageDisplayState.DISPLAY_READY,
                 PageDisplayState.FAILED_NO_RESULT,
                 PageDisplayState.TEXTLESS_COMPLETE,
+                PageDisplayState.COLORIZE_ONLY_COMPLETE,
             ),
     )
 }
@@ -95,7 +102,9 @@ private fun PageTranslationView.differsFromCommitted(committed: PageTranslationV
         translationStatus != committed.translationStatus ||
         inpaintStatus != committed.inpaintStatus ||
         renderStatus != committed.renderStatus ||
+        coloringStatus != committed.coloringStatus ||
         cleanedImageName != committed.cleanedImageName ||
+        coloredImageName != committed.coloredImageName ||
         originalImageFallback != committed.originalImageFallback ||
         translationOrigin != committed.translationOrigin ||
         blocks.size != committed.blocks.size ||

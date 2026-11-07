@@ -4,6 +4,9 @@
     <string name="pref_category_translations">Translations</string>
     <string name="pref_translation_summary">Automatic Translations</string>
     <string name="manga_translate">Translate</string>
+    <string name="manga_colorize">Colorize</string>
+    <string name="manga_colorize_unavailable">Enable &quot;Colorize pages&quot; in translation settings first</string>
+    <string name="manga_colorize_download_first">Download the chapter first to colorize it</string>
     <string name="translation_reset_chapter">Reset Chapter</string>
     <string name="translation_reset_chapter_summary">Deletes all OCR data, cleaned images and translations for this chapter. Manual edits are removed.</string>
     <string name="manga_translation_progress">Translation progress</string>
@@ -48,6 +51,12 @@
     <string name="pref_inpainting_mode_lama_gpu">Manga LaMa (LiteRT GPU FP16)</string>
     <string name="pref_inpainting_neural_model">Neural inpainting model</string>
     <string name="pref_inpainting_neural_model_aot_gan">AOT-GAN (LiteRT GPU FP16)</string>
+    <string name="pref_colorization_title">Colorization</string>
+    <string name="pref_colorization_enabled">Colorize pages</string>
+    <string name="pref_colorization_enabled_summary">Run on-device coloring after inpainting (slower pass)</string>
+    <string name="pref_colorization_model">Colorization model</string>
+    <string name="pref_colorization_model_mcv2">Manga Colorization v2 (ONNX CPU)</string>
+    <string name="pref_colorization_model_sana">Sana Coloring v2 (LiteRT)</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translation_stop_all">Stop all translation</string>
     <string name="reader_batch_switch_title">Batch translation is active</string>
@@ -90,6 +99,7 @@
     <string name="reader_translation_pill_reading">Reading text…</string>
     <string name="reader_translation_pill_translating">Translating…</string>
     <string name="reader_translation_pill_cleaning">Cleaning…</string>
+    <string name="reader_translation_pill_coloring">Coloring…</string>
     <string name="reader_translation_pill_finishing">Finishing…</string>
     <string name="reader_translation_pill_ready">Ready</string>
     <string name="reader_translation_pill_textless">No text found</string>
@@ -143,6 +153,7 @@
     <string name="manga_batch_stage_ocr_name">Detection &amp; OCR</string>
     <string name="manga_batch_stage_ai_name">AI Translation</string>
     <string name="manga_batch_stage_inpaint_name">Bubble Cleaning</string>
+    <string name="manga_batch_stage_coloring_name">Coloring</string>
     <string name="manga_batch_stage_render_name">Text Overlay</string>
     <string name="manga_batch_status_paused">Paused</string>
     <!-- Phase-aware drawer hero. Shown instead of a

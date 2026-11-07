@@ -187,6 +187,7 @@ class ReaderTranslationStatusPill @JvmOverloads constructor(
             TranslationPillStage.READING_TEXT -> context.stringResource(ATMR.strings.reader_translation_pill_reading)
             TranslationPillStage.TRANSLATING -> context.stringResource(ATMR.strings.reader_translation_pill_translating)
             TranslationPillStage.CLEANING -> context.stringResource(ATMR.strings.reader_translation_pill_cleaning)
+            TranslationPillStage.COLORING -> context.stringResource(ATMR.strings.reader_translation_pill_coloring)
             TranslationPillStage.FINISHING -> context.stringResource(ATMR.strings.reader_translation_pill_finishing)
         }
         TranslationPillUi.Ready -> context.stringResource(ATMR.strings.reader_translation_pill_ready)

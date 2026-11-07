@@ -520,6 +520,7 @@ class TranslationBatchProgressTracker(
             if (page.inpaintStatus == StageStatus.RUNNING) add(TranslationProgressStage.INPAINT)
             if (page.translationStatus == StageStatus.RUNNING) add(TranslationProgressStage.TRANSLATE)
             if (page.renderStatus == StageStatus.RUNNING) add(TranslationProgressStage.RENDER)
+            if (page.coloringStatus == StageStatus.RUNNING) add(TranslationProgressStage.COLORING)
         }
         private fun progressStage(
             page: PageTranslationView,

@@ -475,4 +475,5 @@ internal fun PageArtifactRecord.stage(stage: ArtifactStage): StageArtifactRecord
     ArtifactStage.INPAINT -> inpaint
     ArtifactStage.TRANSLATION -> translation
     ArtifactStage.LAYOUT -> layout
+    ArtifactStage.COLORING -> null
 }

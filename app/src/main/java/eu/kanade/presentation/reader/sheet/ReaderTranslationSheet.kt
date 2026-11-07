@@ -20,6 +20,7 @@ import eu.kanade.presentation.components.designsystem.DesignTokens
 import eu.kanade.presentation.components.designsystem.SheetHeader
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
@@ -50,6 +51,8 @@ fun ReaderTranslationSheet(
     onOcrModelChange: (OcrModel) -> Unit,
     onTranslationInpaintingModeChange: (String) -> Unit,
     onTranslationInpaintingNeuralModelChange: (NeuralInpaintModel) -> Unit,
+    onColorizationEnabledChange: (Boolean) -> Unit,
+    onColorizationModelChange: (ColorizationModel) -> Unit,
     onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
     onTranslationStandardEngineChange: (StandardEngine) -> Unit,
     onTranslationDeeplApiKeyChange: (String) -> Unit,
@@ -126,6 +129,8 @@ fun ReaderTranslationSheet(
                     onOcrModelChange = onOcrModelChange,
                     onTranslationInpaintingModeChange = onTranslationInpaintingModeChange,
                     onTranslationInpaintingNeuralModelChange = onTranslationInpaintingNeuralModelChange,
+                    onColorizationEnabledChange = onColorizationEnabledChange,
+                    onColorizationModelChange = onColorizationModelChange,
                 )
 
                 TranslationResetSection(

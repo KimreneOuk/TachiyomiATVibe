@@ -34,6 +34,7 @@ internal class DownloadPageLoader(
     private val downloadManager: DownloadManager,
     private val downloadProvider: DownloadProvider,
     private val translationManager: TranslationManager = Injekt.get(),
+    private val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
 ) : PageLoader() {
 
     private val context: Application by injectLazy()
@@ -185,7 +186,9 @@ internal class DownloadPageLoader(
     )
 
     fun resolveTranslatedStream(pageTranslation: PageTranslationView): (() -> java.io.InputStream)? {
-        val displayImageName = pageTranslation.displayImageName
+        val displayImageName = pageTranslation.displayImageName(
+            translationPreferences.translationColorizationEnabled().get(),
+        )
         if (displayImageName != null) {
             return translationManager.getCleanedImageStream(
                 manga.title,

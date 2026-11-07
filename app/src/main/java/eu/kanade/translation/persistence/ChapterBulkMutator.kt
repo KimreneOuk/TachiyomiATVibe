@@ -100,6 +100,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                 store.pages = store.pages.remove(pageKey)
                 store.committedDisplay = store.committedDisplay.remove(pageKey)
                 store.retiredCleanedImages.remove(pageKey)
+                store.retiredColoredImages.remove(pageKey)
                 store.pageLeases.remove(pageKey)
                 store.stateFlow.value = store.snapshotPages()
                 store.displaySnapshotLocked(listOf(pageKey))
@@ -135,6 +136,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
             store.pages = persistentMapOf()
             store.committedDisplay = persistentMapOf()
             store.retiredCleanedImages.clear()
+            store.retiredColoredImages.clear()
             updatedPages.forEach { (pageKey, page) ->
                 val owned = store.ownedPage(pageKey, page)
                 store.pages = store.pages.put(pageKey, store.publishPage(owned))
@@ -296,27 +298,12 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
                     }
                 }
 
-                val movedRetiredImages = moveByOldKey.mapNotNull { (oldKey, newKey) ->
-                    store.retiredCleanedImages[oldKey]
-                        ?.toSet()
-                        ?.takeIf { it.isNotEmpty() }
-                        ?.let { newKey to it }
-                }
                 store.pages = updatedPages
                 store.committedDisplay = updatedCommitted
                 store.pendingArtifactPageRegistrations.clear()
                 store.pendingArtifactPageRegistrations.addAll(pendingAfterRekey)
-                moveByOldKey.keys.forEach { oldKey -> store.retiredCleanedImages.remove(oldKey) }
-                movedRetiredImages.forEach { (newKey, names) ->
-                    if (newKey in updatedPages) {
-                        store.retiredCleanedImages
-                            .computeIfAbsent(newKey) { ConcurrentHashMap.newKeySet<String>() }
-                            .addAll(names)
-                    }
-                }
-                store.retiredCleanedImages.keys.toList().forEach { pageKey ->
-                    if (pageKey !in updatedPages) store.retiredCleanedImages.remove(pageKey)
-                }
+                store.retiredCleanedImages.rekeyRetired(moveByOldKey, updatedPages.keys)
+                store.retiredColoredImages.rekeyRetired(moveByOldKey, updatedPages.keys)
                 store.stateFlow.value = store.snapshotPages()
                 store.displaySnapshotLocked(plan.changedDisplayKeys)
                 if (plan.moves.isEmpty()) {
@@ -613,6 +600,7 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
     private fun isPayloadlessPlaceholderLocked(pageKey: String): Boolean {
         if (store.committedDisplay.containsKey(pageKey)) return false
         if (store.retiredCleanedImages.containsKey(pageKey)) return false
+        if (store.retiredColoredImages.containsKey(pageKey)) return false
         val manifest = store.artifactManifest ?: return placeholderRecordLocked(pageKey)
         if (manifest.pages.containsKey(pageKey)) return false
         if (manifest.durableFailures.values.any { it.pageKey == pageKey }) return false
@@ -661,6 +649,28 @@ internal class ChapterBulkMutator(private val store: ChapterTranslationStore) {
         }
         return synchronized(store.pageLeases) {
             plan.leaseTokens.all { (pageKey, token) -> store.pageLeases[pageKey]?.token == token }
+        }
+    }
+
+    /** Caller holds [store.mutex]. Moves retained names to re-keyed pages and drops names of removed pages. */
+    private fun ConcurrentHashMap<String, MutableSet<String>>.rekeyRetired(
+        moveByOldKey: Map<String, String>,
+        livePageKeys: Set<String>,
+    ) {
+        val moved = moveByOldKey.mapNotNull { (oldKey, newKey) ->
+            this[oldKey]
+                ?.toSet()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { newKey to it }
+        }
+        moveByOldKey.keys.forEach { oldKey -> remove(oldKey) }
+        moved.forEach { (newKey, names) ->
+            if (newKey in livePageKeys) {
+                computeIfAbsent(newKey) { ConcurrentHashMap.newKeySet<String>() }.addAll(names)
+            }
+        }
+        keys.toList().forEach { pageKey ->
+            if (pageKey !in livePageKeys) remove(pageKey)
         }
     }
 

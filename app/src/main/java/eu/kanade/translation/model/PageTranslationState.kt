@@ -20,7 +20,24 @@ sealed interface PageLifecycle {
 }
 
 val PageTranslationView.displayImageName: String?
-    get() = cleanedImageName?.takeIf { isTranslationDisplayReady }
+    get() = displayImageName(colorizationEnabled = false)
+
+/**
+ * Pref-gated reader base image: a published colored image replaces the
+ * cleaned base only while colorization is enabled AND its inputs are still
+ * current (the colored image is derived from the cleaned one, so a stale or
+ * failed inpaint invalidates it). Disabling the pref reverts to the cleaned
+ * image without deleting anything. A colorize-only page has no cleaned input:
+ * its colored image stands on [coloredFromOriginal] alone.
+ */
+fun PageTranslationView.displayImageName(colorizationEnabled: Boolean): String? =
+    when {
+        colorizationEnabled &&
+            coloredImageName != null &&
+            coloringStatus == StageStatus.READY &&
+            (isCleanedImageReady || coloredFromOriginal) -> coloredImageName
+        else -> cleanedImageName?.takeIf { isTranslationDisplayReady }
+    }
 
 val PageTranslationView.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
@@ -75,7 +92,8 @@ val PageTranslationView.hasRenderedResult: Boolean
 val PageTranslationView.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
         translationStatus == StageStatus.RUNNING ||
-        inpaintStatus == StageStatus.RUNNING
+        inpaintStatus == StageStatus.RUNNING ||
+        coloringStatus == StageStatus.RUNNING
 
 val PageTranslationView.isStageCancelled: Boolean
     get() = ocrStatus == StageStatus.CANCELLED ||
@@ -99,6 +117,7 @@ fun PageTranslation.cancelInFlightStages() {
         if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) ocrStatus = StageStatus.CANCELLED
         if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
         if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
+        if (coloringStatus == StageStatus.RUNNING) coloringStatus = StageStatus.CANCELLED
     }
 }
 
@@ -110,9 +129,15 @@ fun PageTranslation.prepareForcedRetry() {
     translationStatus = StageStatus.PENDING
     inpaintStatus = StageStatus.PENDING
     renderStatus = StageStatus.PENDING
+    coloringStatus = StageStatus.PENDING
     errorMessage = null
     cleanedImageName = null
     cleanedImageContentHash = null
+    coloredImageName = null
+    coloredImageContentHash = null
+    coloringStamp = null
+    coloringFingerprint = null
+    coloredBitmap = null
     originalImageFallback = false
 }
 
@@ -154,6 +179,19 @@ val PageTranslationView.isTextlessTerminal: Boolean
         blocks.isEmpty() &&
         translationStatus == StageStatus.SKIPPED &&
         (inpaintStatus == StageStatus.SKIPPED || inpaintStatus == StageStatus.READY)
+
+/**
+ * A colorize-only run finished this page: OCR/translation/inpaint were
+ * deliberately skipped and the colored image was published from the ORIGINAL
+ * page. Terminal the same way [isTextlessTerminal] is — no further pipeline
+ * work is expected unless a full translation is explicitly requested.
+ */
+val PageTranslationView.isColorizeOnlyComplete: Boolean
+    get() = coloredFromOriginal &&
+        coloredImageName != null &&
+        coloringStatus == StageStatus.READY &&
+        ocrStatus == StageStatus.SKIPPED &&
+        translationStatus == StageStatus.SKIPPED
 
 val PageTranslationView.hasRecognizedTranslation: Boolean
     get() = ocrStatus == StageStatus.READY &&

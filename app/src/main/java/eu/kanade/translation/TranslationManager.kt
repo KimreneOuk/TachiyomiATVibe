@@ -15,6 +15,9 @@ import eu.kanade.translation.coordinator.TranslationPendingRequestStore
 import eu.kanade.translation.coordinator.TranslationProgressProjection
 import eu.kanade.translation.coordinator.TranslationRequestCoordinator
 import eu.kanade.translation.coordinator.TranslationSessionCoordinator
+import eu.kanade.translation.engines.coloring.OnnxMangaColorizationEngine
+import eu.kanade.translation.engines.coloring.PageColorizationEngine
+import eu.kanade.translation.engines.coloring.SanaMangaColoringEngine
 import eu.kanade.translation.engines.inpainting.InpaintingHardwareOverride
 import eu.kanade.translation.engines.inpainting.litert.LiteRTMangaInpaintingEngine
 import eu.kanade.translation.model.PageTranslationView
@@ -39,9 +42,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -126,6 +132,20 @@ class TranslationManager private constructor(
         translationPreferences = translationPreferences,
         streamRegistry = streamRegistry,
     )
+
+    /**
+     * Manager-owned colorization engine attached to the processor, chosen by
+     * the colorization-model pref. Construction is cheap (sessions build
+     * lazily at the first COLOR stage); test constructions stay detached so
+     * fakes never colorize.
+     */
+    internal var colorizationEngine: PageColorizationEngine? =
+        if (testConstruction == null) {
+            buildColorizationEngine(translationPreferences.translationColorizationModel().get())
+                .also { processor.colorizationEngine = it }
+        } else {
+            null
+        }
     internal val testReaderCoordinator: ReaderTranslationCoordinator? get() = testConstruction?.readerCoordinator
     internal val testReaderStoreResolver: (suspend (Manga, Chapter, HttpSource) -> ChapterTranslationStore?)?
         get() = testConstruction?.readerStoreResolver
@@ -135,6 +155,35 @@ class TranslationManager private constructor(
      * failure in restoreQueue does not cancel unrelated work; IO dispatcher because restoreQueue does DB reads.
      */
     internal val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        // Swaps the engine live when the user picks another colorization model;
+        // the old engine's own run lock serializes the close against an
+        // in-flight COLOR stage.
+        if (testConstruction == null) {
+            applicationScope.launch {
+                translationPreferences.translationColorizationModel().changes()
+                    .drop(1)
+                    .collect { model -> swapColorizationEngine(model) }
+            }
+        }
+    }
+
+    private fun buildColorizationEngine(model: ColorizationModel): PageColorizationEngine = when (model) {
+        ColorizationModel.MANGA_COLORIZATION_V2 -> OnnxMangaColorizationEngine(context)
+        ColorizationModel.SANA_V2 -> SanaMangaColoringEngine(
+            context = context,
+            enableExperimentalNpu = translationPreferences.translationColorizationNpu().get(),
+        )
+    }
+
+    private fun swapColorizationEngine(model: ColorizationModel) {
+        val previous = colorizationEngine
+        val next = buildColorizationEngine(model)
+        processor.colorizationEngine = next
+        colorizationEngine = next
+        previous?.close()
+    }
 
     internal val activeStores = ActiveChapterStoreRegistry()
     internal val batchTrackerRegistry = TranslationBatchTrackerRegistry()
@@ -333,6 +382,34 @@ class TranslationManager private constructor(
             autoStart,
         )
     }
+
+    /**
+     * Queues and starts a COLORIZE-ONLY run: the colorization engine runs
+     * directly on each original page — no OCR, translation, or inpaint.
+     * Requires the chapter's files to be downloaded and the colorization
+     * preference to be on; the caller owns those gates.
+     */
+    fun colorizeChapter(
+        manga: Manga,
+        chapter: Chapter,
+        expectedRequestGeneration: Long? = null,
+        autoStart: Boolean = true,
+    ): Boolean {
+        if (!isColorizationReady()) return false
+        val result = requestCoordinator.translateChapterAndStart(
+            manga,
+            chapter,
+            expectedRequestGeneration,
+            admissionContext = null,
+            autoStart = autoStart,
+            colorizeOnly = true,
+        )
+        return result == eu.kanade.translation.coordinator.TranslationRequestCoordinator.AdmissionResult.QUEUED
+    }
+
+    /** The colorization pass can run: pref on and a colorization engine attached. */
+    fun isColorizationReady(): Boolean =
+        translationPreferences.translationColorizationEnabled().get() && colorizationEngine != null
 
     fun translateChapters(manga: Manga, chapters: List<Chapter>) {
         requestCoordinator.translateChaptersAndStart(manga, chapters)

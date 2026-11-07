@@ -26,6 +26,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.ColorizationModel
 import tachiyomi.domain.translation.GeminiThinkingMode
 import tachiyomi.domain.translation.NeuralInpaintModel
 import tachiyomi.domain.translation.StandardEngine
@@ -60,7 +61,35 @@ object SettingsTranslationScreen : SearchableSettings {
             ),
             getTranslationLangGroup(translationPreferences),
             getInpaintingModeGroup(translationPreferences),
+            getColorizationGroup(translationPreferences),
             getEngineGroup(translationPreferences),
+        )
+    }
+
+    @Composable
+    private fun getColorizationGroup(
+        translationPreferences: TranslationPreferences,
+    ): Preference.PreferenceGroup {
+        val colorizationEnabled by translationPreferences.translationColorizationEnabled().collectAsState()
+        val models = mapOf(
+            ColorizationModel.MANGA_COLORIZATION_V2 to stringResource(ATMR.strings.pref_colorization_model_mcv2),
+            ColorizationModel.SANA_V2 to stringResource(ATMR.strings.pref_colorization_model_sana),
+        )
+        return Preference.PreferenceGroup(
+            title = stringResource(ATMR.strings.pref_colorization_title),
+            preferenceItems = persistentListOf<Preference.PreferenceItem<out Any>>(
+                Preference.PreferenceItem.SwitchPreference(
+                    pref = translationPreferences.translationColorizationEnabled(),
+                    title = stringResource(ATMR.strings.pref_colorization_enabled),
+                    subtitle = stringResource(ATMR.strings.pref_colorization_enabled_summary),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    pref = translationPreferences.translationColorizationModel(),
+                    title = stringResource(ATMR.strings.pref_colorization_model),
+                    entries = models.toImmutableMap(),
+                    enabled = colorizationEnabled,
+                ),
+            ),
         )
     }
 

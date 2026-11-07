@@ -1007,6 +1007,7 @@ private fun batchPhaseChipText(
         TranslationProgressStage.OCR to stringResource(ATMR.strings.manga_batch_stage_ocr_name),
         TranslationProgressStage.TRANSLATE to stringResource(ATMR.strings.manga_batch_stage_ai_name),
         TranslationProgressStage.INPAINT to stringResource(ATMR.strings.manga_batch_stage_inpaint_name),
+        TranslationProgressStage.COLORING to stringResource(ATMR.strings.manga_batch_stage_coloring_name),
         TranslationProgressStage.RENDER to stringResource(ATMR.strings.manga_batch_stage_render_name),
     )
     return when {
